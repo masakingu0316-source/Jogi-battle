@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>定規バトル</title>
+<meta name="description" content="机の上で定規をはじき合う、あの遊びをオンラインで。部屋コードで友だちと対戦。">
+<meta name="theme-color" content="#1f3c35">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='12' width='26' height='8' rx='1.5' fill='%23ff7f6e'/%3E%3Cpath d='M6 12v3M9 12v2M12 12v3M15 12v2M18 12v3M21 12v2M24 12v3' stroke='%232a1a14' stroke-width='1'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Yusei+Magic&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="page">
+  <header>
+    <h1>定規バトル</h1>
+    <span class="conn" id="conn" hidden></span>
+  </header>
+
+  <!-- ホーム：部屋を作る / コードで入る -->
+  <main id="home" class="screen">
+    <p class="lead">机の上で定規をはじいて、相手を落としたら勝ち。部屋を作って、友だちに部屋コードを送ろう。</p>
+    <div class="card">
+      <label class="field-col" for="name">
+        <span>ニックネーム</span>
+        <input id="name" maxlength="10" autocomplete="nickname" placeholder="例：まさと">
+      </label>
+      <div class="home-actions">
+        <button class="btn-main" id="create" type="button">部屋を作る</button>
+        <div class="or">または</div>
+        <form class="join" id="joinForm">
+          <label class="field-col" for="code">
+            <span>部屋コード（5文字）</span>
+            <input id="code" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCDE">
+          </label>
+          <button id="join" type="submit">入る</button>
+        </form>
+      </div>
+      <p class="error" id="homeError" hidden></p>
+    </div>
+  </main>
+
+  <!-- 待合室 -->
+  <main id="lobby" class="screen" hidden>
+    <div class="room-head">
+      <div>
+        <div class="label">部屋コード</div>
+        <div class="code" id="roomCode">-----</div>
+      </div>
+      <div class="invite">
+        <input id="inviteUrl" readonly aria-label="招待リンク">
+        <button id="copyInvite" type="button">招待リンクをコピー</button>
+      </div>
+    </div>
+
+    <div class="lobby-grid">
+      <section class="panel">
+        <h2>メンバー <small id="memberCount"></small></h2>
+        <ol class="members" id="members"></ol>
+        <p class="note">入った順に席（赤→青→緑→黄）が決まります。最大4人。</p>
+      </section>
+      <section class="panel">
+        <h2>モード</h2>
+        <div class="seg" id="modes" role="group" aria-label="モード"></div>
+        <p class="mode-note" id="modeNote"></p>
+        <h2 class="mt">自分の定規</h2>
+        <select id="myRuler" aria-label="自分の定規"></select>
+        <div class="start-row">
+          <button class="btn-main" id="start" type="button">対戦を始める</button>
+          <span class="wait" id="startNote"></span>
+        </div>
+      </section>
+    </div>
+    <button class="link" id="leave" type="button">部屋を出る</button>
+  </main>
+
+  <!-- 対戦 -->
+  <main id="game" class="screen" hidden>
+    <div class="hud" aria-live="polite">
+      <div class="players" id="players"></div>
+      <div class="msg" id="msg"></div>
+    </div>
+    <div class="board-wrap" id="boardWrap">
+      <canvas id="board" aria-label="机の上の定規バトル盤面。自分の番に、自分の定規を押さえて引っぱり、離すとはじけます。"></canvas>
+      <div class="hint" id="hint" hidden></div>
+      <div class="result" id="result" hidden>
+        <h2 id="resultTitle"></h2>
+        <p id="resultReason"></p>
+        <p class="order" id="resultOrder"></p>
+        <div class="result-actions" id="resultActions"></div>
+      </div>
+    </div>
+    <div class="controls">
+      <button id="skip" type="button" hidden>この人の番を飛ばす</button>
+      <span class="spacer"></span>
+      <small>押さえた位置が「はじく点」。端をはじくと回転します。最初の1周は落ちても元の席に戻ります。</small>
+    </div>
+  </main>
+</div>
+<div class="toast" id="toast" role="status" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
