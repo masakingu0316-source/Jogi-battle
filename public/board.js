@@ -1,5 +1,5 @@
 // 盤面（机・定規・狙いの矢印・落下の文字）を canvas に描く
-import Physics from './shared/physics.js';
+import { paintRuler } from './ruler-paint.js';
 import { DESKS, PLAYERS } from './shared/rules.js';
 
 const MARGIN = 9; // 机のまわりに見せる床（cm）
@@ -169,89 +169,7 @@ export function createBoard(canvas, wrap) {
     }
   }
 
-  function drawRuler(b, px, active, now) {
-    const s = Physics.RULERS[b.specKey], pl = PLAYERS[b.owner];
-    const scale = b.scale ?? 1;
-    const hx = s.length / 2 * scale, hy = s.width / 2 * scale;
-    ctx.save();
-    ctx.globalAlpha = b.alpha ?? 1;
-    ctx.translate(b.x, b.y);
-    ctx.rotate(b.a);
-    ctx.fillStyle = 'rgba(40, 22, 8, 0.28)';
-    roundRect(-hx + 0.25, -hy + 0.45, hx * 2, hy * 2, 0.25);
-    ctx.fill();
-    roundRect(-hx, -hy, hx * 2, hy * 2, s.kind === 'steel' ? 0.12 : 0.3);
-    if (s.kind === 'plastic') ctx.fillStyle = pl.tint;
-    else if (s.kind === 'bamboo') ctx.fillStyle = '#e8cf8c';
-    else {
-      const g = ctx.createLinearGradient(0, -hy, 0, hy);
-      g.addColorStop(0, '#e9ecef'); g.addColorStop(0.5, '#b7bec6'); g.addColorStop(1, '#d4d9de');
-      ctx.fillStyle = g;
-    }
-    ctx.fill();
-    ctx.lineWidth = Math.max(0.06, 1.3 / px);
-    ctx.strokeStyle = s.kind === 'plastic' ? pl.edge : 'rgba(60, 50, 40, 0.75)';
-    ctx.stroke();
-    if (s.kind === 'bamboo') {
-      ctx.strokeStyle = 'rgba(150, 110, 40, 0.35)';
-      ctx.lineWidth = 0.05;
-      for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(-hx + 0.3, k * hy * 0.3); ctx.lineTo(hx - 0.3, k * hy * 0.3 + 0.05); ctx.stroke(); }
-    }
-    // 目盛り
-    const W = hy * 2, L = hx * 2;
-    const x0 = -hx + (L - s.nominal * scale) / 2;
-    const ppcm = px * scale;
-    const showMm = ppcm >= 7, showHalf = ppcm >= 3.5;
-    const ink = s.kind === 'plastic' ? 'rgba(20, 20, 30, 0.85)' : 'rgba(25, 20, 15, 0.9)';
-    ctx.strokeStyle = ink;
-    ctx.lineWidth = Math.max(0.03, 0.8 / px);
-    ctx.beginPath();
-    for (let i = 0; i <= s.nominal * 10; i++) {
-      const cm = i % 10 === 0, half = i % 5 === 0;
-      if (!cm && !(half && showHalf) && !showMm) continue;
-      const x = x0 + i * 0.1 * scale;
-      const len = cm ? W * 0.32 : half ? W * 0.22 : W * 0.13;
-      ctx.moveTo(x, -hy); ctx.lineTo(x, -hy + len);
-    }
-    ctx.stroke();
-    const every = ppcm >= 13 ? 1 : 5;
-    const fs = W * 0.25 * px;
-    if (fs >= 6) {
-      ctx.save();
-      ctx.scale(1 / px, 1 / px);
-      ctx.font = `600 ${fs.toFixed(1)}px "Zen Kaku Gothic New", system-ui, sans-serif`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      ctx.fillStyle = ink;
-      for (let c = 0; c <= s.nominal; c += every) ctx.fillText(String(c), (x0 + c * scale) * px, (-hy + W * 0.34) * px);
-      ctx.restore();
-    }
-    // 名前シール
-    const sw = Math.min(3.0, L * 0.12), sh = W * 0.42;
-    const sx = hx - sw - Math.min(1.2, L * 0.05), sy = hy - sh - W * 0.1;
-    roundRect(sx, sy, sw, sh, sh * 0.25);
-    ctx.fillStyle = pl.sticker; ctx.fill();
-    if (sh * px >= 9) {
-      ctx.save();
-      ctx.translate(sx + sw / 2, sy + sh / 2);
-      ctx.scale(1 / px, 1 / px);
-      ctx.font = `700 ${(sh * px * 0.72).toFixed(1)}px "Zen Kaku Gothic New", system-ui, sans-serif`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillStyle = pl.ink;
-      ctx.fillText(pl.name, 0, 0.5);
-      ctx.restore();
-    }
-    // 手番の定規はチョークの点線で囲む
-    if (active) {
-      ctx.globalAlpha = (b.alpha ?? 1) * (0.55 + 0.45 * Math.sin(now / 260));
-      roundRect(-hx - 0.7, -hy - 0.7, hx * 2 + 1.4, hy * 2 + 1.4, 0.8);
-      ctx.setLineDash([0.8, 0.6]);
-      ctx.strokeStyle = '#ffffff';
-      ctx.lineWidth = Math.max(0.12, 2 / px);
-      ctx.stroke();
-      ctx.setLineDash([]);
-    }
-    ctx.restore();
-  }
+  function drawRuler(b, px, active, now) { paintRuler(ctx, b, px, active, now); }
 
   // aim: { cx, cy（はじく点）, px, py（指の位置） }
   function drawAim(a, px) {

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RoomCore, cleanName } from '../src/core.js';
+import { resolveLoadout } from '../public/shared/catalog.js';
 
 const lastState = (out) => out.find((o) => o.msg.t === 'state' || o.msg.t === 'shot')?.msg.state;
 
@@ -71,8 +72,8 @@ test('おかしな入力は受け付けない', () => {
 
 test('1周目に落ちた定規は元の席に戻り、脱落しない', () => {
   const { r, ms } = room(2, 'quick');
-  r.handle(ms[0].id, { t: 'ruler', key: 'plastic15' });
-  r.handle(ms[1].id, { t: 'ruler', key: 'plastic15' });
+  r.setLoadout(ms[0].id, resolveLoadout({ ruler: 'ruler:plastic15' }));
+  r.setLoadout(ms[1].id, resolveLoadout({ ruler: 'ruler:plastic15' }));
   r.handle(ms[0].id, { t: 'start' });
   // 試作で1手目に落とせた打ち方（端をはじいて回転させる）
   const shot = r.handle(ms[0].id, { t: 'flick', lx: -8.5, ly: 0, dx: 1, dy: 0, power: 1 })[0].msg;
@@ -163,4 +164,42 @@ test('再戦は先手が交代する', () => {
   assert.equal(r.s.phase, 'over');
   r.handle(ms[0].id, { t: 'start' });
   assert.equal(r.s.game.turn, 1);
+});
+
+test('ログイン中の人は、トークンがなくても同じアカウントなら同じ席に戻る', () => {
+  const r = new RoomCore('ABCDE');
+  const a = r.join('x', null, { id: 'u1', name: 'アカウント名' }).member;
+  r.join('y');
+  r.handle(a.id, { t: 'start' });
+  r.disconnect(a.id);
+  const back = r.join('別の端末', null, { id: 'u1', name: 'アカウント名' });
+  assert.equal(back.member.id, a.id);
+  assert.equal(back.member.name, 'アカウント名');
+});
+
+test('決着すると、アカウントの記録が1回だけ取り出せる（相手を落とした数つき）', () => {
+  const r = new RoomCore('ABCDE');
+  const a = r.join('x', null, { id: 'u1', name: 'A' }).member;
+  r.join('ゲスト');
+  r.handle(a.id, { t: 'start' });
+  pushToEdge(r);
+  flickToward(r, 1);
+  const rec = r.takeRecord();
+  assert.ok(rec);
+  assert.equal(r.takeRecord(), null);
+  assert.equal(rec.players[0].userId, 'u1');
+  assert.equal(rec.players[1].userId, null);
+  assert.equal(rec.players[0].kos, 1);
+  assert.equal(rec.players[0].ruler, 'ruler:plastic30');
+});
+
+test('アクセサリの効果は対戦の定規に引き継がれる', () => {
+  const { r, ms } = room(2);
+  r.setLoadout(ms[0].id, resolveLoadout({ ruler: 'ruler:steel30', acc: 'acc:goldclip', pattern: 'pattern:stars' }));
+  r.handle(ms[0].id, { t: 'start' });
+  const b = r.s.game.bodies[0];
+  assert.equal(b.specKey, 'steel30');
+  assert.equal(b.mods.mass, 1.05);
+  assert.equal(b.pattern, 'pattern:stars');
+  assert.equal(r.buildWorld().bodies[0].m.toFixed(2), (36 * 1.05).toFixed(2));
 });

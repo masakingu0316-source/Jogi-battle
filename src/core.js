@@ -2,6 +2,7 @@
 // Cloudflare の機能には依存しないので、Node でもそのままテストできる。
 import Physics from '../public/shared/physics.js';
 import { DESKS, MODES, PLAYERS, TEAMS, MAX_MEMBERS, teamOf, seats, playableReason } from '../public/shared/rules.js';
+import { resolveLoadout, DEFAULT_RULER } from '../public/shared/catalog.js';
 
 const FPS = 30;
 const STEP = 1 / 600;
@@ -24,7 +25,7 @@ export class RoomCore {
   constructor(code, now = Date.now()) {
     this.s = {
       code, createdAt: now, lastActive: now,
-      members: [],         // 入室順＝席順。{ id, token, name, ruler, connected }
+      members: [],         // 入室順＝席順。{ id, token, userId, name, loadout, connected }
       hostId: null,
       mode: 'standard',
       phase: 'lobby',      // lobby | aim | over
@@ -43,20 +44,26 @@ export class RoomCore {
   member(id) { return this.s.members.find((m) => m.id === id) || null; }
 
   // ---- 入退室 ----
-  join(name, token, now = Date.now()) {
+  // user: ログイン中なら { id, name }。ゲストは null
+  join(name, token, user = null, now = Date.now()) {
     const s = this.s;
     s.lastActive = now;
-    if (token) {
-      const m = s.members.find((x) => x.token === token);
-      if (m) {
-        m.connected = true;
-        if (name) m.name = cleanName(name);
-        return { member: m, rejoined: true };
-      }
+    const prev = (token && s.members.find((x) => x.token === token))
+      || (user && s.members.find((x) => x.userId === user.id));
+    if (prev && (!prev.userId || (user && prev.userId === user.id))) {
+      prev.connected = true;
+      // 待合室でログインしてから入り直した場合は、アカウントにつなげる
+      if (user && !prev.userId && s.phase !== 'aim') prev.userId = user.id;
+      if (user) prev.name = cleanName(user.name);
+      else if (name) prev.name = cleanName(name);
+      return { member: prev, rejoined: true };
     }
     if (s.phase === 'aim') return { error: '対戦中のため入れません。今の対戦が終わってから入ってください。' };
     if (s.members.length >= MAX_MEMBERS) return { error: `この部屋は満員です（${MAX_MEMBERS}人まで）。` };
-    const m = { id: randomHex(4), token: randomHex(12), name: cleanName(name), ruler: 'plastic30', connected: true };
+    const m = {
+      id: randomHex(4), token: randomHex(12), userId: user ? user.id : null,
+      name: cleanName(user ? user.name : name), loadout: resolveLoadout({ ruler: DEFAULT_RULER }), connected: true,
+    };
     s.members.push(m);
     if (!s.hostId) s.hostId = m.id;
     return { member: m, rejoined: false };
@@ -88,13 +95,30 @@ export class RoomCore {
       hostId: s.hostId,
       mode: s.mode,
       phase: s.phase,
-      members: s.members.map((m) => ({ id: m.id, name: m.name, ruler: m.ruler, connected: m.connected })),
+      members: s.members.map((m) => ({ id: m.id, name: m.name, account: !!m.userId, loadout: m.loadout, connected: m.connected })),
       wins: s.wins,
       game: s.game && {
         n: s.game.n, order: s.game.order, turn: s.game.turn, shots: s.game.shots,
         bodies: s.game.bodies, players: s.game.players, result: s.game.result,
       },
     };
+  }
+
+  // 使う定規を変える（所持の確認は呼ぶ側で済ませておく）
+  setLoadout(id, loadout) {
+    const s = this.s;
+    const m = this.member(id);
+    if (!m) return [];
+    if (s.phase === 'aim') return [{ to: id, msg: { t: 'error', text: '定規は対戦の合間に変更できます' } }];
+    m.loadout = loadout;
+    return [{ to: 'all', msg: { t: 'state', state: this.snapshot() } }];
+  }
+
+  // 決着したときの記録を1回だけ取り出す
+  takeRecord() {
+    const r = this.record;
+    this.record = null;
+    return r || null;
   }
 
   // ---- メッセージ処理 ----
@@ -110,12 +134,6 @@ export class RoomCore {
     const between = s.phase === 'lobby' || s.phase === 'over';
 
     switch (msg.t) {
-      case 'ruler': {
-        if (!Physics.RULERS[msg.key]) return err('その定規は選べません');
-        if (!between) return err('定規は対戦の合間に変更できます');
-        m.ruler = msg.key;
-        return state();
-      }
       case 'mode': {
         if (!isHost) return err('モードは部屋を作った人が選びます');
         if (!MODES[msg.mode]) return err('そのモードはありません');
@@ -177,7 +195,11 @@ export class RoomCore {
     const starter = same ? (prev.starter + 1) % n : 0;
     s.game = {
       mode: s.mode, n, order, starter, turn: starter, shots: 0, outOrder: [], result: null,
-      bodies: order.map((mid, i) => ({ owner: i, specKey: this.member(mid).ruler, x: st[i].x, y: st[i].y, a: st[i].a, state: 'desk' })),
+      bodies: order.map((mid, i) => {
+        const lo = this.member(mid).loadout;
+        return { owner: i, ruler: lo.ruler, specKey: lo.specKey, mods: lo.mods, pattern: lo.pattern, sticker: lo.sticker, x: st[i].x, y: st[i].y, a: st[i].a, state: 'desk' };
+      }),
+      kos: order.map(() => 0),
       players: order.map(() => ({ alive: true, selfOut: false })),
     };
     for (const mid of order) if (!(mid in s.wins)) s.wins[mid] = 0;
@@ -189,7 +211,7 @@ export class RoomCore {
     const desk = DESKS[MODES[g.mode].desk];
     const world = Physics.createWorld({}, { w: desk.w, h: desk.h });
     for (const b of g.bodies) {
-      const body = Physics.createBody('p' + b.owner, b.owner, b.specKey, b.x, b.y, b.a);
+      const body = Physics.createBody('p' + b.owner, b.owner, b.specKey, b.x, b.y, b.a, b.mods);
       body.state = b.state === 'desk' ? 'desk' : 'gone';
       world.bodies.push(body);
     }
@@ -226,10 +248,10 @@ export class RoomCore {
     }
     for (const b of world.bodies) if (b.state === 'falling') b.state = 'gone';
 
-    g.bodies = world.bodies.map((b) => ({
-      owner: b.owner, specKey: b.specKey, x: round2(b.x), y: round2(b.y), a: round4(b.a),
-      state: b.state === 'desk' ? 'desk' : 'gone',
-    }));
+    g.bodies = g.bodies.map((prev, i) => {
+      const b = world.bodies[i];
+      return { ...prev, x: round2(b.x), y: round2(b.y), a: round4(b.a), state: b.state === 'desk' ? 'desk' : 'gone' };
+    });
     const by = g.turn;
     g.shots++;
     const saved = this.finishTurn(by);
@@ -254,6 +276,7 @@ export class RoomCore {
       if (p.alive && g.bodies[i].state !== 'desk') { p.alive = false; p.selfOut = i === shooter; newly.push(i); }
     });
     if (newly.length) g.outOrder.push(newly);
+    for (const i of newly) if (i !== shooter) g.kos[shooter]++;
     const alive = g.players.map((p, i) => (p.alive ? i : -1)).filter((i) => i >= 0);
     const label = (i) => `${this.member(g.order[i])?.name ?? '?'}（${PLAYERS[i].name}）`;
 
@@ -287,6 +310,15 @@ export class RoomCore {
       const order = g.outOrder.map((grp) => grp.map((i) => label(i) + (g.players[i].selfOut ? '・自滅' : '')).join('、'));
       g.result = { winners, title, reason, outOrder: g.n > 2 ? order : [] };
       s.phase = 'over';
+      // アカウントに残す記録（部屋の外で保存する）
+      this.record = {
+        room: s.code, mode: g.mode, n: g.n, shots: g.shots,
+        names: g.order.map((mid) => this.member(mid)?.name ?? '?'),
+        players: g.order.map((mid, i) => ({
+          memberId: mid, userId: this.member(mid)?.userId || null, seat: i, won: winners.includes(i),
+          kos: g.kos[i], selfOut: g.players[i].selfOut, ruler: g.bodies[i].ruler,
+        })),
+      };
     } else {
       this.advanceTurn();
     }

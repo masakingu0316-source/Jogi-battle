@@ -5,12 +5,21 @@ const Physics = (() => {
   const G = 981; // cm/s^2
   const DESK = { w: 65, h: 45 }; // JIS規格の生徒机 天板 65×45cm
 
+  // basic: 全員が最初から持っている定規。それ以外はガチャで手に入る。
   const RULERS = {
-    plastic30: { name: '30cm プラ定規', nominal: 30, length: 32, width: 3.4, mass: 26, mu: 0.48, kind: 'plastic' },
-    plastic15: { name: '15cm プラ定規', nominal: 15, length: 17, width: 2.6, mass: 9, mu: 0.48, kind: 'plastic' },
-    bamboo30: { name: '30cm 竹定規', nominal: 30, length: 32.5, width: 2.4, mass: 20, mu: 0.6, kind: 'bamboo' },
-    steel15: { name: '15cm ステンレス定規', nominal: 15, length: 17, width: 1.8, mass: 22, mu: 0.33, kind: 'steel' },
+    plastic30: { name: '30cm プラ定規', nominal: 30, length: 32, width: 3.4, mass: 26, mu: 0.48, kind: 'plastic', basic: true },
+    plastic15: { name: '15cm プラ定規', nominal: 15, length: 17, width: 2.6, mass: 9, mu: 0.48, kind: 'plastic', basic: true },
+    bamboo30: { name: '30cm 竹定規', nominal: 30, length: 32.5, width: 2.4, mass: 20, mu: 0.6, kind: 'bamboo', basic: true },
+    steel15: { name: '15cm ステンレス定規', nominal: 15, length: 17, width: 1.8, mass: 22, mu: 0.33, kind: 'steel', basic: true },
+    plastic20: { name: '20cm プラ定規', nominal: 20, length: 22, width: 3.0, mass: 15, mu: 0.48, kind: 'plastic' },
+    acrylic30: { name: '30cm アクリル定規', nominal: 30, length: 32, width: 4.2, mass: 32, mu: 0.4, kind: 'plastic' },
+    steel30: { name: '30cm ステンレス定規', nominal: 30, length: 32, width: 2.6, mass: 36, mu: 0.3, kind: 'steel' },
+    grid30: { name: '30cm 方眼定規', nominal: 30, length: 32, width: 5.0, mass: 30, mu: 0.44, kind: 'plastic', grid: true },
   };
+
+  // アクセサリの効果の上限（±5%）
+  const MOD_LIMIT = 0.05;
+  const clampMod = (v) => Math.max(1 - MOD_LIMIT, Math.min(1 + MOD_LIMIT, Number.isFinite(v) ? v : 1));
 
   const DEFAULT_PARAMS = {
     friction: 1.0,     // 机の摩擦の倍率
@@ -23,14 +32,17 @@ const Physics = (() => {
   const MAX_ENERGY = MAX_IMPULSE * MAX_IMPULSE / (2 * 26);
   const FRICTION_SAMPLES = 8;
 
-  function createBody(id, owner, specKey, x, y, a) {
+  // mods: アクセサリの効果 { mass, mu, power }（倍率。1.0 が効果なし、上限 ±5%）
+  function createBody(id, owner, specKey, x, y, a, mods) {
     const s = RULERS[specKey];
-    const L = s.length, W = s.width, m = s.mass;
+    const mm = clampMod(mods?.mass ?? 1), mu = clampMod(mods?.mu ?? 1), pw = clampMod(mods?.power ?? 1);
+    const L = s.length, W = s.width, m = s.mass * mm;
     const I = m * (L * L + W * W) / 12;
     return {
       id, owner, specKey, spec: s,
       x, y, a, vx: 0, vy: 0, w: 0,
       m, invM: 1 / m, I, invI: 1 / I,
+      mu: s.mu * mu, powerMul: pw,
       hx: L / 2, hy: W / 2,
       state: 'desk', fallAt: 0,
     };
@@ -48,7 +60,7 @@ const Physics = (() => {
 
   // 机との摩擦：定規を長さ方向に分割し、各点の滑り速度と逆向きに摩擦力をかける
   function applyDeskFriction(b, dt, scale) {
-    const mu = b.spec.mu * scale;
+    const mu = b.mu * scale;
     const c = Math.cos(b.a), s = Math.sin(b.a);
     const fPer = mu * (b.m / FRICTION_SAMPLES) * G;
     let Fx = 0, Fy = 0, T = 0;
@@ -228,12 +240,12 @@ const Physics = (() => {
     const arm = rx * diry - ry * dirx;
     const effMass = 1 / (b.invM + b.invI * arm * arm);
     const k = power * world.params.power; // 力の割合（引っぱった長さ×倍率）
-    const J = k * Math.sqrt(2 * MAX_ENERGY * effMass);
+    const J = k * Math.sqrt(2 * MAX_ENERGY * b.powerMul * effMass);
     const Jx = dirx * J, Jy = diry * J;
     b.vx += Jx * b.invM; b.vy += Jy * b.invM;
     b.w += b.invI * (rx * Jy - ry * Jx);
   }
 
-  return { G, DESK, RULERS, DEFAULT_PARAMS, MAX_IMPULSE, createBody, createWorld, step, atRest, flick, collide, axesOf };
+  return { G, DESK, RULERS, DEFAULT_PARAMS, MAX_IMPULSE, MOD_LIMIT, createBody, createWorld, step, atRest, flick, collide, axesOf };
 })();
 export default Physics;

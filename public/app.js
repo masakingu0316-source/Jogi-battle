@@ -2,6 +2,9 @@
 import Physics from './shared/physics.js';
 import { DESKS, MODES, PLAYERS, TEAMS, teamOf, playableReason } from './shared/rules.js';
 import { createBoard, MAX_DRAG } from './board.js';
+import { ITEMS, BASIC_RULERS, ECONOMY, accText } from './shared/catalog.js';
+import { previewRuler } from './ruler-paint.js';
+import { createAccount } from './account.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -18,8 +21,10 @@ const app = {
   code: null, ws: null, you: null, state: null,
   playing: null, pendingState: null, aim: null, waitingShot: false, fx: [],
   retries: 0, closedByUs: false, fatal: false, pingTimer: 0, reconnectTimer: 0,
+  view: 'room', prevPhase: null, config: null, me: null, lastReward: null,
 };
 const board = createBoard($('board'), $('boardWrap'));
+let account; // 下で作る（画面の関数を渡すため）
 
 // ---------------- 共通 ----------------
 let toastTimer = 0;
@@ -42,7 +47,7 @@ function setConn(text) {
   $('conn').hidden = !text;
 }
 function show(screen) {
-  for (const id of ['home', 'lobby', 'game']) $(id).hidden = id !== screen;
+  for (const id of ['home', 'lobby', 'game', 'mypage']) $(id).hidden = id !== screen;
 }
 const myName = () => $('name').value.trim() || 'ゲスト';
 const memberById = (id) => app.state?.members.find((m) => m.id === id) || null;
@@ -95,6 +100,7 @@ function toHome(errorText) {
   clearTimeout(app.reconnectTimer);
   if (app.ws) { try { app.ws.close(1000); } catch { } }
   app.ws = null; app.state = null; app.playing = null; app.aim = null; app.waitingShot = false;
+  app.view = 'room'; app.prevPhase = null; app.lastReward = null;
   setConn(null);
   if (app.code) $('code').value = app.code;
   app.code = null;
@@ -162,6 +168,11 @@ function onMessage(m) {
       app.waitingShot = false;
       startPlayback(m);
       break;
+    case 'reward':
+      app.lastReward = m;
+      account.setCoins(m.total);
+      if (app.state?.phase === 'over' && !app.playing && app.view === 'room') renderGame();
+      break;
     case 'error':
       if (m.fatal) {
         app.fatal = true;
@@ -185,6 +196,14 @@ function applyState(st) {
 function render() {
   const st = app.state;
   if (!st) return;
+  const started = st.phase === 'aim' && app.prevPhase !== 'aim';
+  app.prevPhase = st.phase;
+  if (started) app.lastReward = null;
+  if (app.view === 'mypage') {
+    if (!started) return;
+    app.view = 'room';
+    toast('対戦が始まりました');
+  }
   if (st.phase === 'lobby') { show('lobby'); renderLobby(); }
   else {
     const wasHidden = $('game').hidden;
@@ -212,7 +231,7 @@ function renderLobby() {
       m.connected ? '' : '<span class="badge off">接続待ち</span>',
     ].join('');
     rows.push(`<li><span class="seat" style="color:${pl.color}">${pl.name}</span>
-      <span class="who">${esc(m.name)}${badges}<span class="sub">${esc(Physics.RULERS[m.ruler]?.name || '')}</span></span><span></span></li>`);
+      <span class="who">${esc(m.name)}${badges}<span class="sub">${esc(ITEMS[m.loadout?.ruler]?.name || '')}${m.loadout?.acc ? '・' + esc(accText(m.loadout.acc)) : ''}${m.account ? '' : '・ゲスト'}</span></span><span></span></li>`);
   }
   $('members').innerHTML = rows.join('');
   $('memberCount').textContent = `${st.members.length}人`;
@@ -223,8 +242,7 @@ function renderLobby() {
   const desk = DESKS[mode.desk];
   $('modeNote').textContent = `${mode.note}（${desk.w}×${desk.h}cm）`;
 
-  const me = memberById(app.you?.id);
-  if (me && $('myRuler').value !== me.ruler) $('myRuler').value = me.ruler;
+  renderMyRuler(memberById(app.you?.id));
 
   const reason = playableReason(st.mode, st.members.length)
     || (st.members.some((m) => !m.connected) ? '接続が切れている人がいます' : null);
@@ -232,6 +250,24 @@ function renderLobby() {
   $('start').disabled = !!reason;
   const hostName = memberById(st.hostId)?.name || '部屋主';
   $('startNote').textContent = host ? (reason || '') : `${hostName}さんが始めるのを待っています${reason ? `（${reason}）` : ''}`;
+}
+
+// 待合室の「自分の定規」。ログイン中は持っている定規から、ゲストは基本の4本から選ぶ
+function renderMyRuler(me) {
+  if (!me) return;
+  const lo = me.loadout;
+  const ids = me.account && app.me
+    ? app.me.owned.filter((id) => ITEMS[id]?.kind === 'ruler')
+    : BASIC_RULERS;
+  const opts = ids.map((id) => `<option value="${id}">${esc(ITEMS[id].name)}${ITEMS[id].rarity !== 'basic' ? ` [${ITEMS[id].rarity}]` : ''}</option>`).join('');
+  if ($('myRuler').dataset.opts !== opts) { $('myRuler').innerHTML = opts; $('myRuler').dataset.opts = opts; }
+  $('myRuler').value = lo.ruler;
+  previewRuler($('lobbyPreview'), lo, Math.max(0, app.state.members.findIndex((m) => m.id === me.id)));
+  const bits = [];
+  if (lo.acc) bits.push(`アクセサリ：${ITEMS[lo.acc].name}（${accText(lo.acc)}）`);
+  if (!me.account) bits.push(app.config?.login ? 'ログインすると、ガチャで集めた定規や飾りが使えます。' : '');
+  $('rulerNote').textContent = bits.filter(Boolean).join('　');
+  $('openCase').hidden = !(me.account && app.me);
 }
 
 function renderGame() {
@@ -276,6 +312,13 @@ function renderGame() {
     $('resultTitle').style.color = teams ? TEAMS[teamOf(r.winners[0])].color : PLAYERS[r.winners[0]].color;
     $('resultReason').textContent = r.reason;
     $('resultOrder').textContent = r.outOrder.length ? '脱落の順：' + r.outOrder.join(' → ') : '';
+    const rw = app.lastReward;
+    $('resultReward').hidden = !rw;
+    if (rw) {
+      $('resultReward').textContent = rw.coins
+        ? `${ECONOMY.currency} +${rw.coins}${ECONOMY.unit}（合計 ${rw.total}${ECONOMY.unit}）${rw.capped ? '　今日の対戦ぶんは上限に達しました' : ''}`
+        : '今日の対戦でもらえるえんぴつは上限に達しました（記録は残ります）';
+    }
     $('resultActions').innerHTML = isHost()
       ? '<button class="btn-main" type="button" data-act="start">もう一回</button><button type="button" data-act="lobby">待合室へ（モード・メンバー変更）</button>'
       : `<span class="wait">${esc(memberById(st.hostId)?.name || '部屋主')}さんの操作を待っています</span>`;
@@ -283,8 +326,7 @@ function renderGame() {
 }
 
 // ---------------- 待合室の操作 ----------------
-$('myRuler').innerHTML = Object.entries(Physics.RULERS).map(([k, r]) => `<option value="${k}">${r.name}</option>`).join('');
-$('myRuler').addEventListener('change', () => send({ t: 'ruler', key: $('myRuler').value }));
+$('myRuler').addEventListener('change', () => send({ t: 'ruler', ruler: $('myRuler').value }));
 $('modes').addEventListener('click', (e) => {
   const b = e.target.closest('[data-mode]');
   if (b && !b.disabled) send({ t: 'mode', mode: b.dataset.mode });
@@ -374,7 +416,8 @@ function startPlayback(m) {
   app.pendingState = null;
   app.playing = {
     frames: m.frames, falls: m.falls, by: m.by, saved: m.saved, next: m.state,
-    specs: m.state.game.bodies.map((b) => b.specKey), start: performance.now(), fallStart: {}, fxDone: 0,
+    looks: m.state.game.bodies.map((b) => ({ specKey: b.specKey, pattern: b.pattern, sticker: b.sticker })),
+    start: performance.now(), fallStart: {}, fxDone: 0,
   };
   if (app.state) renderGame();
 }
@@ -388,7 +431,7 @@ function playbackBodies(now) {
   const frac = Math.max(0, Math.min(1, t - i));
   const A = p.frames[i], B = p.frames[j];
   const bodies = [];
-  for (let k = 0; k < p.specs.length; k++) {
+  for (let k = 0; k < p.looks.length; k++) {
     const o = k * 4;
     const s = A[o + 3];
     if (s === 2) continue;
@@ -399,7 +442,7 @@ function playbackBodies(now) {
       alpha = 1 - ft; scale = 1 - 0.38 * ft;
     }
     const lerp = (q) => (A[o + q] + (B[o + q] - A[o + q]) * frac);
-    bodies.push({ owner: k, specKey: p.specs[k], x: lerp(0) / 100, y: lerp(1) / 100, a: lerp(2) / 1000, alpha, scale });
+    bodies.push({ owner: k, ...p.looks[k], x: lerp(0) / 100, y: lerp(1) / 100, a: lerp(2) / 1000, alpha, scale });
   }
   // 落ちた瞬間の文字
   while (p.fxDone < p.falls.length && p.falls[p.fxDone].f <= t) {
@@ -444,6 +487,9 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // ---------------- 起動 ----------------
+account = createAccount({ app, $, esc, toast, show, render: () => render(), send });
+// ログインから戻ってきたときに部屋に入り直せるよう、状態を読み込んでから接続する
+await account.load();
 const params = new URLSearchParams(location.search);
 const roomParam = (params.get('room') || '').toUpperCase();
 show('home');

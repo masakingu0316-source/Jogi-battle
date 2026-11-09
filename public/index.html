@@ -17,6 +17,13 @@
   <header>
     <h1>定規バトル</h1>
     <span class="conn" id="conn" hidden></span>
+    <div class="account" id="account" hidden>
+      <a class="btn-login" id="loginBtn" href="/auth/login" hidden>Googleでログイン</a>
+      <button class="me-chip" id="meChip" type="button" hidden>
+        <span class="me-name" id="meName"></span>
+        <span class="coins"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l2-6L16 4l4 4-10 10z" fill="#f4d35e"/><path d="M4 20l2-6 4 4z" fill="#e9c9a0"/><path d="M4 20l1-3 2 2z" fill="#333"/></svg><b id="meCoins">0</b>本</span>
+      </button>
+    </div>
   </header>
 
   <!-- ホーム：部屋を作る / コードで入る -->
@@ -40,6 +47,72 @@
       </div>
       <p class="error" id="homeError" hidden></p>
     </div>
+    <p class="login-note" id="homeLoginNote" hidden>ログインすると、戦績やガチャで集めた定規・飾り・アクセサリが保存されます。ログインしなくても遊べます。</p>
+  </main>
+
+  <!-- マイページ：定規ケース・ガチャ・戦績 -->
+  <main id="mypage" class="screen" hidden>
+    <div class="my-head">
+      <button class="link" id="myBack" type="button">← 戻る</button>
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" data-tab="case" aria-selected="true">定規ケース</button>
+        <button type="button" role="tab" data-tab="gacha" aria-selected="false">ガチャ</button>
+        <button type="button" role="tab" data-tab="record" aria-selected="false">戦績</button>
+      </div>
+    </div>
+
+    <section class="tab-panel" id="tab-case">
+      <p class="sub-lead">使う定規を選んで、柄・シール・アクセサリを付けられます。<span id="collection"></span></p>
+      <div class="case-grid" id="rulerList"></div>
+      <div class="editor" id="editor" hidden>
+        <canvas class="preview-big" id="previewBig" aria-label="定規のプレビュー"></canvas>
+        <div class="editor-fields">
+          <label class="field-col" for="edPattern"><span>柄（見た目）</span><select id="edPattern"></select></label>
+          <label class="field-col" for="edSticker"><span>シール（見た目）</span><select id="edSticker"></select></label>
+          <label class="field-col" for="edAcc"><span>アクセサリ（性能に効く・最大5%）</span><select id="edAcc"></select></label>
+          <p class="acc-desc" id="accDesc"></p>
+          <div class="editor-actions">
+            <button class="btn-main" id="saveSetup" type="button">この定規を使う</button>
+            <span class="wait" id="saveNote"></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="tab-gacha" hidden>
+      <div class="gacha">
+        <div class="gacha-machine" aria-hidden="true">
+          <div class="dome"><span></span><span></span><span></span><span></span><span></span></div>
+          <div class="base">文具ガチャ</div>
+        </div>
+        <div class="gacha-side">
+          <p class="sub-lead">定規・柄・シール・アクセサリが出ます。持っているものが出たら、えんぴつが少し戻ってきます。</p>
+          <div class="gacha-buttons">
+            <button class="btn-main" id="pull1" type="button">1回引く（10本）</button>
+            <button class="btn-main" id="pull10" type="button">10回引く（100本）</button>
+          </div>
+          <p class="wait">10回引くと、Rレア以上が1つ必ず出ます。えんぴつは対戦とログインボーナスでたまります。</p>
+        </div>
+      </div>
+      <div class="gacha-results" id="gachaResults"></div>
+      <details class="odds">
+        <summary>出る確率</summary>
+        <div id="oddsTable"></div>
+      </details>
+    </section>
+
+    <section class="tab-panel" id="tab-record" hidden>
+      <div class="stat-row" id="statRow"></div>
+      <div class="table-wrap"><table class="mode-table" id="modeTable"></table></div>
+      <h2 class="mt">最近の対戦</h2>
+      <ol class="history" id="history"></ol>
+      <h2 class="mt">アカウント</h2>
+      <form class="rename" id="renameForm">
+        <label class="field-col" for="myNameInput"><span>表示名（対戦で表示されます）</span><input id="myNameInput" maxlength="10"></label>
+        <button type="submit">変更する</button>
+      </form>
+      <button class="link" id="logout" type="button">ログアウト</button>
+    </section>
   </main>
 
   <!-- 待合室 -->
@@ -66,7 +139,12 @@
         <div class="seg" id="modes" role="group" aria-label="モード"></div>
         <p class="mode-note" id="modeNote"></p>
         <h2 class="mt">自分の定規</h2>
-        <select id="myRuler" aria-label="自分の定規"></select>
+        <div class="my-ruler">
+          <canvas class="preview" id="lobbyPreview" aria-hidden="true"></canvas>
+          <select id="myRuler" aria-label="自分の定規"></select>
+        </div>
+        <p class="note" id="rulerNote"></p>
+        <button class="link" id="openCase" type="button" hidden>定規ケースで飾りやアクセサリを付ける</button>
         <div class="start-row">
           <button class="btn-main" id="start" type="button">対戦を始める</button>
           <span class="wait" id="startNote"></span>
@@ -89,6 +167,7 @@
         <h2 id="resultTitle"></h2>
         <p id="resultReason"></p>
         <p class="order" id="resultOrder"></p>
+        <p class="reward" id="resultReward" hidden></p>
         <div class="result-actions" id="resultActions"></div>
       </div>
     </div>
