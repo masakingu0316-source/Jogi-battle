@@ -251,3 +251,6 @@ header { align-items: center; }
   .account { margin-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) { .dome.spin span, .prize { animation: none; } }
+
+.site-foot { margin-top: 24px; font-size: 12px; }
+.site-foot a { color: var(--chalk-dim); }
