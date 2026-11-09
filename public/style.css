@@ -254,3 +254,9 @@ header { align-items: center; }
 
 .site-foot { margin-top: 24px; font-size: 12px; }
 .site-foot a { color: var(--chalk-dim); }
+
+.gacha-note { margin: 0; font-size: 13px; color: var(--chalk-yellow); min-height: 1.4em; max-width: 36em; }
+.gacha-note:empty { display: none; }
+
+code { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; background: rgba(0,0,0,0.25); padding: 1px 6px; border-radius: 4px; user-select: all; }
+.btn-admin { justify-self: start; color: var(--chalk-yellow); border: 1px dashed var(--chalk-yellow); border-radius: 6px; padding: 6px 12px; text-decoration: none; font-size: 14px; }

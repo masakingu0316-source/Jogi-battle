@@ -1,6 +1,6 @@
 // ログイン・マイページ（定規ケース・ガチャ・戦績）
 import Physics from './shared/physics.js';
-import { ITEMS, RARITIES, ECONOMY, GACHA_POOL, odds, accText } from './shared/catalog.js';
+import { ITEMS, RARITIES, ECONOMY, GACHA_POOL, odds, accText as accTextOf, defaultConfig } from './shared/catalog.js';
 import { MODES } from './shared/rules.js';
 import { previewRuler } from './ruler-paint.js';
 
@@ -10,6 +10,9 @@ export function createAccount(ctx) {
   const { app, $, esc, toast } = ctx;
   let tab = 'case';
   let editing = null; // 定規ケースで選んでいる定規
+  // 値段・確率・アクセサリの効き目は、管理者の設定（/api/config）に合わせる
+  const game = () => app.game || defaultConfig();
+  const accText = (id) => accTextOf(id, game());
 
   async function api(path, body) {
     const opt = body === undefined ? {} : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
@@ -19,9 +22,14 @@ export function createAccount(ctx) {
     return data;
   }
 
+  async function reloadGame() {
+    try { const c = await api('/api/config'); if (c.game) app.game = c.game; } catch { /* 前の値のまま */ }
+  }
+
   // ---- ログイン状態 ----
   async function load() {
     try { app.config = await api('/api/config'); } catch { app.config = { login: false }; }
+    app.game = app.config.game || defaultConfig();
     if (app.config.login) await refresh(true);
     updateHeader();
   }
@@ -74,7 +82,7 @@ export function createAccount(ctx) {
     for (const b of document.querySelectorAll('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === which));
     for (const t of ['case', 'gacha', 'record']) $('tab-' + t).hidden = t !== which;
     if (which === 'case') renderCase();
-    if (which === 'gacha') renderGacha();
+    if (which === 'gacha') { reloadGame().then(renderGacha); renderGacha(); }
     if (which === 'record') renderRecord();
   }
 
@@ -173,13 +181,21 @@ export function createAccount(ctx) {
   // ---- ガチャ ----
   function renderGachaButtons() {
     const c = app.me?.coins ?? 0;
-    $('pull1').disabled = c < ECONOMY.pull1;
-    $('pull10').disabled = c < ECONOMY.pull10;
+    const e = game().economy;
+    $('pull1').textContent = `1回引く（${e.pull1}${ECONOMY.unit}）`;
+    $('pull10').textContent = `10回引く（${e.pull10}${ECONOMY.unit}）`;
+    $('pull1').disabled = c < e.pull1;
+    $('pull10').disabled = c < e.pull10;
+    // 押せない理由と、えんぴつのため方を出す
+    const how = `対戦に参加すると${e.play}本（勝つと${e.play + e.win}本）、毎日のログインで${e.daily}本もらえます。`;
+    $('gachaNote').textContent = c < e.pull1
+      ? `${ECONOMY.currency}が足りません（いま${c}本、1回に${e.pull1}本必要）。${how}`
+      : c < e.pull10 ? `いまは${c}本。10回引くにはあと${e.pull10 - c}本必要です。` : '';
   }
   function renderGacha() {
     renderGachaButtons();
     $('oddsTable').innerHTML = `<table><thead><tr><th>レア度</th><th>確率</th><th>1つあたり</th><th>中身</th></tr></thead><tbody>${
-      odds().map((o) => `<tr><td>${rarityTag(o.rarity)} ${o.name}</td><td>${o.percent.toFixed(1)}%</td><td>${o.each.toFixed(2)}%</td>
+      odds(game()).filter((o) => o.items.length).map((o) => `<tr><td>${rarityTag(o.rarity)} ${o.name}</td><td>${o.percent.toFixed(1)}%</td><td>${o.each.toFixed(2)}%</td>
         <td>${o.items.map((id) => esc(ITEMS[id].name)).join('、')}</td></tr>`).join('')
     }</tbody></table><p class="wait">10回引くときの最後の1回は、Rレア以上のなかから上の比率で選ばれます。</p>`;
   }
@@ -212,6 +228,8 @@ export function createAccount(ctx) {
   async function renderRecord() {
     $('myNameInput').value = app.me.name;
     await refresh();
+    $('myId').textContent = app.me.id;
+    $('adminLink').hidden = !app.me.admin;
     const st = app.me.stats;
     const rate = st.games ? Math.round(st.wins / st.games * 100) + '%' : '—';
     const tiles = [['対戦', st.games], ['勝ち', st.wins], ['勝率', rate], ['落とした数', st.kos], ['自滅', st.selfOuts]];

@@ -91,6 +91,7 @@
             <button class="btn-main" id="pull1" type="button">1回引く（10本）</button>
             <button class="btn-main" id="pull10" type="button">10回引く（100本）</button>
           </div>
+          <p class="gacha-note" id="gachaNote" role="status"></p>
           <p class="wait">10回引くと、Rレア以上が1つ必ず出ます。えんぴつは対戦とログインボーナスでたまります。</p>
         </div>
       </div>
@@ -111,6 +112,8 @@
         <label class="field-col" for="myNameInput"><span>表示名（対戦で表示されます）</span><input id="myNameInput" maxlength="10"></label>
         <button type="submit">変更する</button>
       </form>
+      <p class="note">アカウントID：<code id="myId"></code>（設定画面を使う管理者を登録するときに使います）</p>
+      <a class="btn-admin" id="adminLink" href="/admin.html" hidden>設定画面を開く（管理者）</a>
       <button class="link" id="logout" type="button">ログアウト</button>
     </section>
   </main>

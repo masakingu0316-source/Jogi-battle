@@ -2,7 +2,7 @@
 import Physics from './shared/physics.js';
 import { DESKS, MODES, PLAYERS, TEAMS, teamOf, playableReason } from './shared/rules.js';
 import { createBoard, MAX_DRAG } from './board.js';
-import { ITEMS, BASIC_RULERS, ECONOMY, accText } from './shared/catalog.js';
+import { ITEMS, BASIC_RULERS, ECONOMY, accText as accTextOf, defaultConfig } from './shared/catalog.js';
 import { previewRuler } from './ruler-paint.js';
 import { createAccount } from './account.js';
 
@@ -16,6 +16,7 @@ const store = {
 const tokenKey = (code) => 'jogi:token:' + code;
 const CODE_RE = /^[A-Z0-9]{5}$/;
 const FPS = 30;
+const accText = (id) => accTextOf(id, app.game || defaultConfig());
 
 const app = {
   code: null, ws: null, you: null, state: null,

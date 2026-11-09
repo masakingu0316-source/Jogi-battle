@@ -1,5 +1,5 @@
 // アカウントまわりのデータベース操作（Cloudflare D1）
-import { ITEMS, BASIC_RULERS, DEFAULT_RULER, ECONOMY, RARITIES, rollOnce, resolveLoadout } from '../public/shared/catalog.js';
+import { ITEMS, BASIC_RULERS, DEFAULT_RULER, ECONOMY, rollOnce, resolveLoadout, sanitizeConfig } from '../public/shared/catalog.js';
 import { cleanName } from './core.js';
 
 const SCHEMA = [
@@ -21,6 +21,7 @@ const SCHEMA = [
     kos INTEGER NOT NULL, self_out INTEGER NOT NULL, ruler_id TEXT, coins INTEGER NOT NULL DEFAULT 0,
     played_at INTEGER NOT NULL, PRIMARY KEY (match_id, user_id))`,
   `CREATE INDEX IF NOT EXISTS match_players_user ON match_players(user_id, played_at)`,
+  `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS gacha_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, item_id TEXT NOT NULL, dup INTEGER NOT NULL, pulled_at INTEGER NOT NULL)`,
 ];
@@ -45,6 +46,33 @@ export async function sha256Hex(text) {
 // 日本時間の日付（ログインボーナスと、対戦報酬の1日の上限に使う）
 export const jstDay = (now = Date.now()) => new Date(now + 9 * 3600 * 1000).toISOString().slice(0, 10);
 
+// ---- ゲームの設定（管理者が設定画面で変えた値） ----
+// 毎回データベースを読まないよう、30秒だけ手元に覚えておく
+const CONFIG_TTL_MS = 30 * 1000;
+let configCache = null;
+export async function getConfig(db, now = Date.now()) {
+  if (configCache && now - configCache.at < CONFIG_TTL_MS) return configCache.cfg;
+  const row = await db.prepare(`SELECT value FROM settings WHERE key = 'game'`).first();
+  let raw = null;
+  try { raw = row ? JSON.parse(row.value) : null; } catch { raw = null; }
+  const cfg = sanitizeConfig(raw);
+  configCache = { cfg, at: now };
+  return cfg;
+}
+export async function saveConfig(db, cfg, now = Date.now()) {
+  const clean = sanitizeConfig(cfg);
+  await db.prepare(`INSERT INTO settings (key, value, updated_at) VALUES ('game', ?, ?)
+    ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).bind(JSON.stringify(clean), now).run();
+  configCache = { cfg: clean, at: now };
+  return clean;
+}
+export async function resetConfig(db, now = Date.now()) {
+  await db.prepare(`DELETE FROM settings WHERE key = 'game'`).run();
+  configCache = { cfg: sanitizeConfig(null), at: now };
+  return configCache.cfg;
+}
+export function clearConfigCache() { configCache = null; }
+
 // ---- セッション ----
 const SESSION_DAYS = 30;
 export async function createSession(db, userId, now = Date.now()) {
@@ -68,16 +96,18 @@ export async function upsertGoogleUser(db, sub, name, now = Date.now()) {
   const found = await db.prepare('SELECT * FROM users WHERE google_sub = ?').bind(sub).first();
   if (found) return { user: found, created: false };
   const id = randomHex(8);
+  const cfg = await getConfig(db, now);
   await db.prepare('INSERT INTO users (id, google_sub, name, coins, created_at) VALUES (?, ?, ?, ?, ?)')
-    .bind(id, sub, cleanName(name), ECONOMY.welcome, now).run();
+    .bind(id, sub, cleanName(name), cfg.economy.welcome, now).run();
   return { user: await db.prepare('SELECT * FROM users WHERE id = ?').bind(id).first(), created: true };
 }
 
 export async function claimDaily(db, userId, now = Date.now()) {
   const day = jstDay(now);
+  const { daily } = (await getConfig(db, now)).economy;
   const r = await db.prepare(`UPDATE users SET coins = coins + ?, last_daily = ? WHERE id = ? AND (last_daily IS NULL OR last_daily <> ?)`)
-    .bind(ECONOMY.daily, day, userId, day).run();
-  return r.meta.changes > 0 ? ECONOMY.daily : 0;
+    .bind(daily, day, userId, day).run();
+  return r.meta.changes > 0 ? daily : 0;
 }
 
 export async function rename(db, userId, name) {
@@ -158,13 +188,15 @@ export async function loadoutFor(db, userId, rulerId) {
   if (rulerId && rulerId !== user?.selected_ruler) {
     await db.prepare('UPDATE users SET selected_ruler = ? WHERE id = ?').bind(ruler, userId).run();
   }
-  return { loadout: resolveLoadout({ ruler, pattern: keep(s.pattern), sticker: keep(s.sticker), acc: keep(s.acc) }) };
+  const cfg = await getConfig(db);
+  return { loadout: resolveLoadout({ ruler, pattern: keep(s.pattern), sticker: keep(s.sticker), acc: keep(s.acc) }, cfg) };
 }
 
 // ---- ガチャ ----
 export async function pullGacha(db, userId, count, rand = Math.random, now = Date.now()) {
   if (count !== 1 && count !== 10) return { error: '1回か10回で引いてください' };
-  const cost = count === 10 ? ECONOMY.pull10 : ECONOMY.pull1 * count;
+  const cfg = await getConfig(db, now);
+  const cost = count === 10 ? cfg.economy.pull10 : cfg.economy.pull1 * count;
   const paid = await db.prepare('UPDATE users SET coins = coins - ? WHERE id = ? AND coins >= ?').bind(cost, userId, cost).run();
   if (!paid.meta.changes) return { error: `${ECONOMY.currency}が足りません（${cost}${ECONOMY.unit}必要です）` };
 
@@ -173,11 +205,12 @@ export async function pullGacha(db, userId, count, rand = Math.random, now = Dat
   let refund = 0;
   for (let i = 0; i < count; i++) {
     // 10回のときは最後の1回をRレア以上にする
-    const item = rollOnce(rand, count === 10 && i === count - 1 ? 'R' : null);
+    const item = rollOnce(rand, count === 10 && i === count - 1 ? 'R' : null, cfg);
     const dup = owned.has(item.id);
-    if (dup) refund += RARITIES[item.rarity].refund;
-    else owned.add(item.id);
-    results.push({ id: item.id, dup, refund: dup ? RARITIES[item.rarity].refund : 0 });
+    const back = dup ? cfg.rarities[item.rarity].refund : 0;
+    refund += back;
+    if (!dup) owned.add(item.id);
+    results.push({ id: item.id, dup, refund: back });
   }
   const stmts = [];
   for (const r of results) {
@@ -196,6 +229,7 @@ export async function recordMatch(db, rec, now = Date.now()) {
   const accounts = rec.players.filter((p) => p.userId);
   if (!accounts.length) return {};
   const day = jstDay(now);
+  const { economy } = await getConfig(db, now);
   const matchId = randomHex(8);
   const rewards = {};
   const stmts = [db.prepare('INSERT INTO matches (id, room, mode, players, shots, names, played_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
@@ -207,8 +241,8 @@ export async function recordMatch(db, rec, now = Date.now()) {
     const u = await db.prepare('SELECT battle_day, battle_earned FROM users WHERE id = ?').bind(p.userId).first();
     if (!u) continue;
     const earned = u.battle_day === day ? u.battle_earned : 0;
-    const want = ECONOMY.play + (p.won ? ECONOMY.win : 0);
-    const give = Math.max(0, Math.min(want, ECONOMY.dailyBattleCap - earned));
+    const want = economy.play + (p.won ? economy.win : 0);
+    const give = Math.max(0, Math.min(want, economy.dailyBattleCap - earned));
     rewards[p.userId] = { coins: give, capped: give < want };
     stmts.push(db.prepare('UPDATE users SET coins = coins + ?, battle_day = ?, battle_earned = ? WHERE id = ?').bind(give, day, earned + give, p.userId));
     stmts.push(db.prepare(`INSERT INTO match_players (match_id, user_id, seat, won, kos, self_out, ruler_id, coins, played_at)
@@ -219,4 +253,22 @@ export async function recordMatch(db, rec, now = Date.now()) {
     rewards[uid].total = (await db.prepare('SELECT coins FROM users WHERE id = ?').bind(uid).first())?.coins ?? 0;
   }
   return rewards;
+}
+
+// ---- 管理者向け ----
+export async function findUsers(db, q, limit = 30) {
+  const like = `%${String(q || '').replace(/[%_]/g, '')}%`;
+  const rows = (await db.prepare(`SELECT u.id, u.name, u.coins, u.created_at,
+      (SELECT COUNT(*) FROM match_players p WHERE p.user_id = u.id) AS games
+      FROM users u WHERE u.name LIKE ? OR u.id = ? ORDER BY u.created_at DESC LIMIT ?`).bind(like, String(q || ''), limit).all()).results;
+  return rows.map((r) => ({ id: r.id, name: r.name, coins: r.coins, createdAt: r.created_at, games: r.games }));
+}
+
+// えんぴつを配る（マイナスで減らす。0本より下にはしない）
+export async function giftCoins(db, userId, amount) {
+  const n = Math.trunc(Number(amount));
+  if (!Number.isFinite(n) || n === 0 || Math.abs(n) > 100000) return { error: '本数は -100000〜100000 の整数で入れてください（0以外）' };
+  const r = await db.prepare('UPDATE users SET coins = MAX(0, coins + ?) WHERE id = ?').bind(n, userId).run();
+  if (!r.meta.changes) return { error: 'そのユーザーが見つかりません' };
+  return { coins: (await db.prepare('SELECT coins FROM users WHERE id = ?').bind(userId).first()).coins };
 }

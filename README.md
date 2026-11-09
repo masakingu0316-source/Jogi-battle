@@ -71,12 +71,30 @@ Cloudflare や Google の画面の表記は変わることがあるので、近�
 
 ### C. 値を設定する
 
-1. `wrangler.jsonc` の `"vars"` の行の先頭の `//` を外し、クライアントIDを書く
-2. Cloudflare のダッシュボードで、この Worker の「設定」→「変数とシークレット」→「追加」
-   種類「シークレット」、名前 `GOOGLE_CLIENT_SECRET`、値にクライアントシークレット
-3. `wrangler.jsonc` の変更を GitHub に入れる（自動で公開し直される）
+1. Cloudflare のダッシュボードで、この Worker の「設定」→「変数とシークレット」→「追加」から、種類「シークレット」で次の2つを登録する
+   - 名前 `GOOGLE_CLIENT_ID`、値にクライアントID
+   - 名前 `GOOGLE_CLIENT_SECRET`、値にクライアントシークレット
+2. `wrangler.jsonc` の変更（データベースID）を GitHub に入れる（自動で公開し直される）
+
+クライアントIDもシークレットも、GitHub のファイルには書かないでください（GitHub の検査で警告が出ます）。
 
 画面右上に「Googleでログイン」が出れば完了です。
+
+## 設定画面（管理者だけ）
+
+`https://jogi-battle.<あなたのサブドメイン>.workers.dev/admin.html` で、コードを触らずに次のことができます。
+
+- えんぴつ：ガチャの値段、はじめてのログイン・毎日のログイン・対戦でもらえる本数、対戦の1日の上限
+- ガチャ：レア度ごとの確率（重み）と、かぶったときに戻る本数
+- アイテム：ガチャに出すかどうか、アクセサリの効き目（−5〜5%）
+- ユーザー：表示名やアカウントIDで探して、えんぴつを配る・減らす
+
+保存した値はデータベースに入り、30秒ほどで全体に反映されます。「初期値に戻す」で、コードに書いた値（`public/shared/catalog.js`）に戻ります。
+
+**管理者の登録**
+1. 自分のアカウントでログインし、マイページの「戦績」タブの下にある **アカウントID** を控える（設定画面を開いたときにも表示されます）
+2. Cloudflare でこの Worker の「設定」→「変数とシークレット」→「追加」から、種類「シークレット」、名前 `ADMIN_USER_IDS`、値にアカウントIDを登録する（複数人ならカンマ区切り）
+3. 1〜2分後に設定画面を開き直す
 
 ## 手元で動かす（任意）
 
@@ -89,7 +107,7 @@ npm test        # ルール・部屋の進行・データベースのテスト�
 ```
 
 手元でログインを試すときは、Google 側のリダイレクト URI に `http://localhost:8787/auth/callback` も追加し、
-`.dev.vars` というファイルに `GOOGLE_CLIENT_SECRET=...` と書いておきます。
+`.dev.vars` というファイルに `GOOGLE_CLIENT_ID=...` と `GOOGLE_CLIENT_SECRET=...` を書いておきます（このファイルは GitHub に入りません）。
 
 ## ファイル
 
@@ -106,11 +124,12 @@ npm test        # ルール・部屋の進行・データベースのテスト�
 | `public/shared/catalog.js` | アイテムの一覧、レア度と確率、えんぴつの数値 |
 | `public/app.js` | 画面の切り替え、通信、はじく操作、動きの再生 |
 | `public/account.js` | ログイン表示とマイページ（定規ケース・ガチャ・戦績） |
+| `public/admin.html` / `public/admin.js` | 設定画面（管理者だけ） |
 | `public/board.js` / `public/ruler-paint.js` | 盤面と定規（柄・シール込み）の描画 |
 | `test/` | テスト |
 
 ## 調整したい値
 
+- えんぴつの数、ガチャの確率、アクセサリの効き目：設定画面から（初期値は `public/shared/catalog.js`）
 - 定規の重さ・すべりやすさ：`public/shared/physics.js` の `RULERS`
-- アクセサリの効果、ガチャの確率、えんぴつの数：`public/shared/catalog.js`
 - 机の大きさとモード：`public/shared/rules.js`

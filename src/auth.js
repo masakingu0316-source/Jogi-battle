@@ -8,7 +8,10 @@ const GOOGLE_AUTH = 'https://accounts.google.com/o/oauth2/v2/auth';
 const GOOGLE_TOKEN = 'https://oauth2.googleapis.com/token';
 const GOOGLE_ISSUERS = ['https://accounts.google.com', 'accounts.google.com'];
 
-export const loginEnabled = (env) => !!(env.DB && env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET);
+export const loginEnabled = (env) => !!(env.DB && clientId(env) && clientSecret(env));
+// 貼り付けたときに紛れ込んだ空白や改行は取り除く
+const clientId = (env) => String(env.GOOGLE_CLIENT_ID || '').trim();
+const clientSecret = (env) => String(env.GOOGLE_CLIENT_SECRET || '').trim();
 
 export function readCookie(request, name) {
   const raw = request.headers.get('Cookie') || '';
@@ -58,7 +61,7 @@ export async function handleAuth(request, env, url) {
     const challenge = b64url(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier))));
     const ret = safeReturn(url.searchParams.get('return'));
     const q = new URLSearchParams({
-      client_id: env.GOOGLE_CLIENT_ID,
+      client_id: clientId(env),
       redirect_uri: `${url.origin}/auth/callback`,
       response_type: 'code',
       scope: 'openid profile',
@@ -89,8 +92,8 @@ export async function handleAuth(request, env, url) {
       headers: { 'content-type': 'application/x-www-form-urlencoded' },
       body: new URLSearchParams({
         code,
-        client_id: env.GOOGLE_CLIENT_ID,
-        client_secret: env.GOOGLE_CLIENT_SECRET,
+        client_id: clientId(env),
+        client_secret: clientSecret(env),
         redirect_uri: `${url.origin}/auth/callback`,
         grant_type: 'authorization_code',
         code_verifier: saved.verifier,
@@ -102,7 +105,7 @@ export async function handleAuth(request, env, url) {
     let claims;
     try { claims = decodeJwtPayload(data.id_token); } catch { claims = null; }
     const now = Date.now();
-    if (!claims || !GOOGLE_ISSUERS.includes(claims.iss) || claims.aud !== env.GOOGLE_CLIENT_ID || !claims.sub || claims.exp * 1000 < now) {
+    if (!claims || !GOOGLE_ISSUERS.includes(claims.iss) || claims.aud !== clientId(env) || !claims.sub || claims.exp * 1000 < now) {
       return messagePage('ログイン情報を確認できませんでした。もう一度お試しください。', 400);
     }
     await ensureSchema(env.DB);

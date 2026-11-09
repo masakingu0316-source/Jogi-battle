@@ -69,35 +69,96 @@ export const GACHA_POOL = items.filter((it) => it.rarity !== 'basic');
 export const BASIC_RULERS = items.filter((it) => it.kind === 'ruler' && it.rarity === 'basic').map((it) => it.id);
 export const DEFAULT_RULER = 'ruler:plastic30';
 
+// ---- ゲームの設定 ----
+// コードに書いた値が初期値。管理者が設定画面で変えた値はデータベースに保存され、こちらより優先される。
+export const ORDER = ['N', 'R', 'SR', 'SSR'];
+export const ECONOMY_KEYS = {
+  pull1: { name: 'ガチャ1回の値段', min: 1, max: 10000 },
+  pull10: { name: 'ガチャ10回の値段', min: 1, max: 100000 },
+  welcome: { name: 'はじめてのログイン', min: 0, max: 100000 },
+  daily: { name: '毎日のログインボーナス', min: 0, max: 10000 },
+  play: { name: '対戦に参加', min: 0, max: 1000 },
+  win: { name: '勝ったときの上乗せ', min: 0, max: 1000 },
+  dailyBattleCap: { name: '対戦で1日にもらえる上限', min: 0, max: 100000 },
+};
+
+export function defaultConfig() {
+  return {
+    economy: Object.fromEntries(Object.keys(ECONOMY_KEYS).map((k) => [k, ECONOMY[k]])),
+    rarities: Object.fromEntries(ORDER.map((k) => [k, { weight: RARITIES[k].weight, refund: RARITIES[k].refund }])),
+    acc: Object.fromEntries(items.filter((it) => it.kind === 'acc').map((it) => [it.id, it.pct])),
+    disabled: [],
+  };
+}
+
+// 設定画面やデータベースから来た値を、決まった範囲に収めて、足りない項目は初期値で埋める
+export function sanitizeConfig(input) {
+  const base = defaultConfig();
+  const src = input && typeof input === 'object' ? input : {};
+  const num = (v, min, max, fallback, step = 1) => {
+    const n = Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(min, Math.min(max, Math.round(n / step) * step));
+  };
+  const economy = {};
+  for (const [k, r] of Object.entries(ECONOMY_KEYS)) economy[k] = num(src.economy?.[k], r.min, r.max, base.economy[k]);
+  const rarities = {};
+  for (const k of ORDER) {
+    rarities[k] = {
+      weight: num(src.rarities?.[k]?.weight, 0, 10000, base.rarities[k].weight, 0.1),
+      refund: num(src.rarities?.[k]?.refund, 0, 100000, base.rarities[k].refund),
+    };
+  }
+  const limit = Physics.MOD_LIMIT * 100;
+  const acc = {};
+  for (const id of Object.keys(base.acc)) acc[id] = num(src.acc?.[id], -limit, limit, base.acc[id], 0.5);
+  const disabled = Array.isArray(src.disabled) ? [...new Set(src.disabled.filter((id) => GACHA_POOL.some((it) => it.id === id)))] : [];
+  return { economy, rarities, acc, disabled };
+}
+
+// 設定として成り立っているか（保存の前に確かめる）。問題があれば理由を返す
+export function configProblem(cfg) {
+  if (!activeRarities(cfg).length) return 'ガチャで出るものがありません。確率が0より大きいレア度に、出すアイテムを1つ以上残してください';
+  return null;
+}
+
+const poolOf = (cfg, rarity) => GACHA_POOL.filter((it) => it.rarity === rarity && !cfg.disabled.includes(it.id));
+// 出せるアイテムがあり、確率が0より大きいレア度だけ
+const activeRarities = (cfg, from = 'N') =>
+  ORDER.slice(ORDER.indexOf(from)).filter((k) => cfg.rarities[k].weight > 0 && poolOf(cfg, k).length);
+
 // レア度ごとの確率（表示用、合計100%）と、各アイテムの確率
-export function odds() {
-  const total = Object.values(RARITIES).reduce((a, r) => a + r.weight, 0);
-  return Object.entries(RARITIES).map(([key, r]) => {
-    const pool = GACHA_POOL.filter((it) => it.rarity === key);
-    return { rarity: key, name: r.name, percent: (r.weight / total) * 100, each: (r.weight / total) * 100 / pool.length, items: pool.map((it) => it.id) };
+export function odds(cfg = defaultConfig()) {
+  const act = activeRarities(cfg);
+  const total = act.reduce((a, k) => a + cfg.rarities[k].weight, 0) || 1;
+  return ORDER.map((key) => {
+    const pool = poolOf(cfg, key);
+    const p = act.includes(key) ? (cfg.rarities[key].weight / total) * 100 : 0;
+    return { rarity: key, name: RARITIES[key].name, percent: p, each: pool.length ? p / pool.length : 0, items: pool.map((it) => it.id) };
   });
 }
 
-// 1回引く。rand は 0以上1未満を返す関数。minRarity を指定すると、それ未満は引き直さずに格上げする
-const ORDER = ['N', 'R', 'SR', 'SSR'];
-export function rollOnce(rand, minRarity) {
-  const total = Object.values(RARITIES).reduce((a, r) => a + r.weight, 0);
-  let x = rand() * total, rarity = 'N';
-  for (const key of ORDER) { x -= RARITIES[key].weight; if (x < 0) { rarity = key; break; } }
+// 1回引く。rand は 0以上1未満を返す関数。minRarity を指定すると、それ以上のレア度の比率で選び直す（確定枠）
+export function rollOnce(rand, minRarity, cfg = defaultConfig()) {
+  const pick = (keys) => {
+    const total = keys.reduce((a, k) => a + cfg.rarities[k].weight, 0);
+    let x = rand() * total;
+    for (const k of keys) { x -= cfg.rarities[k].weight; if (x < 0) return k; }
+    return keys[keys.length - 1];
+  };
+  let rarity = pick(activeRarities(cfg));
   if (minRarity && ORDER.indexOf(rarity) < ORDER.indexOf(minRarity)) {
-    // 確定枠：Rレア以上の比率で引き直す
-    const keys = ORDER.slice(ORDER.indexOf(minRarity));
-    const t = keys.reduce((a, k) => a + RARITIES[k].weight, 0);
-    let y = rand() * t;
-    rarity = keys[keys.length - 1];
-    for (const k of keys) { y -= RARITIES[k].weight; if (y < 0) { rarity = k; break; } }
+    const upper = activeRarities(cfg, minRarity);
+    if (upper.length) rarity = pick(upper);
   }
-  const pool = GACHA_POOL.filter((it) => it.rarity === rarity);
+  const pool = poolOf(cfg, rarity);
   return pool[Math.floor(rand() * pool.length)];
 }
 
+export const accPct = (id, cfg = defaultConfig()) => cfg.acc?.[id] ?? ITEMS[id]?.pct ?? 0;
+
 // 定規1本ぶんの装備から、対戦で使う情報を作る（所持の確認は呼ぶ側で行う）
-export function resolveLoadout(setup) {
+export function resolveLoadout(setup, cfg = defaultConfig()) {
   const ruler = ITEMS[setup?.ruler] && ITEMS[setup.ruler].kind === 'ruler' ? ITEMS[setup.ruler] : ITEMS[DEFAULT_RULER];
   const pattern = ITEMS[setup?.pattern]?.kind === 'pattern' ? setup.pattern : null;
   const sticker = ITEMS[setup?.sticker]?.kind === 'sticker' ? setup.sticker : null;
@@ -105,13 +166,14 @@ export function resolveLoadout(setup) {
   const mods = { mass: 1, mu: 1, power: 1 };
   if (acc) {
     const a = ITEMS[acc];
-    mods[a.stat] = 1 + Math.max(-Physics.MOD_LIMIT, Math.min(Physics.MOD_LIMIT, a.pct / 100));
+    mods[a.stat] = 1 + Math.max(-Physics.MOD_LIMIT, Math.min(Physics.MOD_LIMIT, accPct(acc, cfg) / 100));
   }
   return { ruler: ruler.id, specKey: ruler.specKey, pattern, sticker, acc, mods };
 }
 
-export function accText(id) {
+export function accText(id, cfg = defaultConfig()) {
   const a = ITEMS[id];
   if (!a || a.kind !== 'acc') return '';
-  return `${STATS[a.stat].name} ${a.pct > 0 ? '+' : ''}${a.pct}%`;
+  const pct = accPct(id, cfg);
+  return `${STATS[a.stat].name} ${pct > 0 ? '+' : ''}${pct}%`;
 }

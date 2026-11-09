@@ -90,3 +90,50 @@ test('対戦の記録：勝つと多くもらえ、1日の上限で止まる。�
   assert.deepEqual(recent[0].names, ['A', 'B']);
   assert.equal(recent[0].selfOut, true);
 });
+
+test('設定画面で変えた値が、ガチャの値段・ログイン時の本数・対戦の報酬・アクセサリに効く', { skip }, async () => {
+  await D.saveConfig(db, { economy: { pull1: 7, welcome: 500, play: 1, win: 2, dailyBattleCap: 999 }, acc: { 'acc:goldcot': 1.5 } });
+  try {
+    const { user } = await D.upsertGoogleUser(db, 'cfg-user', '設定テスト');
+    assert.equal(user.coins, 500);
+    const r = await D.pullGacha(db, user.id, 1);
+    assert.equal(r.cost, 7);
+    const o = await newUser();
+    const rw = await D.recordMatch(db, { room: 'X', mode: 'quick', n: 2, shots: 3, names: ['a', 'b'],
+      players: [{ userId: user.id, seat: 0, won: true, kos: 1, selfOut: false, ruler: 'ruler:plastic30' },
+                { userId: o.id, seat: 1, won: false, kos: 0, selfOut: false, ruler: 'ruler:plastic30' }] });
+    assert.equal(rw[user.id].coins, 3);
+    assert.equal(rw[o.id].coins, 1);
+    await db.prepare('INSERT INTO items (user_id, item_id, acquired_at) VALUES (?, ?, 0)').bind(user.id, 'acc:goldcot').run();
+    await D.saveSetup(db, user.id, { ruler: 'ruler:plastic30', acc: 'acc:goldcot' });
+    assert.equal((await D.loadoutFor(db, user.id)).loadout.mods.power, 1.015);
+  } finally {
+    await D.resetConfig(db);
+  }
+});
+
+test('設定の範囲チェック：上限を超える値は丸められ、出せるアイテムがなくなる設定は保存できない', { skip }, async () => {
+  const { sanitizeConfig, configProblem, odds, rollOnce, GACHA_POOL } = await import('../public/shared/catalog.js');
+  const s = sanitizeConfig({ economy: { pull1: -3, daily: 'abc' }, acc: { 'acc:goldclip': 30 }, rarities: { SSR: { weight: 0 } } });
+  assert.equal(s.economy.pull1, 1);
+  assert.equal(s.economy.daily, ECONOMY.daily);
+  assert.equal(s.acc['acc:goldclip'], 5);
+  assert.equal(odds(s).find((x) => x.rarity === 'SSR').percent, 0);
+  for (let i = 0; i < 200; i++) assert.notEqual(rollOnce(Math.random, null, s).rarity, 'SSR');
+  const none = sanitizeConfig({ disabled: GACHA_POOL.map((it) => it.id) });
+  assert.match(configProblem(none), /出るものがありません/);
+  // ガチャから外したアイテムは出ない
+  const off = sanitizeConfig({ disabled: GACHA_POOL.filter((it) => it.rarity === 'N').map((it) => it.id) });
+  for (let i = 0; i < 200; i++) assert.notEqual(rollOnce(Math.random, null, off).rarity, 'N');
+});
+
+test('えんぴつを配る・減らす（0本より下にはならない）。ユーザーを名前で探せる', { skip }, async () => {
+  const { user } = await D.upsertGoogleUser(db, 'gift-user', 'プレゼント');
+  assert.equal((await D.giftCoins(db, user.id, 50)).coins, ECONOMY.welcome + 50);
+  assert.equal((await D.giftCoins(db, user.id, -99999)).coins, 0);
+  assert.match((await D.giftCoins(db, user.id, 0)).error, /0以外/);
+  assert.match((await D.giftCoins(db, 'nobody', 5)).error, /見つかりません/);
+  const found = await D.findUsers(db, 'プレゼ');
+  assert.equal(found[0].id, user.id);
+  assert.equal((await D.findUsers(db, user.id))[0].name, 'プレゼント');
+});
