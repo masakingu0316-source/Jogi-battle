@@ -18,7 +18,7 @@
   // アカウントを保存するデータベース。database_id は Cloudflare で作ったデータベースのID
   // "d1_databases": [{ "binding": "DB", "database_name": "jogi-battle-db", "database_id": "ここにデータベースのID" }],
   // Google の OAuth クライアントID（公開しても問題ない値）。シークレットはダッシュボードで設定する
-  // "vars": { "GOOGLE_CLIENT_ID": "ここにクライアントID.apps.googleusercontent.com" },
+  "vars": { "GOOGLE_CLIENT_ID": "ここにクライアントID.apps.googleusercontent.com" },
 
   "observability": { "enabled": true }
 }
