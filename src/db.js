@@ -1,6 +1,6 @@
 // アカウントまわりのデータベース操作（Cloudflare D1）
 import { ITEMS, BASIC_RULERS, DEFAULT_RULER, ECONOMY, rollOnce, resolveLoadout, sanitizeConfig, levelInfo } from '../public/shared/catalog.js';
-import { cleanName } from './core.js';
+import { cleanName } from '../public/shared/core.js';
 
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS users (

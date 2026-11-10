@@ -50,6 +50,18 @@
         <div class="create-row">
           <button class="btn-main" id="create" type="button">この遊び方で部屋を作る</button>
         </div>
+        <div class="practice" id="practiceBox">
+          <h3>コンピュータと練習</h3>
+          <p class="note">上で選んだ遊び方で、コンピュータと対戦します。練習なので、えんぴつ・経験値・戦績は増えません。</p>
+          <div class="practice-row">
+            <div class="seg" id="cpuLevel" role="group" aria-label="コンピュータの強さ"></div>
+            <label class="cpu-count" id="cpuCountWrap">コンピュータ
+              <select id="cpuCount"><option value="2">2人</option><option value="3">3人</option></select>
+            </label>
+            <button type="button" id="practiceBtn">練習を始める</button>
+          </div>
+          <p class="note" id="practiceNote"></p>
+        </div>
       </section>
       <div class="home-side">
         <section class="panel">
@@ -169,7 +181,7 @@
       <section class="panel">
         <h2>メンバー <small id="memberCount"></small></h2>
         <ol class="members" id="members"></ol>
-        <p class="note">入った順に席（赤→青→緑→黄）が決まります。</p>
+        <p class="note" id="seatNote">入った順に席（赤→青→緑→黄）が決まります。</p>
       </section>
       <section class="panel">
         <h2>自分の定規</h2>
@@ -210,6 +222,7 @@
     </div>
     <div class="controls">
       <button id="skip" type="button" hidden>この人の番を飛ばす</button>
+      <button class="link quit-practice" id="quitPractice" type="button" hidden>練習をやめてホームへ</button>
       <span class="spacer"></span>
       <small>押さえた位置が「はじく点」。端をはじくと回転します。最初の1周は落ちても元の席に戻ります。</small>
     </div>

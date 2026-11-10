@@ -461,3 +461,13 @@ code { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size:
   border: 2px solid var(--warn); box-shadow: 0 6px 20px rgba(20, 28, 50, 0.25); font-size: 14px; text-align: center;
 }
 .update-bar .btn-main { padding: 8px 18px; }
+
+/* コンピュータと練習（ホーム） */
+.practice { margin-top: 20px; padding-top: 16px; border-top: 1px dashed var(--line-strong); display: grid; gap: 8px; }
+.practice h3 { margin: 0; font-size: 16px; }
+.practice .note { margin: 0; }
+.practice-row { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; }
+.cpu-count { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
+.cpu-count[hidden] { display: none; }
+.cpu-count select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--card); color: var(--ink); }
+.room-head.practice-head .code, .room-head.practice-head .invite { display: none; }

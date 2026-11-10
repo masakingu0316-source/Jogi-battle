@@ -3,8 +3,10 @@
 import Physics from './shared/physics.js';
 import { DESKS, MODES, PLAYERS, TEAMS, teamOf, deskTiles, SKILLS, SHAPE_SKILL, GAUGE } from './shared/rules.js';
 import { VERSION } from './shared/version.js';
+import { CPU_LEVELS } from './shared/cpu.js';
+import { createPractice } from './practice.js';
 import { createBoard, MAX_DRAG } from './board.js';
-import { ITEMS, BASIC_RULERS, ECONOMY, MATERIAL_INFO, DEFAULT_RULER, accText as accTextOf, defaultConfig } from './shared/catalog.js';
+import { ITEMS, BASIC_RULERS, ECONOMY, MATERIAL_INFO, DEFAULT_RULER, accText as accTextOf, defaultConfig, resolveLoadout } from './shared/catalog.js';
 import { matChip, levelHtml, levelOfRuler, affinityText, skillText } from './ruler-info.js';
 import { previewRuler, paintRuler } from './ruler-paint.js';
 import { createAccount } from './account.js';
@@ -31,6 +33,7 @@ const app = {
   playedGame: null,        // 自分が参加した対戦の番号（結果を見せるため）
   dismissedGame: null,     // 「部屋に戻る」を押した対戦の番号
   pickedMode: store.get('jogi:mode') || 'standard',
+  cpuLevel: store.get('jogi:cpu') || 'normal',
 };
 if (!MODES[app.pickedMode]) app.pickedMode = 'standard';
 const board = createBoard($('board'), $('boardWrap'));
@@ -89,6 +92,7 @@ const memberById = (id) => app.state?.members.find((m) => m.id === id) || null;
 const isHost = () => app.state && app.you && app.state.hostId === app.you.id;
 const mmss = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 function send(msg) {
+  if (app.practice) return app.practice.send(msg);
   if (app.ws && app.ws.readyState === WebSocket.OPEN) { app.ws.send(JSON.stringify(msg)); return true; }
   toast('接続が切れています。つながり直すまでお待ちください');
   return false;
@@ -167,6 +171,7 @@ function renderHome() {
       <span class="mo-sub">${n}・${d.name}（${d.w}×${d.h}cm）<br>${m.note.split('。')[1] || ''}</span>
     </button>`;
   }).join('');
+  renderPractice();
   const sel = app.me.selectedRuler;
   const setup = app.me.setups?.[sel] || {};
   const item = ITEMS[sel] || ITEMS[DEFAULT_RULER];
@@ -183,7 +188,51 @@ $('modePick').addEventListener('click', (e) => {
   app.pickedMode = b.dataset.mode;
   store.set('jogi:mode', app.pickedMode);
   for (const x of document.querySelectorAll('.mode-opt')) x.setAttribute('aria-checked', String(x.dataset.mode === app.pickedMode));
+  renderPractice();
 });
+// ---------------- コンピュータと練習 ----------------
+// 遊び方ごとのコンピュータの人数（乱戦だけ選べる）
+const cpuCountOf = (mode) => (mode === 'melee' ? +$('cpuCount').value : MODES[mode].max - 1);
+function renderPractice() {
+  const lv = app.cpuLevel || 'normal';
+  $('cpuLevel').innerHTML = Object.entries(CPU_LEVELS).map(([k, l]) =>
+    `<button type="button" data-level="${k}" aria-pressed="${k === lv}">${l.name}</button>`).join('');
+  $('cpuCountWrap').hidden = app.pickedMode !== 'melee';
+  const n = cpuCountOf(app.pickedMode);
+  const team = MODES[app.pickedMode].teams ? '（味方1人・相手2人）' : '';
+  $('practiceNote').textContent = `${MODES[app.pickedMode].name}：あなたとコンピュータ${n}人${team}`;
+}
+$('cpuLevel').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-level]');
+  if (!b) return;
+  app.cpuLevel = b.dataset.level;
+  store.set('jogi:cpu', app.cpuLevel);
+  renderPractice();
+});
+$('cpuCount').addEventListener('change', renderPractice);
+// 自分の定規（持っている定規の装備とレベルのまま）
+function myLoadout(rulerId) {
+  if (!app.me) return null;
+  const id = rulerId || app.me.selectedRuler;
+  if (!app.me.owned.includes(id) || ITEMS[id]?.kind !== 'ruler') return null;
+  return resolveLoadout({ ...(app.me.setups?.[id] || {}), ruler: id }, app.game, levelOfRuler(app.me, id).level);
+}
+$('practiceBtn').addEventListener('click', () => {
+  setError('homeError', '');
+  const mode = app.pickedMode;
+  stopRoom();
+  app.view = 'room';
+  app.practice = createPractice({
+    mode, cpus: cpuCountOf(mode), level: app.cpuLevel || 'normal',
+    name: app.me?.name || 'あなた',
+    loadout: myLoadout() || resolveLoadout({}),
+    loadoutFor: (id) => myLoadout(id),
+    onMessage: (m) => onMessage(m),
+    busy: () => !!app.playing,
+  });
+  show('lobby');
+});
+
 $('code').addEventListener('input', () => {
   $('code').value = $('code').value.toUpperCase().replace(/[^A-Z0-9]/g, '');
 });
@@ -212,13 +261,19 @@ $('joinForm').addEventListener('submit', (e) => {
 $('editRuler').addEventListener('click', () => account.open('case'));
 for (const b of document.querySelectorAll('[data-open]')) b.addEventListener('click', () => account.open(b.dataset.open));
 
-// 部屋から出てホームへ
-function leaveRoom(errorText) {
+// 今の部屋（オンライン・練習）を閉じる
+function stopRoom() {
   app.closedByUs = true;
   clearInterval(app.pingTimer);
   clearTimeout(app.reconnectTimer);
   if (app.ws) { try { app.ws.close(1000); } catch { } }
+  if (app.practice) app.practice.close();
+  app.practice = null;
   app.ws = null; app.state = null; app.playing = null; app.aim = null; app.waitingShot = false;
+}
+// 部屋から出てホームへ
+function leaveRoom(errorText) {
+  stopRoom();
   app.lastReward = null; app.startDeadline = null;
   setConn(null);
   if (app.code && errorText) $('code').value = app.code;
@@ -230,6 +285,7 @@ function leaveRoom(errorText) {
 
 // ---------------- 通信 ----------------
 function connect(code) {
+  if (app.practice) { app.practice.close(); app.practice = null; }
   clearTimeout(app.reconnectTimer);
   if (app.ws) { app.closedByUs = true; try { app.ws.close(1000); } catch { } }
   app.code = code;
@@ -274,8 +330,10 @@ function onMessage(m) {
   switch (m.t) {
     case 'welcome':
       app.you = m.you;
-      store.set(tokenKey(app.code), m.you.token);
-      history.replaceState(null, '', `${location.pathname}?room=${app.code}`);
+      if (app.code) {
+        store.set(tokenKey(app.code), m.you.token);
+        history.replaceState(null, '', `${location.pathname}?room=${app.code}`);
+      }
       setConn(null);
       app.waitingShot = false;
       applyState(m.state);
@@ -358,7 +416,13 @@ function renderLobby() {
   const st = app.state;
   const mode = MODES[st.mode];
   const desk = DESKS[mode.desk];
-  $('roomMode').textContent = `${mode.name}・${mode.min === mode.max ? mode.max + '人' : mode.min + '〜' + mode.max + '人'}・${desk.name}　部屋コード`;
+  const practice = !!app.practice;
+  $('roomMode').textContent = practice
+    ? `コンピュータと練習（${app.practice.level.name}）・${mode.name}・${desk.name}`
+    : `${mode.name}・${mode.min === mode.max ? mode.max + '人' : mode.min + '〜' + mode.max + '人'}・${desk.name}　部屋コード`;
+  document.querySelector('.room-head').classList.toggle('practice-head', practice);
+  $('seatNote').hidden = practice;
+  $('leave').textContent = practice ? '練習をやめてホームへ' : '部屋を出てホームへ';
   $('roomCode').textContent = st.code;
   $('inviteUrl').value = `${location.origin}${location.pathname}?room=${st.code}`;
   const rows = [];
@@ -482,6 +546,7 @@ function renderGame() {
   } else msg.textContent = '対戦終了';
   $('board').classList.toggle('can-aim', canAim());
   $('skip').hidden = !(isHost() && st.phase === 'aim' && !app.playing && curMember && !curMember.connected);
+  $('quitPractice').hidden = !app.practice;
 
   $('result').hidden = !over;
   if (over) {
@@ -529,6 +594,7 @@ $('backToRoom').addEventListener('click', () => {
   render();
 });
 $('skip').addEventListener('click', () => send({ t: 'skip' }));
+$('quitPractice').addEventListener('click', () => send({ t: 'leave' }));
 
 // ---------------- はじく操作 ----------------
 function myIndex() {
@@ -718,6 +784,8 @@ account = createAccount({
   onLogout: () => { if (app.state) { send({ t: 'leave' }); } app.me = null; leaveRoom(''); },
   onProfile: () => { if (!$('home').hidden) renderHome(); },
 });
+// 確認用：?debug を付けて開いたときだけ、今の状態を読めるようにする
+if (new URLSearchParams(location.search).has('debug')) window.__jogiState = () => structuredClone(app.state);
 await account.load();
 if (app.config?.version && app.config.version !== VERSION) showUpdate();
 if (!app.me) {

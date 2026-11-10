@@ -1,7 +1,7 @@
 // 1部屋＝1つの Durable Object。WebSocket で部屋のメンバー全員とつながる。
 // 休止（ハイバネーション）から復帰しても続きができるよう、変更のたびに保存する。
 import { DurableObject } from 'cloudflare:workers';
-import { RoomCore } from './core.js';
+import { RoomCore } from '../public/shared/core.js';
 import { ensureSchema, loadoutFor, recordMatch } from './db.js';
 import { ITEMS, resolveLoadout } from '../public/shared/catalog.js';
 import { VERSION } from '../public/shared/version.js';

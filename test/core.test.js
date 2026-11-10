@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { RoomCore, cleanName, START_WAIT_MS } from '../src/core.js';
+import { RoomCore, cleanName, START_WAIT_MS } from '../public/shared/core.js';
 import { DESKS, deskTiles, tilesConnected, pickVanish, CRIT, GAUGE } from '../public/shared/rules.js';
 import { resolveLoadout } from '../public/shared/catalog.js';
 import Physics from '../public/shared/physics.js';
@@ -484,4 +484,27 @@ test('不動：次の自分の番まで押されにくく、自分の番が来�
   };
   const normal = pushed(false), anchored = pushed(true);
   assert.ok(anchored < normal / 2, `ふつう ${normal.toFixed(1)}cm / 不動 ${anchored.toFixed(1)}cm`);
+});
+
+test('コンピュータ：どの強さでも、はじき方を決めて実際にはじける。つよいはやさしいに勝ち越す', async () => {
+  const { planShot, CPU_LEVELS } = await import('../public/shared/cpu.js');
+  for (const lv of Object.keys(CPU_LEVELS)) {
+    const { r, ms } = started(2, 'standard');
+    const shot = await planShot(r, lv);
+    for (const k of ['lx', 'ly', 'dx', 'dy', 'power']) assert.ok(Number.isFinite(shot[k]), `${lv} ${k}`);
+    assert.equal(r.handle(ms[0].id, { t: 'flick', ...shot })[0].msg.t, 'shot');
+  }
+  // つよい（赤）とやさしい（青）を、先手を入れ替えながら4回
+  let strong = 0;
+  for (let n = 0; n < 4; n++) {
+    const { r } = started(2, 'standard');
+    r.s.game.turn = n % 2;
+    for (let k = 0; k < 60 && r.s.phase === 'aim'; k++) {
+      const g = r.s.game;
+      const shot = await planShot(r, g.turn === 0 ? 'hard' : 'easy');
+      r.handle(g.order[g.turn], { t: 'flick', ...shot });
+    }
+    if (r.s.game.result?.winners.includes(0)) strong++;
+  }
+  assert.ok(strong >= 3, `つよいの勝ち ${strong}/4`);
 });
