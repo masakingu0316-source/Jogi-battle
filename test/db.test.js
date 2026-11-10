@@ -55,14 +55,14 @@ test('ガチャ：えんぴつが足りないと引けない。10回は最後が
 
 test('持っていない定規やアクセサリは装備できない', { skip }, async () => {
   const u = await newUser();
-  assert.match((await D.saveSetup(db, u.id, { ruler: 'ruler:grid30' })).error, /持っていません/);
-  assert.match((await D.saveSetup(db, u.id, { ruler: 'ruler:plastic30', acc: 'acc:goldcot' })).error, /持っていない/);
-  assert.match((await D.loadoutFor(db, u.id, 'ruler:grid30')).error, /持っていません/);
+  assert.match((await D.saveSetup(db, u.id, { ruler: 'ruler:protractor-rubber' })).error, /持っていません/);
+  assert.match((await D.saveSetup(db, u.id, { ruler: 'ruler:straight30-acrylic', acc: 'acc:goldcot' })).error, /持っていない/);
+  assert.match((await D.loadoutFor(db, u.id, 'ruler:protractor-rubber')).error, /持っていません/);
   await db.prepare('INSERT INTO items (user_id, item_id, acquired_at) VALUES (?, ?, 0)').bind(u.id, 'acc:goldcot').run();
   await db.prepare('INSERT INTO items (user_id, item_id, acquired_at) VALUES (?, ?, 0)').bind(u.id, 'pattern:rainbow').run();
-  assert.deepEqual(await D.saveSetup(db, u.id, { ruler: 'ruler:bamboo30', acc: 'acc:goldcot', pattern: 'pattern:rainbow' }), { ok: true });
+  assert.deepEqual(await D.saveSetup(db, u.id, { ruler: 'ruler:straight30-metal', acc: 'acc:goldcot', pattern: 'pattern:rainbow' }), { ok: true });
   const { loadout } = await D.loadoutFor(db, u.id);
-  assert.equal(loadout.ruler, 'ruler:bamboo30');
+  assert.equal(loadout.ruler, 'ruler:straight30-metal');
   assert.equal(loadout.mods.power, 1.05);
   assert.equal(loadout.pattern, 'pattern:rainbow');
 });
@@ -70,8 +70,8 @@ test('持っていない定規やアクセサリは装備できない', { skip }
 test('対戦の記録：勝つと多くもらえ、1日の上限で止まる。戦績に反映される', { skip }, async () => {
   const a = await newUser(), b = await newUser();
   const rec = (won) => ({ room: 'ABCDE', mode: 'standard', n: 2, shots: 5, names: ['A', 'B'],
-    players: [{ userId: a.id, seat: 0, won, kos: won ? 1 : 0, selfOut: false, ruler: 'ruler:plastic30' },
-              { userId: b.id, seat: 1, won: !won, kos: 0, selfOut: won, ruler: 'ruler:plastic15' }] });
+    players: [{ userId: a.id, seat: 0, won, kos: won ? 1 : 0, selfOut: false, ruler: 'ruler:straight30-acrylic' },
+              { userId: b.id, seat: 1, won: !won, kos: 0, selfOut: won, ruler: 'ruler:straight15-acrylic' }] });
   const t = Date.UTC(2026, 10, 9, 3);
   const r1 = await D.recordMatch(db, rec(true), t);
   assert.equal(r1[a.id].coins, ECONOMY.play + ECONOMY.win);
@@ -100,12 +100,12 @@ test('設定画面で変えた値が、ガチャの値段・ログイン時の�
     assert.equal(r.cost, 7);
     const o = await newUser();
     const rw = await D.recordMatch(db, { room: 'X', mode: 'quick', n: 2, shots: 3, names: ['a', 'b'],
-      players: [{ userId: user.id, seat: 0, won: true, kos: 1, selfOut: false, ruler: 'ruler:plastic30' },
-                { userId: o.id, seat: 1, won: false, kos: 0, selfOut: false, ruler: 'ruler:plastic30' }] });
+      players: [{ userId: user.id, seat: 0, won: true, kos: 1, selfOut: false, ruler: 'ruler:straight30-acrylic' },
+                { userId: o.id, seat: 1, won: false, kos: 0, selfOut: false, ruler: 'ruler:straight30-acrylic' }] });
     assert.equal(rw[user.id].coins, 3);
     assert.equal(rw[o.id].coins, 1);
     await db.prepare('INSERT INTO items (user_id, item_id, acquired_at) VALUES (?, ?, 0)').bind(user.id, 'acc:goldcot').run();
-    await D.saveSetup(db, user.id, { ruler: 'ruler:plastic30', acc: 'acc:goldcot' });
+    await D.saveSetup(db, user.id, { ruler: 'ruler:straight30-acrylic', acc: 'acc:goldcot' });
     assert.equal((await D.loadoutFor(db, user.id)).loadout.mods.power, 1.015);
   } finally {
     await D.resetConfig(db);
@@ -136,4 +136,45 @@ test('えんぴつを配る・減らす（0本より下にはならない）。�
   const found = await D.findUsers(db, 'プレゼ');
   assert.equal(found[0].id, user.id);
   assert.equal((await D.findUsers(db, user.id))[0].name, 'プレゼント');
+});
+
+test('定規の経験値：使った定規に入り、勝ちと落とした数で多くなる。レベルが上がると対戦の定規に効く', { skip }, async () => {
+  const a = await newUser(), b = await newUser();
+  const rec = { room: 'L', mode: 'quick', n: 2, shots: 4, names: ['A', 'B'],
+    players: [{ userId: a.id, seat: 0, won: true, kos: 2, selfOut: false, ruler: 'ruler:straight30-metal' },
+              { userId: b.id, seat: 1, won: false, kos: 0, selfOut: false, ruler: 'ruler:straight30-rubber' }] };
+  const r1 = await D.recordMatch(db, rec);
+  assert.equal(r1[a.id].exp.gain, ECONOMY.expPlay + ECONOMY.expWin + 2 * ECONOMY.expKo);
+  assert.equal(r1[b.id].exp.gain, ECONOMY.expPlay);
+  assert.equal(r1[a.id].exp.levelUp, true); // 30点でLv.2
+  assert.equal(r1[a.id].exp.level, 2);
+  assert.equal(r1[b.id].exp.levelUp, false);
+  const prof = await D.profile(db, await db.prepare('SELECT * FROM users WHERE id=?').bind(a.id).first());
+  assert.equal(prof.exp['ruler:straight30-metal'], 30);
+  for (let i = 0; i < 40; i++) await D.recordMatch(db, rec);
+  const { loadout } = await D.loadoutFor(db, a.id, 'ruler:straight30-metal');
+  assert.equal(loadout.level, 10);
+  assert.equal(loadout.mods.mass, 1.036);
+});
+
+test('作り直す前の定規は片付き、柄やアクセサリは残る', { skip }, async () => {
+  const u = await newUser();
+  await db.batch([
+    db.prepare('INSERT INTO items (user_id, item_id, acquired_at) VALUES (?, ?, 0)').bind(u.id, 'ruler:steel30'),
+    db.prepare('INSERT INTO items (user_id, item_id, acquired_at) VALUES (?, ?, 0)').bind(u.id, 'acc:clip'),
+    db.prepare('INSERT INTO setups (user_id, ruler_id, acc) VALUES (?, ?, ?)').bind(u.id, 'ruler:steel30', 'acc:clip'),
+    db.prepare('UPDATE users SET selected_ruler = ? WHERE id = ?').bind('ruler:steel30', u.id),
+  ]);
+  // 古い「使う定規」が残っていても、標準の定規で遊べる
+  assert.equal((await D.loadoutFor(db, u.id)).loadout.ruler, 'ruler:straight30-acrylic');
+  const prof0 = await D.profile(db, await db.prepare('SELECT * FROM users WHERE id=?').bind(u.id).first());
+  assert.equal(prof0.selectedRuler, 'ruler:straight30-acrylic');
+  assert.ok(!prof0.owned.includes('ruler:steel30'));
+  // 次に起動したときの片付け
+  const { ensureSchemaFresh } = D;
+  await ensureSchemaFresh(db);
+  const items = (await db.prepare('SELECT item_id FROM items WHERE user_id = ?').bind(u.id).all()).results.map((r) => r.item_id);
+  assert.deepEqual(items, ['acc:clip']);
+  assert.equal((await db.prepare('SELECT COUNT(*) AS c FROM setups WHERE user_id = ?').bind(u.id).first()).c, 0);
+  assert.equal((await db.prepare('SELECT selected_ruler FROM users WHERE id = ?').bind(u.id).first()).selected_ruler, 'ruler:straight30-acrylic');
 });

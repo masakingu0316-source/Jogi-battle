@@ -1,5 +1,5 @@
 // アカウントまわりのデータベース操作（Cloudflare D1）
-import { ITEMS, BASIC_RULERS, DEFAULT_RULER, ECONOMY, rollOnce, resolveLoadout, sanitizeConfig } from '../public/shared/catalog.js';
+import { ITEMS, BASIC_RULERS, DEFAULT_RULER, ECONOMY, rollOnce, resolveLoadout, sanitizeConfig, levelInfo } from '../public/shared/catalog.js';
 import { cleanName } from './core.js';
 
 const SCHEMA = [
@@ -24,15 +24,27 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS gacha_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, item_id TEXT NOT NULL, dup INTEGER NOT NULL, pulled_at INTEGER NOT NULL)`,
+  `CREATE TABLE IF NOT EXISTS ruler_exp (
+    user_id TEXT NOT NULL, ruler_id TEXT NOT NULL, exp INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, ruler_id))`,
+];
+
+// 定規を「形×素材」に作り直したので、前の定規（今の一覧にないもの）は片付ける。柄・シール・アクセサリはそのまま
+const RULER_IDS = Object.values(ITEMS).filter((it) => it.kind === 'ruler').map((it) => `'${it.id}'`).join(', ');
+const CLEANUP = [
+  `DELETE FROM items WHERE item_id LIKE 'ruler:%' AND item_id NOT IN (${RULER_IDS})`,
+  `DELETE FROM setups WHERE ruler_id NOT IN (${RULER_IDS})`,
+  `UPDATE users SET selected_ruler = '${DEFAULT_RULER}' WHERE selected_ruler NOT IN (${RULER_IDS})`,
 ];
 
 let schemaReady = null;
 export function ensureSchema(db) {
   if (!schemaReady) {
-    schemaReady = db.batch(SCHEMA.map((s) => db.prepare(s))).catch((e) => { schemaReady = null; throw e; });
+    schemaReady = db.batch([...SCHEMA, ...CLEANUP].map((s) => db.prepare(s))).catch((e) => { schemaReady = null; throw e; });
   }
   return schemaReady;
 }
+// テスト用：作り直しの片付けをもう一度走らせる
+export function ensureSchemaFresh(db) { schemaReady = null; return ensureSchema(db); }
 
 export function randomHex(bytes) {
   const a = new Uint8Array(bytes);
@@ -97,8 +109,8 @@ export async function upsertGoogleUser(db, sub, name, now = Date.now()) {
   if (found) return { user: found, created: false };
   const id = randomHex(8);
   const cfg = await getConfig(db, now);
-  await db.prepare('INSERT INTO users (id, google_sub, name, coins, created_at) VALUES (?, ?, ?, ?, ?)')
-    .bind(id, sub, cleanName(name), cfg.economy.welcome, now).run();
+  await db.prepare('INSERT INTO users (id, google_sub, name, coins, selected_ruler, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(id, sub, cleanName(name), cfg.economy.welcome, DEFAULT_RULER, now).run();
   return { user: await db.prepare('SELECT * FROM users WHERE id = ?').bind(id).first(), created: true };
 }
 
@@ -126,6 +138,12 @@ export async function setupsOf(db, userId) {
   return Object.fromEntries(rows.map((r) => [r.ruler_id, { pattern: r.pattern, sticker: r.sticker, acc: r.acc }]));
 }
 
+// 定規ごとの経験値 { 'ruler:...': 数 }
+export async function expOf(db, userId) {
+  const rows = (await db.prepare('SELECT ruler_id, exp FROM ruler_exp WHERE user_id = ?').bind(userId).all()).results;
+  return Object.fromEntries(rows.filter((r) => ITEMS[r.ruler_id]?.kind === 'ruler').map((r) => [r.ruler_id, r.exp]));
+}
+
 export async function statsOf(db, userId) {
   const total = await db.prepare(`SELECT COUNT(*) AS games, COALESCE(SUM(won), 0) AS wins, COALESCE(SUM(kos), 0) AS kos,
       COALESCE(SUM(self_out), 0) AS selfOuts FROM match_players WHERE user_id = ?`).bind(userId).first();
@@ -145,10 +163,11 @@ export async function recentMatches(db, userId, limit = 20) {
 }
 
 export async function profile(db, user) {
-  const [owned, setups, stats] = await Promise.all([ownedSet(db, user.id), setupsOf(db, user.id), statsOf(db, user.id)]);
+  const [owned, setups, stats, exp] = await Promise.all([ownedSet(db, user.id), setupsOf(db, user.id), statsOf(db, user.id), expOf(db, user.id)]);
+  const selected = owned.has(user.selected_ruler) && ITEMS[user.selected_ruler]?.kind === 'ruler' ? user.selected_ruler : DEFAULT_RULER;
   return {
-    id: user.id, name: user.name, coins: user.coins, selectedRuler: user.selected_ruler,
-    owned: [...owned], setups, stats,
+    id: user.id, name: user.name, coins: user.coins, selectedRuler: selected,
+    owned: [...owned].filter((id) => ITEMS[id]), setups, stats, exp,
   };
 }
 
@@ -189,7 +208,9 @@ export async function loadoutFor(db, userId, rulerId) {
     await db.prepare('UPDATE users SET selected_ruler = ? WHERE id = ?').bind(ruler, userId).run();
   }
   const cfg = await getConfig(db);
-  return { loadout: resolveLoadout({ ruler, pattern: keep(s.pattern), sticker: keep(s.sticker), acc: keep(s.acc) }, cfg) };
+  const row = await db.prepare('SELECT exp FROM ruler_exp WHERE user_id = ? AND ruler_id = ?').bind(userId, ruler).first();
+  const { level } = levelInfo(row?.exp ?? 0);
+  return { loadout: resolveLoadout({ ruler, pattern: keep(s.pattern), sticker: keep(s.sticker), acc: keep(s.acc) }, cfg, level) };
 }
 
 // ---- ガチャ ----
@@ -244,6 +265,17 @@ export async function recordMatch(db, rec, now = Date.now()) {
     const want = economy.play + (p.won ? economy.win : 0);
     const give = Math.max(0, Math.min(want, economy.dailyBattleCap - earned));
     rewards[p.userId] = { coins: give, capped: give < want };
+    // 定規の経験値（使った定規に入る。1日の上限はない）
+    if (ITEMS[p.ruler]?.kind === 'ruler') {
+      const gain = economy.expPlay + (p.won ? economy.expWin : 0) + (p.kos || 0) * economy.expKo;
+      const before = (await db.prepare('SELECT exp FROM ruler_exp WHERE user_id = ? AND ruler_id = ?').bind(p.userId, p.ruler).first())?.exp ?? 0;
+      const a = levelInfo(before), b = levelInfo(before + gain);
+      rewards[p.userId].exp = { ruler: p.ruler, gain, ...b, levelUp: b.level > a.level };
+      if (gain > 0) {
+        stmts.push(db.prepare(`INSERT INTO ruler_exp (user_id, ruler_id, exp) VALUES (?, ?, ?)
+          ON CONFLICT (user_id, ruler_id) DO UPDATE SET exp = exp + excluded.exp`).bind(p.userId, p.ruler, gain));
+      }
+    }
     stmts.push(db.prepare('UPDATE users SET coins = coins + ?, battle_day = ?, battle_earned = ? WHERE id = ?').bind(give, day, earned + give, p.userId));
     stmts.push(db.prepare(`INSERT INTO match_players (match_id, user_id, seat, won, kos, self_out, ruler_id, coins, played_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).bind(matchId, p.userId, p.seat, p.won ? 1 : 0, p.kos, p.selfOut ? 1 : 0, p.ruler, give, now));

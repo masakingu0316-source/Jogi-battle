@@ -1,8 +1,10 @@
 // ログイン・マイページ（定規ケース・ガチャ・戦績）
-import Physics from './shared/physics.js';
 import { ITEMS, RARITIES, ECONOMY, GACHA_POOL, odds, accText as accTextOf, defaultConfig } from './shared/catalog.js';
 import { MODES } from './shared/rules.js';
 import { previewRuler } from './ruler-paint.js';
+import { matChip, levelHtml, levelOfRuler, nextText, specText } from './ruler-info.js';
+
+const ALL_RULERS = Object.values(ITEMS).filter((it) => it.kind === 'ruler');
 
 const RANK = { basic: 0, N: 1, R: 2, SR: 3, SSR: 4 };
 
@@ -44,17 +46,11 @@ export function createAccount(ctx) {
   }
 
   function updateHeader() {
-    const on = !!app.config?.login;
-    $('account').hidden = !on;
-    $('homeLoginNote').hidden = !on || !!app.me;
-    $('loginBtn').hidden = !!app.me;
-    $('meChip').hidden = !app.me;
+    $('account').hidden = !app.me;
     if (app.me) {
       $('meName').textContent = app.me.name;
       $('meCoins').textContent = app.me.coins;
     }
-    const ret = location.pathname + location.search;
-    $('loginBtn').href = `/auth/login?return=${encodeURIComponent(ret)}`;
   }
 
   function setCoins(n) {
@@ -69,13 +65,12 @@ export function createAccount(ctx) {
     if (!app.me) return;
     app.view = 'mypage';
     ctx.show('mypage');
-    $('myBack').textContent = app.state ? '← 部屋に戻る' : '← 戻る';
+    $('myBack').textContent = app.state ? '← 部屋に戻る' : '← ホームに戻る';
     select(which);
   }
   function close() {
-    app.view = 'room';
-    if (app.state) ctx.render();
-    else ctx.show('home');
+    if (app.state) { app.view = 'room'; ctx.render(); }
+    else ctx.showHome();
   }
   function select(which) {
     tab = which;
@@ -99,7 +94,7 @@ export function createAccount(ctx) {
   const ownedOf = (kind) => [...owned()].map((id) => ITEMS[id]).filter((it) => it && it.kind === kind)
     .sort((a, b) => RANK[b.rarity] - RANK[a.rarity] || a.name.localeCompare(b.name, 'ja'));
   const rarityTag = (r) => (r === 'basic' ? '' : `<span class="rar" style="background:${RARITIES[r].color}">${r}</span>`);
-  const lookOf = (rulerId, setup) => ({ specKey: ITEMS[rulerId].specKey, pattern: setup?.pattern || null, sticker: setup?.sticker || null });
+  const lookOf = (rulerId, setup) => ({ specKey: ITEMS[rulerId].specKey, level: levelOfRuler(app.me, rulerId).level, pattern: setup?.pattern || null, sticker: setup?.sticker || null });
   function setupSummary(setup) {
     const bits = [];
     if (setup?.pattern) bits.push(ITEMS[setup.pattern]?.name);
@@ -110,16 +105,26 @@ export function createAccount(ctx) {
 
   function renderCase() {
     const me = app.me;
-    const rulers = ownedOf('ruler').sort((a, b) => RANK[a.rarity] - RANK[b.rarity]);
-    if (!editing || !owned().has(editing)) editing = me.selectedRuler;
-    const got = [...owned()].filter((id) => ITEMS[id] && ITEMS[id].rarity !== 'basic').length;
+    const have = owned();
+    if (!editing || !have.has(editing)) editing = me.selectedRuler;
+    const got = [...have].filter((id) => ITEMS[id] && ITEMS[id].rarity !== 'basic').length;
     $('collection').textContent = `集めたアイテム ${got} / ${GACHA_POOL.length}`;
-    $('rulerList').innerHTML = rulers.map((r) => `
-      <button type="button" class="ruler-card" data-ruler="${r.id}" aria-pressed="${r.id === editing}">
+    // 形ごとに並べる。持っていない定規は、どこで手に入るかだけ見せる
+    $('rulerList').innerHTML = ALL_RULERS.map((r) => {
+      if (!have.has(r.id)) {
+        return `<div class="ruler-card locked" aria-label="${esc(r.name)}（まだ持っていません）">
+          <canvas data-preview="${r.id}" aria-hidden="true"></canvas>
+          <span class="rc-name">${esc(r.name)} ${rarityTag(r.rarity)}</span>
+          <span class="rc-sub">ガチャで出ます</span></div>`;
+      }
+      const lv = levelOfRuler(me, r.id);
+      return `<button type="button" class="ruler-card" data-ruler="${r.id}" aria-pressed="${r.id === editing}">
         <canvas data-preview="${r.id}" aria-hidden="true"></canvas>
         <span class="rc-name">${esc(r.name)} ${rarityTag(r.rarity)}${r.id === me.selectedRuler ? '<span class="badge you">使用中</span>' : ''}</span>
-        <span class="rc-sub">${esc(setupSummary(me.setups[r.id]) || r.desc || '飾りなし')}</span>
-      </button>`).join('');
+        <span class="rc-lv">${matChip(r.mat)}${levelHtml(lv)}</span>
+        <span class="rc-sub">${esc(setupSummary(me.setups[r.id]) || '飾りなし')}</span>
+      </button>`;
+    }).join('');
     for (const c of document.querySelectorAll('[data-preview]')) previewRuler(c, lookOf(c.dataset.preview, me.setups[c.dataset.preview]));
     renderEditor();
   }
@@ -154,8 +159,10 @@ export function createAccount(ctx) {
   function updatePreview() {
     const e = currentEdit();
     previewRuler($('previewBig'), lookOf(e.ruler, e));
-    const spec = Physics.RULERS[ITEMS[e.ruler].specKey];
-    const base = `長さ${spec.length}cm・幅${spec.width}cm・重さ${spec.mass}g`;
+    const r = ITEMS[e.ruler], lv = levelOfRuler(app.me, e.ruler);
+    $('edTitle').innerHTML = `${esc(r.name)} ${matChip(r.mat)}`;
+    $('edLevel').innerHTML = `${levelHtml(lv)}<span class="xp-note">${nextText(lv)}</span>`;
+    const base = specText(e.ruler, lv.level);
     $('accDesc').textContent = e.acc ? `${base}　アクセサリ：${accText(e.acc)}` : base;
   }
   for (const id of ['edPattern', 'edSticker', 'edAcc']) $(id).addEventListener('change', updatePreview);
@@ -167,6 +174,7 @@ export function createAccount(ctx) {
       await api('/api/me/setup', e);
       app.me.setups[e.ruler] = { pattern: e.pattern, sticker: e.sticker, acc: e.acc };
       app.me.selectedRuler = e.ruler;
+      ctx.onProfile?.();
       // 待合室にいれば、部屋の定規もすぐに入れ替える
       if (app.state && app.state.phase !== 'aim') ctx.send({ t: 'ruler', ruler: e.ruler });
       renderCase();
@@ -210,7 +218,7 @@ export function createAccount(ctx) {
       $('gachaResults').innerHTML = r.results.map((x, i) => {
         const it = ITEMS[x.id];
         const kind = { ruler: '定規', pattern: '柄', sticker: 'シール', acc: 'アクセサリ' }[it.kind];
-        const extra = it.kind === 'acc' ? `・${accText(it.id)}` : '';
+        const extra = it.kind === 'acc' ? `・${accText(it.id)}` : it.kind === 'ruler' ? `・${ITEMS[it.id].desc.split('。')[1]}` : '';
         return `<div class="prize${x.dup ? '' : ' new'}" style="animation-delay:${i * 60}ms; border-color:${RARITIES[it.rarity].color}">
           <span class="p-name">${rarityTag(it.rarity)} ${esc(it.name)}</span>
           <span class="p-sub">${kind}${extra}　${x.dup ? `かぶり → ${ECONOMY.currency}+${x.refund}` : 'NEW'}</span></div>`;
@@ -267,7 +275,7 @@ export function createAccount(ctx) {
     try { await fetch('/auth/logout', { method: 'POST' }); } catch { }
     app.me = null;
     updateHeader();
-    close();
+    ctx.onLogout();
     toast('ログアウトしました');
   });
 

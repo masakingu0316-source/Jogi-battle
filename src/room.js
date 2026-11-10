@@ -8,6 +8,7 @@ import { ITEMS, resolveLoadout } from '../public/shared/catalog.js';
 const IDLE_LIMIT_MS = 6 * 60 * 60 * 1000; // 6時間だれも使わなかった部屋は片付ける
 const MAX_MESSAGE_BYTES = 4096;
 const USER_HEADER = 'X-Jogi-User'; // worker.js が付けるログイン情報
+const LOGIN_HEADER = 'X-Jogi-Login-Required';
 
 export class Room extends DurableObject {
   constructor(ctx, env) {
@@ -26,7 +27,7 @@ export class Room extends DurableObject {
 
     if (url.pathname === '/create') {
       if (this.core) return new Response('exists', { status: 409 });
-      this.core = new RoomCore(url.searchParams.get('code') || '');
+      this.core = new RoomCore(url.searchParams.get('code') || '', url.searchParams.get('mode') || 'standard');
       await this.save();
       return Response.json({ ok: true });
     }
@@ -39,6 +40,7 @@ export class Room extends DurableObject {
       const raw = request.headers.get(USER_HEADER);
       if (raw) user = JSON.parse(decodeURIComponent(raw));
     } catch { user = null; }
+    const loginRequired = request.headers.get(LOGIN_HEADER) === '1';
 
     const pair = new WebSocketPair();
     const [client, server] = Object.values(pair);
@@ -47,6 +49,9 @@ export class Room extends DurableObject {
     if (!this.core) {
       server.send(JSON.stringify({ t: 'error', text: 'この部屋は見つかりません。部屋コードを確かめてください。', fatal: true }));
       server.close(4004, 'room not found');
+    } else if (loginRequired && !user) {
+      server.send(JSON.stringify({ t: 'error', text: 'ログインしてから部屋に入ってください。', fatal: true, login: true }));
+      server.close(4001, 'login required');
     }
     return new Response(null, { status: 101, webSocket: client });
   }
@@ -95,6 +100,10 @@ export class Room extends DurableObject {
       else this.sendTo(o.to, o.msg);
     }
     if (out.length) await this.save();
+    if (msg.t === 'leave') {
+      ws.serializeAttachment({ memberId: null, user: att.user || null });
+      try { ws.close(1000, 'left'); } catch { }
+    }
     const rec = this.core.takeRecord();
     if (rec) await this.saveRecord(rec);
   }
@@ -127,8 +136,16 @@ export class Room extends DurableObject {
       const rewards = await recordMatch(this.env.DB, rec);
       for (const p of rec.players) {
         const r = p.userId && rewards[p.userId];
-        if (r) this.sendTo(p.memberId, { t: 'reward', coins: r.coins, total: r.total, capped: r.capped });
+        if (!r) continue;
+        this.sendTo(p.memberId, { t: 'reward', coins: r.coins, total: r.total, capped: r.capped, exp: r.exp || null });
+        // レベルが上がったら、部屋で使っている定規にもすぐ反映する
+        const m = this.core.member(p.memberId);
+        if (r.exp?.levelUp && m && m.loadout?.ruler === r.exp.ruler) {
+          const lo = await loadoutFor(this.env.DB, p.userId, r.exp.ruler);
+          if (lo.loadout) for (const o of this.core.setLoadout(p.memberId, lo.loadout)) if (o.to === 'all') this.broadcast(o.msg);
+        }
       }
+      await this.save();
     } catch (e) {
       console.error('記録の保存に失敗', e);
     }
@@ -150,6 +167,7 @@ export class Room extends DurableObject {
     const still = this.ctx.getWebSockets().some((o) => o !== ws && (o.deserializeAttachment() || {}).memberId === att.memberId);
     if (still) return;
     this.core.disconnect(att.memberId);
+    this.core.tick();
     this.broadcast({ t: 'state', state: this.core.snapshot() }, ws);
     await this.save();
   }
@@ -171,19 +189,27 @@ export class Room extends DurableObject {
     }
   }
 
+  // 保存して、次に起きる時刻（対戦の開始時刻か、片付けの時刻）を予約する
   async save() {
     if (!this.core) return;
     await this.ctx.storage.put('core', this.core.toJSON());
-    await this.ctx.storage.setAlarm(Date.now() + IDLE_LIMIT_MS);
+    const startAt = this.core.s.phase === 'lobby' ? this.core.s.startAt : null;
+    await this.ctx.storage.setAlarm(startAt ?? Date.now() + IDLE_LIMIT_MS);
   }
 
   async alarm() {
+    if (this.core && this.core.s.phase === 'lobby' && this.core.s.startAt !== null) {
+      // カウントダウンが終わったら、準備OKでなくても全員で始める
+      if (this.core.tick(Date.now())) this.broadcast({ t: 'state', state: this.core.snapshot() });
+      await this.save();
+      return;
+    }
     const idle = !this.core || Date.now() - this.core.s.lastActive >= IDLE_LIMIT_MS - 1000;
     if (idle && this.ctx.getWebSockets().length === 0) {
       await this.ctx.storage.deleteAll();
       this.core = null;
     } else {
-      await this.ctx.storage.setAlarm(Date.now() + IDLE_LIMIT_MS);
+      await this.save();
     }
   }
 }

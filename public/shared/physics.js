@@ -1,49 +1,136 @@
 // 定規バトル 物理エンジン
 // 単位: 長さ cm / 質量 g / 時間 s。机を真上から見た2D。
-// 机との摩擦（クーロン摩擦）＋定規同士の衝突（逐次インパルス法）。
+// 机との摩擦（クーロン摩擦）＋定規同士の衝突（凸多角形・逐次インパルス法）。
+// 定規は「形（まっすぐ・三角定規・分度器）」×「素材（アクリル・メタル・ラバー）」でできている。
 const Physics = (() => {
   const G = 981; // cm/s^2
   const DESK = { w: 65, h: 45 }; // JIS規格の生徒机 天板 65×45cm
 
-  // basic: 全員が最初から持っている定規。それ以外はガチャで手に入る。
-  const RULERS = {
-    plastic30: { name: '30cm プラ定規', nominal: 30, length: 32, width: 3.4, mass: 26, mu: 0.48, kind: 'plastic', basic: true },
-    plastic15: { name: '15cm プラ定規', nominal: 15, length: 17, width: 2.6, mass: 9, mu: 0.48, kind: 'plastic', basic: true },
-    bamboo30: { name: '30cm 竹定規', nominal: 30, length: 32.5, width: 2.4, mass: 20, mu: 0.6, kind: 'bamboo', basic: true },
-    steel15: { name: '15cm ステンレス定規', nominal: 15, length: 17, width: 1.8, mass: 22, mu: 0.33, kind: 'steel', basic: true },
-    plastic20: { name: '20cm プラ定規', nominal: 20, length: 22, width: 3.0, mass: 15, mu: 0.48, kind: 'plastic' },
-    acrylic30: { name: '30cm アクリル定規', nominal: 30, length: 32, width: 4.2, mass: 32, mu: 0.4, kind: 'plastic' },
-    steel30: { name: '30cm ステンレス定規', nominal: 30, length: 32, width: 2.6, mass: 36, mu: 0.3, kind: 'steel' },
-    grid30: { name: '30cm 方眼定規', nominal: 30, length: 32, width: 5.0, mass: 30, mu: 0.44, kind: 'plastic', grid: true },
+  // ---- 形 ----
+  // verts は反時計回りでなくてよい（作るときに向きをそろえる）。
+  // fill は厚みや中抜きを含めた重さの係数（形どうしの重さを近づけるための調整も兼ねる）。hollow は中抜きの形。
+  function rect(L, W) { return [[-L / 2, -W / 2], [L / 2, -W / 2], [L / 2, W / 2], [-L / 2, W / 2]]; }
+  function semicircle(R, strip, n = 16) {
+    // 直径の辺（下）に細い帯がつき、円弧が上（-y）に張り出す
+    const v = [[R, strip], [-R, strip]];
+    for (let i = 0; i <= n; i++) {
+      const t = Math.PI + (i / n) * Math.PI; // 180°→360°（上側の円弧）
+      v.push([R * Math.cos(t), R * Math.sin(t)]);
+    }
+    return v;
+  }
+  const SHAPE_DEFS = {
+    straight30: { name: '30cm定規', kind: 'rect', nominal: 30, L: 32, W: 3.4, verts: rect(32, 3.4), fill: 1 },
+    straight15: { name: '15cm定規', kind: 'rect', nominal: 15, L: 17, W: 2.6, verts: rect(17, 2.6), fill: 1.5 },
+    tri45: { name: '三角定規（45°）', kind: 'tri', nominal: 12, hole: 2.4, legs: [15, 15], verts: [[0, 0], [15, 0], [0, -15]], fill: 0.8, hollow: true },
+    tri60: { name: '三角定規（30°・60°）', kind: 'tri', nominal: 15, hole: 2.2, legs: [18, 10.4], verts: [[0, 0], [18, 0], [0, -10.4]], fill: 0.88, hollow: true },
+    protractor: { name: '分度器', kind: 'protractor', nominal: 180, hole: 1.7, R: 7.5, strip: 0.9, verts: semicircle(7.5, 0.9), fill: 0.82, hollow: true },
   };
 
-  // アクセサリの効果の上限（±5%）
+  // ---- 素材 ----
+  // density: 1cm²あたりの重さ(g)、mu: 机とのすべりにくさ、e: 定規どうしの跳ね返り
+  const MATERIALS = {
+    acrylic: { name: 'アクリル', density: 0.24, mu: 0.38, e: 0.5 },
+    metal: { name: 'メタル', density: 0.34, mu: 0.42, e: 0.32 },
+    rubber: { name: 'ラバー', density: 0.31, mu: 0.58, e: 0.08 },
+  };
+  // 三すくみ：左が右に強い（当てたとき相手を少し強く弾く）
+  const BEATS = { metal: 'acrylic', acrylic: 'rubber', rubber: 'metal' };
+  const AFFINITY_BONUS = 0.22;
+
+  // 形を、重心が原点に来るようにして、面積・慣性・外向きの法線・摩擦をかける点を計算する
+  function buildShape(def) {
+    let v = def.verts.map(([x, y]) => ({ x, y }));
+    let A = 0, cx = 0, cy = 0;
+    for (let i = 0; i < v.length; i++) {
+      const p = v[i], q = v[(i + 1) % v.length];
+      const cr = p.x * q.y - q.x * p.y;
+      A += cr; cx += (p.x + q.x) * cr; cy += (p.y + q.y) * cr;
+    }
+    A /= 2; cx /= 6 * A; cy /= 6 * A;
+    if (A < 0) v.reverse();
+    const area = Math.abs(A);
+    v = v.map((p) => ({ x: p.x - cx, y: p.y - cy }));
+    // 慣性モーメント（単位質量あたり）
+    let num = 0, den = 0;
+    for (let i = 0; i < v.length; i++) {
+      const p = v[i], q = v[(i + 1) % v.length];
+      const cr = Math.abs(p.x * q.y - q.x * p.y);
+      num += cr * (p.x * p.x + p.x * q.x + q.x * q.x + p.y * p.y + p.y * q.y + q.y * q.y);
+      den += cr;
+    }
+    // 中抜きの形は重さが外側に寄るので、回りにくさを少し大きくする
+    const inertiaPerMass = (num / (6 * den)) * (def.hollow ? 1.2 : 1);
+    const normals = v.map((p, i) => {
+      const q = v[(i + 1) % v.length];
+      const ex = q.x - p.x, ey = q.y - p.y, len = Math.hypot(ex, ey);
+      let nx = ey / len, ny = -ex / len;
+      const mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2;
+      if (nx * mx + ny * my < 0) { nx = -nx; ny = -ny; }
+      return { x: nx, y: ny };
+    });
+    const radius = Math.max(...v.map((p) => Math.hypot(p.x, p.y)));
+    // 摩擦をかける点：まっすぐな定規は長さ方向に8点、ほかは面の中に格子状に
+    let samples = [];
+    if (def.kind === 'rect') {
+      for (let i = 0; i < 8; i++) samples.push({ x: -def.L / 2 + (i + 0.5) * (def.L / 8), y: 0 });
+    } else {
+      const xs = v.map((p) => p.x), ys = v.map((p) => p.y);
+      const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+      for (let i = 0; i < 7; i++) for (let j = 0; j < 7; j++) {
+        const p = { x: x0 + (i + 0.5) * (x1 - x0) / 7, y: y0 + (j + 0.5) * (y1 - y0) / 7 };
+        if (inside(v, normals, p)) samples.push(p);
+      }
+    }
+    return { ...def, verts: v, normals, area, inertiaPerMass, radius, samples, offset: { x: cx, y: cy } };
+  }
+  function inside(v, n, p, tol = 0) {
+    for (let i = 0; i < v.length; i++) if (n[i].x * (p.x - v[i].x) + n[i].y * (p.y - v[i].y) > tol) return false;
+    return true;
+  }
+
+  const SHAPES = Object.fromEntries(Object.entries(SHAPE_DEFS).map(([k, d]) => [k, buildShape(d)]));
+
+  // 定規の仕様（形×素材）。キーは "straight30-acrylic" のような形
+  const RULERS = {};
+  for (const [sk, sh] of Object.entries(SHAPES)) {
+    for (const [mk, mt] of Object.entries(MATERIALS)) {
+      RULERS[`${sk}-${mk}`] = {
+        name: `${sh.name}（${mt.name}）`, shape: sk, mat: mk, kind: mk, nominal: sh.nominal,
+        mass: Math.round(mt.density * sh.area * sh.fill * 10) / 10, mu: mt.mu, e: mt.e,
+      };
+    }
+  }
+
+  // アクセサリの効果の上限（±5%）。レベルの分と合わせた上限は ±10%
   const MOD_LIMIT = 0.05;
-  const clampMod = (v) => Math.max(1 - MOD_LIMIT, Math.min(1 + MOD_LIMIT, Number.isFinite(v) ? v : 1));
+  const MOD_TOTAL_LIMIT = 0.1;
+  const clampMod = (v) => Math.max(1 - MOD_TOTAL_LIMIT, Math.min(1 + MOD_TOTAL_LIMIT, Number.isFinite(v) ? v : 1));
 
   const DEFAULT_PARAMS = {
     friction: 1.0,     // 机の摩擦の倍率
-    restitution: 0.35, // 定規同士の跳ね返り
+    restitution: 1.0,  // 跳ね返りの倍率（素材ごとの値にかける）
     power: 1.0,        // はじく力の倍率
   };
   const RULER_RULER_MU = 0.3;
-  const MAX_IMPULSE = 6000; // g·cm/s（30cmプラ定規の真ん中をはじいたときの最大）
-  // 指が出せる最大エネルギー。どの定規・どの位置をはじいても同じ。
+  const MAX_IMPULSE = 6000; // g·cm/s（26gの定規の真ん中をはじいたときの最大）
+  // 指が出せる最大エネルギー（26gの定規のとき）。重い定規ほど少し強くはじける（重さの0.7乗）。
+  // 軽い定規は遠くまで速く滑り、重い定規は押す力が強い。
   const MAX_ENERGY = MAX_IMPULSE * MAX_IMPULSE / (2 * 26);
-  const FRICTION_SAMPLES = 8;
+  const ENERGY_MASS_EXP = 0.7;
 
-  // mods: アクセサリの効果 { mass, mu, power }（倍率。1.0 が効果なし、上限 ±5%）
+  // mods: アクセサリとレベルの効果 { mass, mu, power }（倍率。1.0 が効果なし）
   function createBody(id, owner, specKey, x, y, a, mods) {
-    const s = RULERS[specKey];
+    const s = RULERS[specKey] || RULERS['straight30-acrylic'];
+    const sh = SHAPES[s.shape];
     const mm = clampMod(mods?.mass ?? 1), mu = clampMod(mods?.mu ?? 1), pw = clampMod(mods?.power ?? 1);
-    const L = s.length, W = s.width, m = s.mass * mm;
-    const I = m * (L * L + W * W) / 12;
+    const m = s.mass * mm;
+    const I = m * sh.inertiaPerMass;
     return {
-      id, owner, specKey, spec: s,
+      id, owner, specKey, spec: s, shape: sh, mat: s.mat,
       x, y, a, vx: 0, vy: 0, w: 0,
       m, invM: 1 / m, I, invI: 1 / I,
-      mu: s.mu * mu, powerMul: pw,
-      hx: L / 2, hy: W / 2,
+      mu: s.mu * mu, e: s.e, powerMul: pw,
       state: 'desk', fallAt: 0,
     };
   }
@@ -53,20 +140,28 @@ const Physics = (() => {
     return { bodies: [], params: Object.assign({}, DEFAULT_PARAMS, params || {}), desk: desk || DESK, time: 0 };
   }
 
-  function axesOf(b) {
+  const rot = (b, p) => {
     const c = Math.cos(b.a), s = Math.sin(b.a);
-    return { ux: c, uy: s, vx: -s, vy: c };
+    return { x: p.x * c - p.y * s, y: p.x * s + p.y * c };
+  };
+  function worldVerts(b) {
+    const c = Math.cos(b.a), s = Math.sin(b.a);
+    return b.shape.verts.map((p) => ({ x: b.x + p.x * c - p.y * s, y: b.y + p.x * s + p.y * c }));
+  }
+  function worldNormals(b) {
+    const c = Math.cos(b.a), s = Math.sin(b.a);
+    return b.shape.normals.map((n) => ({ x: n.x * c - n.y * s, y: n.x * s + n.y * c }));
   }
 
-  // 机との摩擦：定規を長さ方向に分割し、各点の滑り速度と逆向きに摩擦力をかける
+  // 机との摩擦：定規の面に散らばる点ごとに、滑り速度と逆向きに摩擦力をかける
   function applyDeskFriction(b, dt, scale) {
     const mu = b.mu * scale;
+    const pts = b.shape.samples;
+    const fPer = mu * (b.m / pts.length) * G;
     const c = Math.cos(b.a), s = Math.sin(b.a);
-    const fPer = mu * (b.m / FRICTION_SAMPLES) * G;
     let Fx = 0, Fy = 0, T = 0;
-    for (let i = 0; i < FRICTION_SAMPLES; i++) {
-      const t = -b.hx + (i + 0.5) * (2 * b.hx / FRICTION_SAMPLES);
-      const rx = t * c, ry = t * s;
+    for (const p of pts) {
+      const rx = p.x * c - p.y * s, ry = p.x * s + p.y * c;
       const pvx = b.vx - b.w * ry, pvy = b.vy + b.w * rx;
       const sp = Math.hypot(pvx, pvy);
       if (sp < 1e-6) continue;
@@ -83,60 +178,57 @@ const Physics = (() => {
     if (nw * b.w <= 0) b.w = 0; else b.w = nw;
   }
 
-  // 2つの長方形（OBB）の衝突判定。法線はA→B向き。
-  function collide(A, B) {
-    const aa = axesOf(A), ba = axesOf(B);
-    const dx = B.x - A.x, dy = B.y - A.y;
-    const cands = [
-      { ref: A, inc: B, nx: aa.ux, ny: aa.uy, he: A.hx, tx: aa.vx, ty: aa.vy, ht: A.hy },
-      { ref: A, inc: B, nx: aa.vx, ny: aa.vy, he: A.hy, tx: aa.ux, ty: aa.uy, ht: A.hx },
-      { ref: B, inc: A, nx: ba.ux, ny: ba.uy, he: B.hx, tx: ba.vx, ty: ba.vy, ht: B.hy },
-      { ref: B, inc: A, nx: ba.vx, ny: ba.vy, he: B.hy, tx: ba.ux, ty: ba.uy, ht: B.hx },
-    ];
-    let best = null;
-    for (const c of cands) {
-      const rA = A.hx * Math.abs(c.nx * aa.ux + c.ny * aa.uy) + A.hy * Math.abs(c.nx * aa.vx + c.ny * aa.vy);
-      const rB = B.hx * Math.abs(c.nx * ba.ux + c.ny * ba.uy) + B.hy * Math.abs(c.nx * ba.vx + c.ny * ba.vy);
-      const sep = Math.abs(c.nx * dx + c.ny * dy) - rA - rB;
-      if (sep > 0) return null;
-      c.sep = sep;
-      if (best === null || sep > 0.95 * best.sep + 0.01) best = c;
+  // A の各辺の法線方向で、B がどれだけ離れているか（いちばん離れている辺）
+  function maxSeparation(va, na, vb) {
+    let best = -Infinity, idx = 0;
+    for (let i = 0; i < va.length; i++) {
+      let min = Infinity;
+      for (const q of vb) {
+        const d = na[i].x * (q.x - va[i].x) + na[i].y * (q.y - va[i].y);
+        if (d < min) min = d;
+      }
+      if (min > best) { best = min; idx = i; }
     }
-    const ref = best.ref, inc = best.inc;
-    let nx = best.nx, ny = best.ny;
-    if (nx * (inc.x - ref.x) + ny * (inc.y - ref.y) < 0) { nx = -nx; ny = -ny; }
-    // 参照面に沿う接線
-    const tx = -ny, ty = nx;
-    const ht = best.ht, he = best.he;
-    // 入射面：法線と最も逆向きの面
-    const ia = axesOf(inc);
-    const faces = [
-      { fx: ia.ux, fy: ia.uy, h: inc.hx, sx: ia.vx, sy: ia.vy, sh: inc.hy },
-      { fx: -ia.ux, fy: -ia.uy, h: inc.hx, sx: ia.vx, sy: ia.vy, sh: inc.hy },
-      { fx: ia.vx, fy: ia.vy, h: inc.hy, sx: ia.ux, sy: ia.uy, sh: inc.hx },
-      { fx: -ia.vx, fy: -ia.vy, h: inc.hy, sx: ia.ux, sy: ia.uy, sh: inc.hx },
-    ];
-    let f = faces[0], fd = Infinity;
-    for (const fc of faces) { const d = fc.fx * nx + fc.fy * ny; if (d < fd) { fd = d; f = fc; } }
-    const cx = inc.x + f.fx * f.h, cy = inc.y + f.fy * f.h;
-    let pts = [
-      { x: cx + f.sx * f.sh, y: cy + f.sy * f.sh },
-      { x: cx - f.sx * f.sh, y: cy - f.sy * f.sh },
-    ];
-    // 参照面の両端でクリップ
-    const sOf = (p) => tx * (p.x - ref.x) + ty * (p.y - ref.y);
-    pts = clipSeg(pts, sOf, ht);
+    return { sep: best, idx };
+  }
+
+  // 2つの凸多角形の衝突判定。法線はA→B向き。
+  function collide(A, B) {
+    const dx = B.x - A.x, dy = B.y - A.y;
+    const rr = A.shape.radius + B.shape.radius;
+    if (dx * dx + dy * dy > rr * rr) return null;
+    const va = worldVerts(A), na = worldNormals(A), vb = worldVerts(B), nb = worldNormals(B);
+    const sA = maxSeparation(va, na, vb);
+    if (sA.sep > 0) return null;
+    const sB = maxSeparation(vb, nb, va);
+    if (sB.sep > 0) return null;
+    let refV, refN, incV, incN, idx, flip;
+    if (sB.sep > 0.95 * sA.sep + 0.01) { refV = vb; refN = nb; incV = va; incN = na; idx = sB.idx; flip = true; }
+    else { refV = va; refN = na; incV = vb; incN = nb; idx = sA.idx; flip = false; }
+    const n = refN[idx];
+    const r1 = refV[idx], r2 = refV[(idx + 1) % refV.length];
+    // 入射辺：参照辺の法線といちばん逆向きの辺
+    let inc = 0, md = Infinity;
+    for (let i = 0; i < incN.length; i++) {
+      const d = incN[i].x * n.x + incN[i].y * n.y;
+      if (d < md) { md = d; inc = i; }
+    }
+    let pts = [incV[inc], incV[(inc + 1) % incV.length]];
+    // 参照辺の両端でクリップ
+    const tx = r2.x - r1.x, ty = r2.y - r1.y, tl = Math.hypot(tx, ty);
+    const ux = tx / tl, uy = ty / tl;
+    pts = clipSeg(pts, (p) => -(ux * (p.x - r1.x) + uy * (p.y - r1.y)), 0);
     if (!pts) return null;
-    pts = clipSeg(pts, (p) => -sOf(p), ht);
+    pts = clipSeg(pts, (p) => ux * (p.x - r1.x) + uy * (p.y - r1.y), tl);
     if (!pts) return null;
     const out = [];
     for (const p of pts) {
-      const sep = nx * (p.x - ref.x) + ny * (p.y - ref.y) - he;
-      if (sep <= 0.02) out.push({ x: p.x - nx * sep * 0.5, y: p.y - ny * sep * 0.5, sep });
+      const sep = n.x * (p.x - r1.x) + n.y * (p.y - r1.y);
+      if (sep <= 0.02) out.push({ x: p.x - n.x * sep * 0.5, y: p.y - n.y * sep * 0.5, sep });
     }
     if (!out.length) return null;
-    const sign = ref === A ? 1 : -1;
-    return { A, B, nx: nx * sign, ny: ny * sign, points: out };
+    const sign = flip ? -1 : 1;
+    return { A, B, nx: n.x * sign, ny: n.y * sign, points: out };
   }
 
   // s(p) <= lim の範囲に線分を切り詰める
@@ -149,9 +241,10 @@ const Physics = (() => {
     return d0 > 0 ? [q, pts[1]] : [pts[0], q];
   }
 
-  function prepare(c, dt, e) {
+  function prepare(c, dt, eScale) {
     const { A, B, nx, ny } = c;
     const tx = -ny, ty = nx;
+    const e = ((A.e + B.e) / 2) * eScale;
     for (const p of c.points) {
       p.rAx = p.x - A.x; p.rAy = p.y - A.y;
       p.rBx = p.x - B.x; p.rBy = p.y - B.y;
@@ -196,6 +289,21 @@ const Physics = (() => {
     }
   }
 
+  // 三すくみ：有利な素材が当たったとき、不利な側だけを少し強く押す
+  function applyAffinity(c) {
+    const { A, B, nx, ny } = c;
+    let target = null, sign = 1;
+    if (BEATS[A.mat] === B.mat) { target = B; sign = 1; }
+    else if (BEATS[B.mat] === A.mat) { target = A; sign = -1; }
+    if (!target) return;
+    for (const p of c.points) {
+      const P = p.Pn * AFFINITY_BONUS * sign;
+      const rx = target === B ? p.rBx : p.rAx, ry = target === B ? p.rBy : p.rAy;
+      target.vx += P * nx * target.invM; target.vy += P * ny * target.invM;
+      target.w += target.invI * (rx * P * ny - ry * P * nx);
+    }
+  }
+
   // 1ステップ進める。新しく落ちた定規の配列を返す。
   function step(world, dt) {
     const P = world.params;
@@ -208,6 +316,7 @@ const Physics = (() => {
         if (c) { prepare(c, dt, P.restitution); contacts.push(c); }
       }
     for (let it = 0; it < 12; it++) for (const c of contacts) solve(c);
+    for (const c of contacts) applyAffinity(c);
     const fell = [];
     for (const b of world.bodies) {
       if (b.state === 'gone') continue;
@@ -232,20 +341,40 @@ const Physics = (() => {
   }
 
   // 定規上の点（ローカル座標 lx, ly）に、力の割合 power(0-1) で dir 方向にはじく
-  // 指が出せるエネルギーは定規の種類や押さえる位置によらず同じ、として力積を決める。
-  // 端をはじくと回転が加わるぶん力積は小さく、軽い定規ほど力積は小さくなる。
+  // 指が出せるエネルギーは押さえる位置によらず同じ、として力積を決める。
+  // 端をはじくと回転が加わるぶん力積は小さくなる。
   function flick(world, b, lx, ly, dirx, diry, power) {
-    const c = Math.cos(b.a), s = Math.sin(b.a);
-    const rx = lx * c - ly * s, ry = lx * s + ly * c;
-    const arm = rx * diry - ry * dirx;
+    const r = rot(b, { x: lx, y: ly });
+    const arm = r.x * diry - r.y * dirx;
     const effMass = 1 / (b.invM + b.invI * arm * arm);
     const k = power * world.params.power; // 力の割合（引っぱった長さ×倍率）
-    const J = k * Math.sqrt(2 * MAX_ENERGY * b.powerMul * effMass);
+    const E = MAX_ENERGY * Math.pow(b.spec.mass / 26, ENERGY_MASS_EXP) * b.powerMul;
+    const J = k * Math.sqrt(2 * E * effMass);
     const Jx = dirx * J, Jy = diry * J;
     b.vx += Jx * b.invM; b.vy += Jy * b.invM;
-    b.w += b.invI * (rx * Jy - ry * Jx);
+    b.w += b.invI * (r.x * Jy - r.y * Jx);
   }
 
-  return { G, DESK, RULERS, DEFAULT_PARAMS, MAX_IMPULSE, MOD_LIMIT, createBody, createWorld, step, atRest, flick, collide, axesOf };
+  // 形の中のいちばん近い点（はじく点を定規の上に収める）と、形からの距離
+  function nearestOnShape(shapeKey, lx, ly) {
+    const sh = SHAPES[shapeKey];
+    const p = { x: lx, y: ly };
+    if (inside(sh.verts, sh.normals, p)) return { x: lx, y: ly, dist: 0 };
+    let best = null;
+    for (let i = 0; i < sh.verts.length; i++) {
+      const a = sh.verts[i], b = sh.verts[(i + 1) % sh.verts.length];
+      const ex = b.x - a.x, ey = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((p.x - a.x) * ex + (p.y - a.y) * ey) / (ex * ex + ey * ey)));
+      const q = { x: a.x + ex * t, y: a.y + ey * t };
+      const d = Math.hypot(p.x - q.x, p.y - q.y);
+      if (!best || d < best.dist) best = { x: q.x, y: q.y, dist: d };
+    }
+    return best;
+  }
+
+  return {
+    G, DESK, SHAPES, MATERIALS, BEATS, AFFINITY_BONUS, RULERS, DEFAULT_PARAMS, MAX_IMPULSE, MOD_LIMIT, MOD_TOTAL_LIMIT,
+    createBody, createWorld, step, atRest, flick, collide, nearestOnShape, worldVerts,
+  };
 })();
 export default Physics;

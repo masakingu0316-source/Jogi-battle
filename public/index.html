@@ -5,49 +5,76 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>定規バトル</title>
 <meta name="description" content="机の上で定規をはじき合う、あの遊びをオンラインで。部屋コードで友だちと対戦。">
-<meta name="theme-color" content="#1f3c35">
+<meta name="theme-color" content="#f7f9fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131a2c" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='12' width='26' height='8' rx='1.5' fill='%23ff7f6e'/%3E%3Cpath d='M6 12v3M9 12v2M12 12v3M15 12v2M18 12v3M21 12v2M24 12v3' stroke='%232a1a14' stroke-width='1'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Yusei+Magic&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Klee+One:wght@600&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 <div class="page">
   <header>
-    <h1>定規バトル</h1>
+    <h1><span class="mark">定規バトル</span></h1>
     <span class="conn" id="conn" hidden></span>
     <div class="account" id="account" hidden>
-      <a class="btn-login" id="loginBtn" href="/auth/login" hidden>Googleでログイン</a>
-      <button class="me-chip" id="meChip" type="button" hidden>
+      <button class="me-chip" id="meChip" type="button" title="マイページ（定規ケース・ガチャ・戦績）">
         <span class="me-name" id="meName"></span>
         <span class="coins"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l2-6L16 4l4 4-10 10z" fill="#f4d35e"/><path d="M4 20l2-6 4 4z" fill="#e9c9a0"/><path d="M4 20l1-3 2 2z" fill="#333"/></svg><b id="meCoins">0</b>本</span>
       </button>
     </div>
   </header>
 
-  <!-- ホーム：部屋を作る / コードで入る -->
-  <main id="home" class="screen">
-    <p class="lead">机の上で定規をはじいて、相手を落としたら勝ち。部屋を作って、友だちに部屋コードを送ろう。</p>
-    <div class="card">
-      <label class="field-col" for="name">
-        <span>ニックネーム</span>
-        <input id="name" maxlength="10" autocomplete="nickname" placeholder="例：まさと">
-      </label>
-      <div class="home-actions">
-        <button class="btn-main" id="create" type="button">部屋を作る</button>
-        <div class="or">または</div>
-        <form class="join" id="joinForm">
-          <label class="field-col" for="code">
-            <span>部屋コード（5文字）</span>
-            <input id="code" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCDE">
-          </label>
-          <button id="join" type="submit">入る</button>
-        </form>
+  <!-- ログイン -->
+  <main id="login" class="screen" hidden>
+    <div class="login-hero">
+      <canvas class="login-art" id="loginArt" aria-hidden="true"></canvas>
+      <div class="login-body">
+        <p class="lead">机の上で定規をはじいて、相手を落としたら勝ち。休み時間のあの遊びを、離れた友だちと。</p>
+        <p class="invite-note" id="inviteNote" hidden></p>
+        <a class="btn-login" id="loginBtn" href="/auth/login">Googleでログイン</a>
+        <p class="note">ログインすると、戦績や集めた定規・飾りが保存されます。Googleから受け取るのは名前だけです。</p>
+        <p class="error" id="loginError" hidden></p>
       </div>
-      <p class="error" id="homeError" hidden></p>
     </div>
-    <p class="login-note" id="homeLoginNote" hidden>ログインすると、戦績やガチャで集めた定規・飾り・アクセサリが保存されます。ログインしなくても遊べます。</p>
+  </main>
+
+  <!-- ホーム -->
+  <main id="home" class="screen" hidden>
+    <p class="hello" id="hello"></p>
+    <div class="home-grid">
+      <section class="panel create-panel">
+        <h2>部屋を作る</h2>
+        <div class="mode-pick" id="modePick" role="radiogroup" aria-label="モード"></div>
+        <div class="create-row">
+          <button class="btn-main" id="create" type="button">この遊び方で部屋を作る</button>
+        </div>
+      </section>
+      <div class="home-side">
+        <section class="panel">
+          <h2>部屋に入る</h2>
+          <form class="join" id="joinForm">
+            <label class="field-col" for="code">
+              <span>友だちから届いた部屋コード（5文字）</span>
+              <input id="code" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCDE">
+            </label>
+            <button id="join" type="submit">入る</button>
+          </form>
+        </section>
+        <section class="panel">
+          <h2>使う定規</h2>
+          <canvas class="preview home-preview" id="homePreview" aria-hidden="true"></canvas>
+          <p class="ruler-line" id="homeRuler"></p>
+          <div class="home-links">
+            <button type="button" id="editRuler">定規を編集する</button>
+            <button type="button" class="link" data-open="gacha">ガチャ</button>
+            <button type="button" class="link" data-open="record">戦績</button>
+          </div>
+        </section>
+      </div>
+    </div>
+    <p class="error" id="homeError" hidden></p>
   </main>
 
   <!-- マイページ：定規ケース・ガチャ・戦績 -->
@@ -63,10 +90,10 @@
 
     <section class="tab-panel" id="tab-case">
       <p class="sub-lead">使う定規を選んで、柄・シール・アクセサリを付けられます。<span id="collection"></span></p>
-      <div class="case-grid" id="rulerList"></div>
       <div class="editor" id="editor" hidden>
         <canvas class="preview-big" id="previewBig" aria-label="定規のプレビュー"></canvas>
         <div class="editor-fields">
+          <div class="ed-head"><h3 class="ed-title" id="edTitle"></h3><p class="ed-level" id="edLevel"></p></div>
           <label class="field-col" for="edPattern"><span>柄（見た目）</span><select id="edPattern"></select></label>
           <label class="field-col" for="edSticker"><span>シール（見た目）</span><select id="edSticker"></select></label>
           <label class="field-col" for="edAcc"><span>アクセサリ（性能に効く・最大5%）</span><select id="edAcc"></select></label>
@@ -77,6 +104,8 @@
           </div>
         </div>
       </div>
+      <h3 class="case-head">持っている定規 <small>対戦で使うと経験値がたまり、レベルが上がると重さ・はじく力が少し上がってオーラをまといます</small></h3>
+      <div class="case-grid" id="rulerList"></div>
     </section>
 
     <section class="tab-panel" id="tab-gacha" hidden>
@@ -118,11 +147,11 @@
     </section>
   </main>
 
-  <!-- 待合室 -->
+  <!-- 部屋 -->
   <main id="lobby" class="screen" hidden>
     <div class="room-head">
       <div>
-        <div class="label">部屋コード</div>
+        <div class="label" id="roomMode"></div>
         <div class="code" id="roomCode">-----</div>
       </div>
       <div class="invite">
@@ -131,30 +160,32 @@
       </div>
     </div>
 
+    <div class="countdown" id="countdown" role="status" aria-live="polite">
+      <span class="cd-time" id="cdTime"></span>
+      <span class="cd-text" id="cdText"></span>
+    </div>
+
     <div class="lobby-grid">
       <section class="panel">
         <h2>メンバー <small id="memberCount"></small></h2>
         <ol class="members" id="members"></ol>
-        <p class="note">入った順に席（赤→青→緑→黄）が決まります。最大4人。</p>
+        <p class="note">入った順に席（赤→青→緑→黄）が決まります。</p>
       </section>
       <section class="panel">
-        <h2>モード</h2>
-        <div class="seg" id="modes" role="group" aria-label="モード"></div>
-        <p class="mode-note" id="modeNote"></p>
-        <h2 class="mt">自分の定規</h2>
+        <h2>自分の定規</h2>
         <div class="my-ruler">
           <canvas class="preview" id="lobbyPreview" aria-hidden="true"></canvas>
           <select id="myRuler" aria-label="自分の定規"></select>
         </div>
         <p class="note" id="rulerNote"></p>
-        <button class="link" id="openCase" type="button" hidden>定規ケースで飾りやアクセサリを付ける</button>
-        <div class="start-row">
-          <button class="btn-main" id="start" type="button">対戦を始める</button>
-          <span class="wait" id="startNote"></span>
+        <button class="link" id="openCase" type="button">定規ケースで飾りやアクセサリを付ける</button>
+        <div class="ready-row">
+          <button class="btn-main btn-ready" id="readyBtn" type="button" aria-pressed="false">準備OK</button>
+          <span class="wait" id="readyNote"></span>
         </div>
       </section>
     </div>
-    <button class="link" id="leave" type="button">部屋を出る</button>
+    <button class="link" id="leave" type="button">部屋を出てホームへ</button>
   </main>
 
   <!-- 対戦 -->
@@ -171,7 +202,10 @@
         <p id="resultReason"></p>
         <p class="order" id="resultOrder"></p>
         <p class="reward" id="resultReward" hidden></p>
-        <div class="result-actions" id="resultActions"></div>
+        <div class="result-actions">
+          <button class="btn-main" id="backToRoom" type="button">部屋に戻る</button>
+        </div>
+        <p class="wait" id="resultNext"></p>
       </div>
     </div>
     <div class="controls">

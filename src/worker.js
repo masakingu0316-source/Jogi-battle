@@ -1,6 +1,7 @@
 // 入口。/api/rooms で部屋を作り、/api/rooms/<コード>/ws で部屋につなぐ。
 // /auth/* はGoogleログイン、/api/* はアカウントの情報。それ以外は public/ の画面を返す。
-import { handleAuth, sessionUser } from './auth.js';
+import { handleAuth, sessionUser, loginEnabled, sameOrigin } from './auth.js';
+import { MODES } from '../public/shared/rules.js';
 import { handleApi } from './api.js';
 export { Room } from './room.js';
 
@@ -23,10 +24,17 @@ export default {
     if (url.pathname.startsWith('/auth/')) return handleAuth(request, env, url);
 
     if (url.pathname === '/api/rooms' && request.method === 'POST') {
+      if (!sameOrigin(request, url)) return new Response('forbidden', { status: 403 });
+      // ログインの設定が済んでいれば、部屋を作れるのはログインした人だけ
+      if (loginEnabled(env) && !(await sessionUser(request, env))) {
+        return Response.json({ error: 'ログインしてから部屋を作ってください。' }, { status: 401 });
+      }
+      const body = await request.json().catch(() => ({}));
+      const mode = MODES[body.mode] ? body.mode : 'standard';
       for (let i = 0; i < 5; i++) {
         const code = newCode();
         const stub = env.ROOMS.get(env.ROOMS.idFromName(code));
-        const res = await stub.fetch(`https://room/create?code=${code}`, { method: 'POST' });
+        const res = await stub.fetch(`https://room/create?code=${code}&mode=${mode}`, { method: 'POST' });
         if (res.ok) return Response.json({ code });
       }
       return Response.json({ error: '部屋を作れませんでした。もう一度お試しください。' }, { status: 503 });
@@ -40,6 +48,7 @@ export default {
       // ログイン中ならアカウントを部屋に伝える（画面から送られた同名ヘッダーは消してから付ける）
       const headers = new Headers(request.headers);
       headers.delete(USER_HEADER);
+      headers.set('X-Jogi-Login-Required', loginEnabled(env) ? '1' : '0');
       try {
         const user = await sessionUser(request, env);
         if (user) headers.set(USER_HEADER, encodeURIComponent(JSON.stringify({ id: user.id, name: user.name })));

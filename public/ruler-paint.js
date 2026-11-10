@@ -1,7 +1,9 @@
 // 定規1本を描く（盤面と、定規ケースのプレビューで共用）
 // 座標は cm。px は 1cm あたりの画面ピクセル数（目盛りや文字の出し分けに使う）
+// 形（まっすぐ・三角定規・分度器）× 素材（アクリル・メタル・ラバー）、レベルに応じたオーラ
 import Physics from './shared/physics.js';
 import { PLAYERS } from './shared/rules.js';
+import { MATERIAL_INFO } from './shared/catalog.js';
 
 export function roundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -13,118 +15,371 @@ export function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-// b: { owner, specKey, x, y, a, pattern, sticker, alpha, scale }
+// ---- 形の下ごしらえ（形ごとに1回だけ計算） ----
+// 描くときは、形を定義したときの座標（三角定規なら直角の角が原点）で描く
+const geoCache = new Map();
+function geometry(shapeKey) {
+  if (geoCache.has(shapeKey)) return geoCache.get(shapeKey);
+  const sh = Physics.SHAPES[shapeKey] || Physics.SHAPES.straight30;
+  const off = sh.offset;
+  const outer = sh.verts.map((p) => ({ x: p.x + off.x, y: p.y + off.y }));
+  const normals = sh.normals;
+  const hole = sh.hole ? insetPolygon(outer, normals, sh.hole) : null;
+  const xs = outer.map((p) => p.x), ys = outer.map((p) => p.y);
+  const box = { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
+  // 周の長さ（オーラの粒を周に沿って置く）
+  const lens = outer.map((p, i) => Math.hypot(outer[(i + 1) % outer.length].x - p.x, outer[(i + 1) % outer.length].y - p.y));
+  const perim = lens.reduce((a, b) => a + b, 0);
+  const g = { sh, off, outer, normals, hole, box, lens, perim, outset: new Map() };
+  geoCache.set(shapeKey, g);
+  return g;
+}
+// 各辺を内側に d だけずらした多角形（凸多角形なので、となりの辺どうしの交点を取ればよい）
+function insetPolygon(v, n, d) {
+  const out = [];
+  for (let i = 0; i < v.length; i++) {
+    const j = (i - 1 + v.length) % v.length;
+    const a1 = n[j].x, b1 = n[j].y, c1 = n[j].x * v[j].x + n[j].y * v[j].y - d;
+    const a2 = n[i].x, b2 = n[i].y, c2 = n[i].x * v[i].x + n[i].y * v[i].y - d;
+    const det = a1 * b2 - a2 * b1;
+    out.push(Math.abs(det) < 1e-9 ? { x: v[i].x - n[i].x * d, y: v[i].y - n[i].y * d } : { x: (c1 * b2 - c2 * b1) / det, y: (a1 * c2 - a2 * c1) / det });
+  }
+  return out;
+}
+// 外側に d だけふくらませた形（角は丸くする）
+function outsetPolygon(g, d) {
+  const key = d.toFixed(3);
+  if (g.outset.has(key)) return g.outset.get(key);
+  const { outer: v, normals: n } = g;
+  const out = [];
+  for (let i = 0; i < v.length; i++) {
+    const a = n[(i - 1 + v.length) % v.length], b = n[i];
+    const t0 = Math.atan2(a.y, a.x);
+    let dt = Math.atan2(b.y, b.x) - t0;
+    while (dt > Math.PI) dt -= 2 * Math.PI;
+    while (dt < -Math.PI) dt += 2 * Math.PI;
+    const steps = Math.max(1, Math.ceil(Math.abs(dt) / 0.3));
+    for (let k = 0; k <= steps; k++) {
+      const t = t0 + (dt * k) / steps;
+      out.push({ x: v[i].x + Math.cos(t) * d, y: v[i].y + Math.sin(t) * d });
+    }
+  }
+  g.outset.set(key, out);
+  return out;
+}
+function addPoly(ctx, pts) {
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
+}
+// 本体の形（中抜きは穴をあける。evenodd で塗る）
+function bodyPath(ctx, g) {
+  ctx.beginPath();
+  addPoly(ctx, g.outer);
+  if (g.hole) addPoly(ctx, g.hole);
+}
+function perimeterPoint(g, u) {
+  let d = ((u % 1) + 1) % 1 * g.perim;
+  for (let i = 0; i < g.outer.length; i++) {
+    if (d <= g.lens[i] || i === g.outer.length - 1) {
+      const a = g.outer[i], b = g.outer[(i + 1) % g.outer.length], t = Math.min(1, d / g.lens[i]);
+      return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t, n: g.normals[i] };
+    }
+    d -= g.lens[i];
+  }
+  return { x: g.outer[0].x, y: g.outer[0].y, n: g.normals[0] };
+}
+
+// ---- オーラ（Lv.3から。Lv.6から粒が立ちのぼり、Lv.10は金色の輪が回る） ----
+export const AURA_FROM = 3;
+function paintAura(ctx, g, mat, level, P, now, seed) {
+  if (level < AURA_FROM) return;
+  const col = MATERIAL_INFO[mat]?.aura || '#ffffff';
+  const strength = (level - AURA_FROM + 1) / (10 - AURA_FROM + 1); // 0.125〜1
+  const pulse = 0.78 + 0.22 * Math.sin(now / 380 + seed * 1.7);
+  ctx.save();
+  // ぼんやり光る輪を3枚重ねる
+  const layers = [0.3, 0.75, 1.25].map((d) => d * (0.7 + 0.6 * strength));
+  for (let i = layers.length - 1; i >= 0; i--) {
+    ctx.beginPath();
+    addPoly(ctx, outsetPolygon(g, layers[i]));
+    addPoly(ctx, g.outer);
+    ctx.fillStyle = level >= 10 && i === layers.length - 1 ? '#ffd36b' : col;
+    ctx.globalAlpha = (0.2 + 0.22 * strength) * pulse * (i === 0 ? 1.5 : 1);
+    ctx.fill('evenodd');
+  }
+  // 色がはっきり見えるよう、ふちのすぐ外に細い光の線
+  ctx.beginPath();
+  addPoly(ctx, outsetPolygon(g, 0.2));
+  ctx.strokeStyle = col;
+  ctx.lineWidth = Math.max(0.08, 1.8 / P);
+  ctx.globalAlpha = (0.55 + 0.4 * strength) * pulse;
+  ctx.stroke();
+  // 立ちのぼる粒
+  if (level >= 6) {
+    const n = 2 + (level - 5) * 2;
+    for (let i = 0; i < n; i++) {
+      const cyc = now / 1700 + i * 0.618 + seed * 0.37;
+      const phase = cyc % 1;
+      const p = perimeterPoint(g, i / n + Math.floor(cyc) * 0.273 + seed * 0.1);
+      const out = 0.25 + phase * (1.2 + strength);
+      const x = p.x + p.n.x * out, y = p.y + p.n.y * out;
+      const r = 0.12 + 0.2 * (1 - phase);
+      ctx.globalAlpha = Math.min(1, (1 - phase) * 1.2) * 0.95;
+      ctx.fillStyle = level >= 10 && i % 2 ? '#fff6c8' : col;
+      sparkle(ctx, x, y, r);
+      ctx.fill();
+    }
+  }
+  // Lv.10：金色の点線の輪がゆっくり回る
+  if (level >= 10) {
+    ctx.beginPath();
+    addPoly(ctx, outsetPolygon(g, 0.55));
+    ctx.setLineDash([0.45, 0.8]);
+    ctx.lineDashOffset = -now / 90;
+    ctx.lineWidth = Math.max(0.1, 2 / P);
+    ctx.strokeStyle = '#fff1b0';
+    ctx.globalAlpha = 0.9;
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  ctx.restore();
+}
+function sparkle(ctx, x, y, r) {
+  ctx.beginPath();
+  ctx.moveTo(x, y - r * 1.6);
+  ctx.quadraticCurveTo(x, y, x + r * 1.6, y);
+  ctx.quadraticCurveTo(x, y, x, y + r * 1.6);
+  ctx.quadraticCurveTo(x, y, x - r * 1.6, y);
+  ctx.quadraticCurveTo(x, y, x, y - r * 1.6);
+  ctx.closePath();
+}
+
+// ---- 素材ごとの塗り ----
+function paintMaterial(ctx, g, mat, pl, P) {
+  const { box } = g;
+  bodyPath(ctx, g);
+  if (mat === 'metal') {
+    const gr = ctx.createLinearGradient(box.x0, box.y0, box.x0 + (box.y1 - box.y0) * 0.6, box.y1);
+    gr.addColorStop(0, '#f1f3f5'); gr.addColorStop(0.45, '#b9c0c8'); gr.addColorStop(0.55, '#c9cfd5'); gr.addColorStop(1, '#e3e7eb');
+    ctx.fillStyle = gr;
+    ctx.fill('evenodd');
+  } else if (mat === 'rubber') {
+    ctx.fillStyle = pl.sticker;
+    ctx.fill('evenodd');
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.32)';
+    ctx.fill('evenodd');
+  } else {
+    ctx.fillStyle = pl.tint;
+    ctx.fill('evenodd');
+  }
+  // 質感（本体の形で切り抜いて重ねる）
+  ctx.save();
+  bodyPath(ctx, g);
+  ctx.clip('evenodd');
+  if (mat === 'metal' && P >= 5) {
+    // ヘアライン（細い筋）
+    ctx.lineWidth = Math.max(0.015, 0.6 / P);
+    let seed = 7;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let y = box.y0; y < box.y1; y += 0.16) {
+      ctx.strokeStyle = rnd() > 0.5 ? 'rgba(255,255,255,0.35)' : 'rgba(60,70,80,0.08)';
+      ctx.beginPath(); ctx.moveTo(box.x0, y); ctx.lineTo(box.x1, y + 0.02); ctx.stroke();
+    }
+  } else if (mat === 'rubber' && P >= 4) {
+    // つぶつぶ
+    let seed = 3;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.07)';
+    const n = Math.round((box.x1 - box.x0) * (box.y1 - box.y0) * 2.2);
+    for (let i = 0; i < n; i++) ctx.fillRect(box.x0 + rnd() * (box.x1 - box.x0), box.y0 + rnd() * (box.y1 - box.y0), 0.09, 0.09);
+  } else if (mat === 'acrylic') {
+    // つやの帯
+    const gr = ctx.createLinearGradient(box.x0, box.y0, box.x1, box.y1);
+    gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(0.32, 'rgba(255,255,255,0)');
+    gr.addColorStop(0.4, 'rgba(255,255,255,0.42)'); gr.addColorStop(0.5, 'rgba(255,255,255,0)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.fillStyle = gr;
+    ctx.fillRect(box.x0, box.y0, box.x1 - box.x0, box.y1 - box.y0);
+  }
+  ctx.restore();
+}
+
+const inkOf = (mat) => (mat === 'rubber' ? 'rgba(40, 20, 25, 0.82)' : mat === 'metal' ? 'rgba(25, 28, 34, 0.88)' : 'rgba(20, 20, 30, 0.85)');
+const fontOf = (size) => `600 ${size.toFixed(1)}px "BIZ UDPGothic", system-ui, sans-serif`;
+
+// ---- 目盛り ----
+function paintScale(ctx, g, mat, P) {
+  const sh = g.sh;
+  const ink = inkOf(mat);
+  ctx.strokeStyle = ink;
+  ctx.fillStyle = ink;
+  ctx.lineWidth = Math.max(0.03, 0.8 / P);
+  if (sh.kind === 'protractor') {
+    const R = sh.R;
+    ctx.beginPath();
+    for (let d = 0; d <= 180; d++) {
+      const ten = d % 10 === 0, five = d % 5 === 0;
+      if (!ten && !(five && P >= 5) && P < 11) continue;
+      const len = ten ? 0.75 : five ? 0.5 : 0.3;
+      const t = (-d * Math.PI) / 180;
+      ctx.moveTo(Math.cos(t) * R, Math.sin(t) * R);
+      ctx.lineTo(Math.cos(t) * (R - len), Math.sin(t) * (R - len));
+    }
+    // 基線と中心
+    ctx.moveTo(-R + 0.35, 0); ctx.lineTo(R - 0.35, 0);
+    ctx.moveTo(0, 0); ctx.lineTo(0, -0.55);
+    ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, 0.12, 0, Math.PI * 2); ctx.stroke();
+    const fs = 0.5 * P;
+    if (fs >= 6) {
+      const every = P >= 16 ? 10 : 30;
+      ctx.save();
+      ctx.scale(1 / P, 1 / P);
+      ctx.font = fontOf(fs);
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      for (let d = 0; d <= 180; d += every) {
+        const t = (-d * Math.PI) / 180, r = R - 1.15;
+        ctx.save();
+        ctx.translate(Math.cos(t) * r * P, Math.sin(t) * r * P);
+        ctx.rotate(t + Math.PI / 2);
+        ctx.fillText(String(d), 0, 0);
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+    return;
+  }
+  // まっすぐな定規は上の辺、三角定規は下の辺（直角をはさむ長い辺）に目盛り
+  let x0, edgeY, dir, room;
+  if (sh.kind === 'rect') { x0 = -sh.nominal / 2; edgeY = -sh.W / 2; dir = 1; room = sh.W; }
+  else { x0 = 0.8; edgeY = 0; dir = -1; room = sh.hole; }
+  const showMm = P >= 7, showHalf = P >= 3.5;
+  ctx.beginPath();
+  for (let i = 0; i <= sh.nominal * 10; i++) {
+    const cm = i % 10 === 0, half = i % 5 === 0;
+    if (!cm && !(half && showHalf) && !showMm) continue;
+    const x = x0 + i * 0.1;
+    const len = Math.min(cm ? 1.1 : half ? 0.75 : 0.45, room * (cm ? 0.32 : half ? 0.22 : 0.13));
+    ctx.moveTo(x, edgeY); ctx.lineTo(x, edgeY + dir * len);
+  }
+  ctx.stroke();
+  const every = P >= 13 ? 1 : 5;
+  const fs = Math.min(room * 0.25, 0.9) * P;
+  if (fs >= 6) {
+    ctx.save();
+    ctx.scale(1 / P, 1 / P);
+    ctx.font = fontOf(fs);
+    ctx.textAlign = 'center'; ctx.textBaseline = dir > 0 ? 'top' : 'bottom';
+    const ty = edgeY + dir * Math.min(room * 0.34, 1.2);
+    for (let c = 0; c <= sh.nominal; c += every) ctx.fillText(String(c), (x0 + c) * P, ty * P);
+    ctx.restore();
+  }
+}
+
+// シールと名前シールを貼る場所（形を定義した座標。rot は名前シールの向き）
+function stickerSpots(sh) {
+  if (sh.kind === 'rect') {
+    const L = sh.L, W = sh.W;
+    const sw = Math.min(3.0, L * 0.12), shh = Math.min(W * 0.42, 1.4);
+    const size = Math.min(W * 0.62, 2.4);
+    return {
+      name: { cx: L / 2 - sw / 2 - Math.min(1.2, L * 0.05), cy: W / 2 - shh / 2 - Math.min(W * 0.1, 0.35), w: sw, h: shh, rot: 0 },
+      deco: { cx: -L / 2 + L * 0.22, cy: W / 2 - size * 0.62, size },
+    };
+  }
+  if (sh.kind === 'tri') {
+    const band = sh.hole, sw = 3.0, shh = Math.min(band * 0.6, 1.4), size = Math.min(band * 0.8, 2.0);
+    return {
+      name: { cx: band / 2, cy: -(band + 0.4 + sw / 2), w: sw, h: shh, rot: -Math.PI / 2 },
+      deco: { cx: band / 2, cy: -(band + 0.4 + sw + 0.5 + size / 2), size },
+    };
+  }
+  return {
+    name: { cx: 2.7, cy: 0.05, w: 2.4, h: 1.05, rot: 0 },
+    deco: { cx: -2.7, cy: 0.05, size: 1.3 },
+  };
+}
+
+// b: { owner, specKey, level, x, y, a, pattern, sticker, alpha, scale }
 export function paintRuler(ctx, b, px, active = false, now = 0) {
-  const s = Physics.RULERS[b.specKey] || Physics.RULERS.plastic30;
+  const s = Physics.RULERS[b.specKey] || Physics.RULERS['straight30-acrylic'];
+  const g = geometry(s.shape);
   const pl = PLAYERS[b.owner] || PLAYERS[0];
-  const scale = b.scale ?? 1;
-  const hx = s.length / 2 * scale, hy = s.width / 2 * scale;
-  const W = hy * 2, L = hx * 2;
+  const k = b.scale ?? 1;
+  const P = px * k; // この定規の1cmあたりのピクセル数
+  const level = b.level || 1;
   ctx.save();
   ctx.globalAlpha = b.alpha ?? 1;
   ctx.translate(b.x, b.y);
   ctx.rotate(b.a);
+  ctx.scale(k, k);
+  ctx.translate(-g.off.x, -g.off.y);
+  ctx.lineJoin = 'round';
+
+  paintAura(ctx, g, s.mat, level, P, now, b.owner || 0);
   // 影
-  ctx.fillStyle = 'rgba(40, 22, 8, 0.28)';
-  roundRect(ctx, -hx + 0.25, -hy + 0.45, hx * 2, hy * 2, 0.25);
-  ctx.fill();
-  // 本体
-  roundRect(ctx, -hx, -hy, hx * 2, hy * 2, s.kind === 'steel' ? 0.12 : 0.3);
-  if (s.kind === 'plastic') ctx.fillStyle = pl.tint;
-  else if (s.kind === 'bamboo') ctx.fillStyle = '#e8cf8c';
-  else {
-    const g = ctx.createLinearGradient(0, -hy, 0, hy);
-    g.addColorStop(0, '#e9ecef'); g.addColorStop(0.5, '#b7bec6'); g.addColorStop(1, '#d4d9de');
-    ctx.fillStyle = g;
-  }
-  ctx.fill();
-
-  // 柄（本体の形で切り抜いて重ねる）
   ctx.save();
-  roundRect(ctx, -hx, -hy, hx * 2, hy * 2, 0.3);
-  ctx.clip();
-  if (s.kind === 'bamboo') {
-    ctx.strokeStyle = 'rgba(150, 110, 40, 0.35)';
-    ctx.lineWidth = 0.05;
-    for (let k = -2; k <= 2; k++) { ctx.beginPath(); ctx.moveTo(-hx + 0.3, k * hy * 0.3); ctx.lineTo(hx - 0.3, k * hy * 0.3 + 0.05); ctx.stroke(); }
-  }
-  if (s.grid) {
-    ctx.strokeStyle = 'rgba(20, 60, 120, 0.25)';
-    ctx.lineWidth = 0.03;
-    ctx.beginPath();
-    for (let x = -hx; x <= hx; x += 0.5 * scale) { ctx.moveTo(x, -hy); ctx.lineTo(x, hy); }
-    for (let y = -hy; y <= hy; y += 0.5 * scale) { ctx.moveTo(-hx, y); ctx.lineTo(hx, y); }
-    ctx.stroke();
-  }
-  if (b.pattern) paintPattern(ctx, b.pattern, hx, hy, scale);
+  ctx.translate(0.25, 0.45);
+  bodyPath(ctx, g);
+  ctx.fillStyle = 'rgba(40, 22, 8, 0.28)';
+  ctx.fill('evenodd');
   ctx.restore();
-
-  ctx.lineWidth = Math.max(0.06, 1.3 / px);
-  ctx.strokeStyle = s.kind === 'plastic' ? pl.edge : 'rgba(60, 50, 40, 0.75)';
-  roundRect(ctx, -hx, -hy, hx * 2, hy * 2, s.kind === 'steel' ? 0.12 : 0.3);
-  ctx.stroke();
-
-  // 目盛り
-  const x0 = -hx + (L - s.nominal * scale) / 2;
-  const ppcm = px * scale;
-  const showMm = ppcm >= 7, showHalf = ppcm >= 3.5;
-  const ink = s.kind === 'plastic' ? 'rgba(20, 20, 30, 0.85)' : 'rgba(25, 20, 15, 0.9)';
-  ctx.strokeStyle = ink;
-  ctx.lineWidth = Math.max(0.03, 0.8 / px);
-  ctx.beginPath();
-  for (let i = 0; i <= s.nominal * 10; i++) {
-    const cm = i % 10 === 0, half = i % 5 === 0;
-    if (!cm && !(half && showHalf) && !showMm) continue;
-    const x = x0 + i * 0.1 * scale;
-    const len = Math.min(cm ? 1.1 : half ? 0.75 : 0.45, cm ? W * 0.32 : half ? W * 0.22 : W * 0.13) * (cm ? 1 : 1);
-    ctx.moveTo(x, -hy); ctx.lineTo(x, -hy + len);
-  }
-  ctx.stroke();
-  const every = ppcm >= 13 ? 1 : 5;
-  const fs = Math.min(W * 0.25, 0.9 * scale) * px;
-  if (fs >= 6) {
+  // 本体
+  paintMaterial(ctx, g, s.mat, pl, P);
+  // 柄
+  if (b.pattern) {
     ctx.save();
-    ctx.scale(1 / px, 1 / px);
-    ctx.font = `600 ${fs.toFixed(1)}px "Zen Kaku Gothic New", system-ui, sans-serif`;
-    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-    ctx.fillStyle = ink;
-    const ty = -hy + Math.min(W * 0.34, 1.2 * scale);
-    for (let c = 0; c <= s.nominal; c += every) ctx.fillText(String(c), (x0 + c * scale) * px, ty * px);
+    bodyPath(ctx, g);
+    ctx.clip('evenodd');
+    const { box } = g;
+    ctx.translate((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2);
+    paintPattern(ctx, b.pattern, (box.x1 - box.x0) / 2, (box.y1 - box.y0) / 2, 1);
     ctx.restore();
   }
-
-  // シール（飾り）
-  if (b.sticker) {
-    const size = Math.min(W * 0.62, 2.4 * scale);
-    paintSticker(ctx, b.sticker, -hx + L * 0.22, hy - size * 0.62, size);
+  // ふち
+  bodyPath(ctx, g);
+  ctx.lineWidth = Math.max(0.06, 1.3 / P);
+  ctx.strokeStyle = s.mat === 'acrylic' ? pl.edge : s.mat === 'metal' ? 'rgba(70, 78, 88, 0.85)' : 'rgba(60, 25, 30, 0.6)';
+  ctx.stroke();
+  if (s.mat !== 'acrylic') {
+    // 席の色がわかるよう、外のふちを席の色でなぞる
+    ctx.beginPath(); addPoly(ctx, g.outer);
+    ctx.lineWidth = Math.max(0.1, 2.2 / P);
+    ctx.strokeStyle = pl.edge;
+    ctx.stroke();
   }
 
+  paintScale(ctx, g, s.mat, P);
+
+  const spots = stickerSpots(g.sh);
+  if (b.sticker) paintSticker(ctx, b.sticker, spots.deco.cx, spots.deco.cy, spots.deco.size);
   // 名前シール（席の色。飾りがあっても必ず見えるように最後に描く）
-  const sw = Math.min(3.0, L * 0.12), sh = Math.min(W * 0.42, 1.4 * scale);
-  const sx = hx - sw - Math.min(1.2, L * 0.05), sy = hy - sh - Math.min(W * 0.1, 0.35);
-  roundRect(ctx, sx, sy, sw, sh, sh * 0.25);
+  const n = spots.name;
+  ctx.save();
+  ctx.translate(n.cx, n.cy);
+  ctx.rotate(n.rot);
+  roundRect(ctx, -n.w / 2, -n.h / 2, n.w, n.h, n.h * 0.25);
   ctx.fillStyle = pl.sticker; ctx.fill();
-  ctx.lineWidth = Math.max(0.04, 0.8 / px);
-  ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+  ctx.lineWidth = Math.max(0.04, 0.8 / P);
+  ctx.strokeStyle = 'rgba(255,255,255,0.8)';
   ctx.stroke();
-  if (sh * px >= 9) {
-    ctx.save();
-    ctx.translate(sx + sw / 2, sy + sh / 2);
-    ctx.scale(1 / px, 1 / px);
-    ctx.font = `700 ${(sh * px * 0.72).toFixed(1)}px "Zen Kaku Gothic New", system-ui, sans-serif`;
+  if (n.h * P >= 9) {
+    ctx.scale(1 / P, 1 / P);
+    ctx.font = `700 ${(n.h * P * 0.72).toFixed(1)}px "BIZ UDPGothic", system-ui, sans-serif`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillStyle = pl.ink;
     ctx.fillText(pl.name, 0, 0.5);
-    ctx.restore();
   }
+  ctx.restore();
 
   // 手番の定規はチョークの点線で囲む
   if (active) {
     ctx.globalAlpha = (b.alpha ?? 1) * (0.55 + 0.45 * Math.sin(now / 260));
-    roundRect(ctx, -hx - 0.7, -hy - 0.7, hx * 2 + 1.4, hy * 2 + 1.4, 0.8);
+    ctx.beginPath();
+    addPoly(ctx, outsetPolygon(g, 0.7));
     ctx.setLineDash([0.8, 0.6]);
     ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = Math.max(0.12, 2 / px);
+    ctx.lineWidth = Math.max(0.12, 2 / P);
     ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -285,16 +540,42 @@ export function paintSticker(ctx, id, cx, cy, size) {
   ctx.restore();
 }
 
-// 定規ケース用のプレビュー（横向きに1本）
+// 定規ケースなどのプレビュー（1本だけ）。オーラのある定規は動かし続ける
+const previews = new Map(); // canvas -> { look, owner, px, cx, cy, dpr }
 export function previewRuler(canvas, look, owner = 0) {
   const ctx = canvas.getContext('2d');
   const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
   const cssW = canvas.clientWidth || 300, cssH = canvas.clientHeight || 60;
   canvas.width = Math.round(cssW * dpr);
   canvas.height = Math.round(cssH * dpr);
-  const s = Physics.RULERS[look.specKey] || Physics.RULERS.plastic30;
-  const px = Math.min((cssW - 12) / s.length, (cssH - 10) / s.width, 22);
-  ctx.setTransform(px * dpr, 0, 0, px * dpr, cssW / 2 * dpr, cssH / 2 * dpr);
-  ctx.clearRect(-1e3, -1e3, 2e3, 2e3);
-  paintRuler(ctx, { owner, specKey: look.specKey, x: 0, y: 0, a: 0, pattern: look.pattern, sticker: look.sticker }, px);
+  const s = Physics.RULERS[look.specKey] || Physics.RULERS['straight30-acrylic'];
+  const g = geometry(s.shape);
+  const margin = (look.level || 1) >= AURA_FROM ? 2.4 : 0.6;
+  const bw = g.box.x1 - g.box.x0 + margin, bh = g.box.y1 - g.box.y0 + margin;
+  const px = Math.min((cssW - 12) / bw, (cssH - 10) / bh, 22);
+  // 形の外枠の真ん中を画面の真ん中に
+  const x = g.off.x - (g.box.x0 + g.box.x1) / 2, y = g.off.y - (g.box.y0 + g.box.y1) / 2;
+  const p = { look, owner, px, x, y, dpr, cssW, cssH };
+  previews.set(canvas, p);
+  drawPreview(canvas, p, performance.now());
+  if ((look.level || 1) >= AURA_FROM && !loopOn) { loopOn = true; requestAnimationFrame(loop); }
+}
+function drawPreview(canvas, p, now) {
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(p.px * p.dpr, 0, 0, p.px * p.dpr, p.cssW / 2 * p.dpr, p.cssH / 2 * p.dpr);
+  paintRuler(ctx, { owner: p.owner, specKey: p.look.specKey, level: p.look.level, x: p.x, y: p.y, a: 0, pattern: p.look.pattern, sticker: p.look.sticker }, p.px, false, now);
+}
+let loopOn = false, lastLoop = 0;
+function loop(now) {
+  let any = false;
+  for (const [canvas, p] of previews) {
+    if (!canvas.isConnected) { previews.delete(canvas); continue; }
+    if ((p.look.level || 1) < AURA_FROM) continue;
+    any = true;
+    if (now - lastLoop >= 33 && canvas.offsetParent !== null) drawPreview(canvas, p, now);
+  }
+  if (now - lastLoop >= 33) lastLoop = now;
+  if (any) requestAnimationFrame(loop); else loopOn = false;
 }

@@ -65,7 +65,7 @@ function renderAll() {
 
 function renderEconomy() {
   $('economy').innerHTML = Object.entries(ECONOMY_KEYS).map(([k, r]) => `
-    <label for="e-${k}">${r.name}（${ECONOMY.unit}）
+    <label for="e-${k}">${r.name}（${r.unit || ECONOMY.unit}）
       <input type="number" id="e-${k}" data-econ="${k}" min="${r.min}" max="${r.max}" step="1" value="${draft.economy[k]}">
       <small>初期値 ${defaults.economy[k]}</small>
     </label>`).join('');
@@ -189,7 +189,7 @@ async function searchUsers(q) {
           <small>ID ${u.id}・対戦${u.games}回・登録 ${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}</small></span>
         <span class="give"><input type="number" step="1" value="100" aria-label="${esc(u.name)}に配る本数" id="g-${u.id}"><button type="button" data-give="${u.id}">配る</button></span>
       </li>`;
-    }).join('') : '<li class="who" style="color:var(--chalk-dim)">見つかりませんでした</li>';
+    }).join('') : '<li class="who" style="color:var(--ink-soft)">見つかりませんでした</li>';
   } catch (e) { toast(e.message); }
 }
 $('searchForm').addEventListener('submit', (e) => { e.preventDefault(); searchUsers($('q').value.trim()); });

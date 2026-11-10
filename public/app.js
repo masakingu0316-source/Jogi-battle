@@ -1,9 +1,11 @@
 // 画面の切り替え・サーバーとの通信・はじく操作・動きの再生
+// 流れ：ログイン → ホーム（部屋を作る／入る／定規の編集） → 部屋（全員が準備OKか1分で開始） → 対戦 → 部屋に戻る
 import Physics from './shared/physics.js';
-import { DESKS, MODES, PLAYERS, TEAMS, teamOf, playableReason } from './shared/rules.js';
+import { DESKS, MODES, PLAYERS, TEAMS, teamOf } from './shared/rules.js';
 import { createBoard, MAX_DRAG } from './board.js';
-import { ITEMS, BASIC_RULERS, ECONOMY, accText as accTextOf, defaultConfig } from './shared/catalog.js';
-import { previewRuler } from './ruler-paint.js';
+import { ITEMS, BASIC_RULERS, ECONOMY, MATERIAL_INFO, DEFAULT_RULER, accText as accTextOf, defaultConfig } from './shared/catalog.js';
+import { matChip, levelHtml, levelOfRuler, affinityText } from './ruler-info.js';
+import { previewRuler, paintRuler } from './ruler-paint.js';
 import { createAccount } from './account.js';
 
 const $ = (id) => document.getElementById(id);
@@ -22,8 +24,14 @@ const app = {
   code: null, ws: null, you: null, state: null,
   playing: null, pendingState: null, aim: null, waitingShot: false, fx: [],
   retries: 0, closedByUs: false, fatal: false, pingTimer: 0, reconnectTimer: 0,
-  view: 'room', prevPhase: null, config: null, me: null, lastReward: null,
+  view: 'home',            // home | room | mypage
+  config: null, me: null, game: null, lastReward: null,
+  startDeadline: null,     // 自動で始まる時刻（この端末の時計で）
+  playedGame: null,        // 自分が参加した対戦の番号（結果を見せるため）
+  dismissedGame: null,     // 「部屋に戻る」を押した対戦の番号
+  pickedMode: store.get('jogi:mode') || 'standard',
 };
+if (!MODES[app.pickedMode]) app.pickedMode = 'standard';
 const board = createBoard($('board'), $('boardWrap'));
 let account; // 下で作る（画面の関数を渡すため）
 
@@ -48,66 +56,149 @@ function setConn(text) {
   $('conn').hidden = !text;
 }
 function show(screen) {
-  for (const id of ['home', 'lobby', 'game', 'mypage']) $(id).hidden = id !== screen;
+  for (const id of ['login', 'home', 'lobby', 'game', 'mypage']) $(id).hidden = id !== screen;
 }
-const myName = () => $('name').value.trim() || 'ゲスト';
 const memberById = (id) => app.state?.members.find((m) => m.id === id) || null;
 const isHost = () => app.state && app.you && app.state.hostId === app.you.id;
+const mmss = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 function send(msg) {
-  if (app.ws && app.ws.readyState === WebSocket.OPEN) app.ws.send(JSON.stringify(msg));
-  else toast('接続が切れています。つながり直すまでお待ちください');
+  if (app.ws && app.ws.readyState === WebSocket.OPEN) { app.ws.send(JSON.stringify(msg)); return true; }
+  toast('接続が切れています。つながり直すまでお待ちください');
+  return false;
+}
+function setError(id, text) {
+  $(id).textContent = text || '';
+  $(id).hidden = !text;
+}
+const roomParam = () => {
+  const r = (new URLSearchParams(location.search).get('room') || '').toUpperCase();
+  return CODE_RE.test(r) ? r : null;
+};
+
+// ---------------- ログイン ----------------
+function showLogin(errorText) {
+  app.view = 'home';
+  show('login');
+  const invited = roomParam();
+  $('inviteNote').hidden = !invited;
+  if (invited) $('inviteNote').innerHTML = `部屋 <b>${invited}</b> に招待されています。ログインすると、そのまま部屋に入ります。`;
+  $('loginBtn').href = `/auth/login?return=${encodeURIComponent(location.pathname + location.search)}`;
+  if (!app.config?.login) {
+    $('loginBtn').hidden = true;
+    setError('loginError', 'ログインの準備がまだできていません。サイトの管理者に、Googleログインの設定を確認するよう伝えてください。');
+  } else {
+    $('loginBtn').hidden = false;
+    setError('loginError', errorText || '');
+  }
+  drawLoginArt();
+}
+
+// 机の上に定規が2本。ログイン画面の絵
+function drawLoginArt() {
+  const c = $('loginArt');
+  const ctx = c.getContext('2d');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  const w = c.clientWidth || 480, h = c.clientHeight || 360;
+  c.width = Math.round(w * dpr); c.height = Math.round(h * dpr);
+  const cs = getComputedStyle(document.documentElement);
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = cs.getPropertyValue('--floor').trim() || '#c9d0db';
+  ctx.fillRect(0, 0, w, h);
+  const s = w / 80; // 横80cmぶん
+  ctx.setTransform(s * dpr, 0, 0, s * dpr, w / 2 * dpr, h / 2 * dpr);
+  ctx.save();
+  ctx.shadowColor = 'rgba(20, 28, 50, 0.3)'; ctx.shadowBlur = 14 * dpr; ctx.shadowOffsetY = 4 * dpr;
+  ctx.fillStyle = '#d9bb8f';
+  ctx.beginPath(); ctx.roundRect(-32.5, -22.5, 65, 45, 1.4); ctx.fill();
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(122, 78, 38, 0.12)'; ctx.lineWidth = 0.12;
+  for (let y = -21; y < 22; y += 1.7) { ctx.beginPath(); ctx.moveTo(-32, y); ctx.bezierCurveTo(-10, y + 0.6, 10, y - 0.6, 32, y + 0.3); ctx.stroke(); }
+  paintRuler(ctx, { owner: 0, specKey: 'straight30-acrylic', x: -10, y: 4, a: -0.35, pattern: null, sticker: 'sticker:star' }, s);
+  paintRuler(ctx, { owner: 1, specKey: 'tri45-metal', level: 7, x: 13, y: -6, a: 0.5 }, s, false, 900);
+  paintRuler(ctx, { owner: 3, specKey: 'protractor-rubber', x: 15, y: 11, a: -0.2 }, s);
 }
 
 // ---------------- ホーム ----------------
-$('name').value = store.get('jogi:name') || '';
-$('name').addEventListener('change', () => store.set('jogi:name', $('name').value.trim()));
+function showHome(errorText) {
+  app.view = 'home';
+  show('home');
+  renderHome();
+  setError('homeError', errorText || '');
+}
+
+function renderHome() {
+  if (!app.me) return;
+  $('hello').innerHTML = `<b>${esc(app.me.name)}</b> さん、どの遊び方にしますか？`;
+  const sizes = { single: 'd1', pair: 'd2', group: 'd4' };
+  $('modePick').innerHTML = Object.entries(MODES).map(([k, m]) => {
+    const d = DESKS[m.desk];
+    const n = m.min === m.max ? `${m.max}人` : `${m.min}〜${m.max}人`;
+    const cells = { d1: 1, d2: 2, d4: 4 }[sizes[m.desk]];
+    return `<button type="button" class="mode-opt" role="radio" data-mode="${k}" aria-checked="${k === app.pickedMode}">
+      <span class="desks ${sizes[m.desk]}" aria-hidden="true">${'<i></i>'.repeat(cells)}</span>
+      <span class="mo-name">${m.name}</span>
+      <span class="mo-sub">${n}・${d.name}（${d.w}×${d.h}cm）<br>${m.note.split('。')[1] || ''}</span>
+    </button>`;
+  }).join('');
+  const sel = app.me.selectedRuler;
+  const setup = app.me.setups?.[sel] || {};
+  const item = ITEMS[sel] || ITEMS[DEFAULT_RULER];
+  const lv = levelOfRuler(app.me, item.id);
+  previewRuler($('homePreview'), { specKey: item.specKey, level: lv.level, pattern: setup.pattern, sticker: setup.sticker });
+  const extras = [setup.pattern && ITEMS[setup.pattern]?.name, setup.sticker && ITEMS[setup.sticker]?.name,
+    setup.acc && `${ITEMS[setup.acc]?.name}（${accText(setup.acc)}）`].filter(Boolean).join('・');
+  $('homeRuler').innerHTML = `${esc(item.name)}<span class="ruler-meta">${matChip(item.mat)}${levelHtml(lv)}</span><small>${esc(extras || '飾り・アクセサリなし')}</small>`;
+}
+
+$('modePick').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-mode]');
+  if (!b) return;
+  app.pickedMode = b.dataset.mode;
+  store.set('jogi:mode', app.pickedMode);
+  for (const x of document.querySelectorAll('.mode-opt')) x.setAttribute('aria-checked', String(x.dataset.mode === app.pickedMode));
+});
 $('code').addEventListener('input', () => {
   $('code').value = $('code').value.toUpperCase().replace(/[^A-Z0-9]/g, '');
 });
-
-function homeError(text) {
-  $('homeError').textContent = text || '';
-  $('homeError').hidden = !text;
-}
-
 $('create').addEventListener('click', async () => {
-  store.set('jogi:name', $('name').value.trim());
-  homeError('');
+  setError('homeError', '');
   $('create').disabled = true;
   try {
-    const res = await fetch('/api/rooms', { method: 'POST' });
+    const res = await fetch('/api/rooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: app.pickedMode }) });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 401) { app.me = null; showLogin('ログインの有効期限が切れました。もう一度ログインしてください。'); return; }
     if (!res.ok || !data.code) throw new Error(data.error || '部屋を作れませんでした。時間をおいてもう一度お試しください。');
     connect(data.code);
   } catch (e) {
-    homeError(e.message || '部屋を作れませんでした。');
+    setError('homeError', e.message || '部屋を作れませんでした。');
   } finally {
     $('create').disabled = false;
   }
 });
-
 $('joinForm').addEventListener('submit', (e) => {
   e.preventDefault();
-  store.set('jogi:name', $('name').value.trim());
   const code = $('code').value.trim().toUpperCase();
-  if (!CODE_RE.test(code)) { homeError('部屋コードは5文字の英数字です。'); $('code').focus(); return; }
-  homeError('');
+  if (!CODE_RE.test(code)) { setError('homeError', '部屋コードは5文字の英数字です。'); $('code').focus(); return; }
+  setError('homeError', '');
   connect(code);
 });
+$('editRuler').addEventListener('click', () => account.open('case'));
+for (const b of document.querySelectorAll('[data-open]')) b.addEventListener('click', () => account.open(b.dataset.open));
 
-function toHome(errorText) {
+// 部屋から出てホームへ
+function leaveRoom(errorText) {
   app.closedByUs = true;
   clearInterval(app.pingTimer);
   clearTimeout(app.reconnectTimer);
   if (app.ws) { try { app.ws.close(1000); } catch { } }
   app.ws = null; app.state = null; app.playing = null; app.aim = null; app.waitingShot = false;
-  app.view = 'room'; app.prevPhase = null; app.lastReward = null;
+  app.lastReward = null; app.startDeadline = null;
   setConn(null);
-  if (app.code) $('code').value = app.code;
+  if (app.code && errorText) $('code').value = app.code;
   app.code = null;
   history.replaceState(null, '', location.pathname);
-  show('home');
-  homeError(errorText || '');
+  if (app.me) { account.refresh().then(() => { if (app.view === 'home' && !$('home').hidden) renderHome(); }); showHome(errorText); }
+  else showLogin(errorText);
 }
 
 // ---------------- 通信 ----------------
@@ -117,12 +208,13 @@ function connect(code) {
   app.code = code;
   app.closedByUs = false;
   app.fatal = false;
+  app.view = 'room';
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/api/rooms/${code}/ws`);
   app.ws = ws;
   ws.onopen = () => {
     app.retries = 0;
-    ws.send(JSON.stringify({ t: 'hello', name: myName(), token: store.get(tokenKey(code)) }));
+    ws.send(JSON.stringify({ t: 'hello', name: app.me?.name || 'ゲスト', token: store.get(tokenKey(code)) }));
     clearInterval(app.pingTimer);
     app.pingTimer = setInterval(() => { if (ws.readyState === WebSocket.OPEN) ws.send('ping'); }, 25000);
   };
@@ -136,14 +228,14 @@ function connect(code) {
     if (app.ws !== ws) return;
     clearInterval(app.pingTimer);
     if (app.closedByUs || app.fatal) return;
-    if (e.code === 4000) { app.fatal = true; toHome('別のタブか端末でこの部屋を開いたため、こちらの接続を終了しました。'); return; }
+    if (e.code === 4000) { app.fatal = true; leaveRoom('別のタブか端末でこの部屋を開いたため、こちらの接続を終了しました。'); return; }
     scheduleReconnect();
   };
 }
 
 function scheduleReconnect() {
   if (!app.code) return;
-  if (app.retries >= 12) { toHome('サーバーにつながりません。通信環境を確かめて、もう一度入ってください。'); return; }
+  if (app.retries >= 12) { leaveRoom('サーバーにつながりません。通信環境を確かめて、もう一度入ってください。'); return; }
   const wait = Math.min(8000, 500 * 2 ** app.retries);
   app.retries++;
   setConn('再接続中…');
@@ -172,13 +264,19 @@ function onMessage(m) {
     case 'reward':
       app.lastReward = m;
       account.setCoins(m.total);
-      if (app.state?.phase === 'over' && !app.playing && app.view === 'room') renderGame();
+      if (m.exp && app.me) app.me.exp = { ...(app.me.exp || {}), [m.exp.ruler]: m.exp.exp };
+      if (showingResult()) renderGame();
+      break;
+    case 'left':
+      if (app.code) store.del(tokenKey(app.code));
+      leaveRoom('');
       break;
     case 'error':
       if (m.fatal) {
         app.fatal = true;
-        if (/見つかりません/.test(m.text) && app.code) store.del(tokenKey(app.code));
-        toHome(m.text);
+        if (app.code) store.del(tokenKey(app.code));
+        if (m.login) { app.me = null; leaveRoom(m.text); return; }
+        leaveRoom(m.text);
       } else {
         app.waitingShot = false;
         toast(m.text);
@@ -190,84 +288,117 @@ function onMessage(m) {
 
 function applyState(st) {
   app.state = st;
+  app.startDeadline = st.startIn === null || st.startIn === undefined ? null : performance.now() + st.startIn;
   render();
 }
 
 // ---------------- 画面の描画 ----------------
+// 自分が参加した対戦の結果を、まだ閉じていなければ見せる
+function showingResult() {
+  const st = app.state;
+  return !!st && st.phase === 'lobby' && !!st.game?.result && !app.playing
+    && st.game.id === app.playedGame && app.dismissedGame !== st.game.id;
+}
+
 function render() {
   const st = app.state;
   if (!st) return;
-  const started = st.phase === 'aim' && app.prevPhase !== 'aim';
-  app.prevPhase = st.phase;
-  if (started) app.lastReward = null;
-  if (app.view === 'mypage') {
-    if (!started) return;
-    app.view = 'room';
-    toast('対戦が始まりました');
+  const inGame = st.phase === 'aim' && app.you && st.game?.order.includes(app.you.id);
+  if (inGame && app.playedGame !== st.game.id) {
+    // 新しい対戦が始まった
+    app.playedGame = st.game.id;
+    app.lastReward = null;
+    if (app.view === 'mypage') { app.view = 'room'; toast('対戦が始まりました'); }
   }
-  if (st.phase === 'lobby') { show('lobby'); renderLobby(); }
-  else {
+  if (app.view !== 'room') return;
+  if (st.phase === 'aim' || showingResult()) {
     const wasHidden = $('game').hidden;
     show('game');
     board.setDesk(MODES[st.mode].desk);
     if (wasHidden) board.layout();
     renderGame();
+  } else {
+    show('lobby');
+    renderLobby();
   }
 }
 
 function renderLobby() {
   const st = app.state;
   const mode = MODES[st.mode];
+  const desk = DESKS[mode.desk];
+  $('roomMode').textContent = `${mode.name}・${mode.min === mode.max ? mode.max + '人' : mode.min + '〜' + mode.max + '人'}・${desk.name}　部屋コード`;
   $('roomCode').textContent = st.code;
   $('inviteUrl').value = `${location.origin}${location.pathname}?room=${st.code}`;
-  const slots = Math.max(st.members.length, mode.max);
   const rows = [];
-  for (let i = 0; i < slots; i++) {
+  for (let i = 0; i < mode.max; i++) {
     const m = st.members[i];
-    const pl = PLAYERS[i] || PLAYERS[0];
-    if (!m) { rows.push(`<li class="empty"><span class="seat" style="color:${pl.color}">${pl.name}</span><span class="who">空き席</span><span></span></li>`); continue; }
+    const pl = PLAYERS[i];
+    if (!m) { rows.push(`<li class="empty"><span class="seat" style="color:var(--seat-${i})">${pl.name}</span><span class="who">空き席</span><span></span></li>`); continue; }
     const badges = [
-      m.id === st.hostId ? '<span class="badge">部屋主</span>' : '',
       app.you && m.id === app.you.id ? '<span class="badge you">あなた</span>' : '',
       m.connected ? '' : '<span class="badge off">接続待ち</span>',
     ].join('');
-    rows.push(`<li><span class="seat" style="color:${pl.color}">${pl.name}</span>
-      <span class="who">${esc(m.name)}${badges}<span class="sub">${esc(ITEMS[m.loadout?.ruler]?.name || '')}${m.loadout?.acc ? '・' + esc(accText(m.loadout.acc)) : ''}${m.account ? '' : '・ゲスト'}</span></span><span></span></li>`);
+    const team = mode.teams ? `${TEAMS[teamOf(i)].name}・` : '';
+    rows.push(`<li><span class="seat" style="color:var(--seat-${i})">${pl.name}</span>
+      <span class="who">${esc(m.name)}${badges}<span class="sub">${team}${esc(ITEMS[m.loadout?.ruler]?.name || '')} Lv.${m.loadout?.level || 1}${m.loadout?.acc ? '・' + esc(accText(m.loadout.acc)) : ''}・${st.wins[m.id] || 0}勝</span></span>
+      <span class="state${m.ready ? ' ok' : ''}">${m.ready ? '準備OK' : '準備中'}</span></li>`);
   }
   $('members').innerHTML = rows.join('');
-  $('memberCount').textContent = `${st.members.length}人`;
+  $('memberCount').textContent = `${st.members.length} / ${mode.max}人`;
 
-  const host = isHost();
-  $('modes').innerHTML = Object.entries(MODES).map(([k, md]) =>
-    `<button type="button" data-mode="${k}" aria-pressed="${k === st.mode}" ${host ? '' : 'disabled'}>${md.name}</button>`).join('');
-  const desk = DESKS[mode.desk];
-  $('modeNote').textContent = `${mode.note}（${desk.w}×${desk.h}cm）`;
-
-  renderMyRuler(memberById(app.you?.id));
-
-  const reason = playableReason(st.mode, st.members.length)
-    || (st.members.some((m) => !m.connected) ? '接続が切れている人がいます' : null);
-  $('start').hidden = !host;
-  $('start').disabled = !!reason;
-  const hostName = memberById(st.hostId)?.name || '部屋主';
-  $('startNote').textContent = host ? (reason || '') : `${hostName}さんが始めるのを待っています${reason ? `（${reason}）` : ''}`;
+  const me = memberById(app.you?.id);
+  renderMyRuler(me);
+  const ready = !!me?.ready;
+  $('readyBtn').setAttribute('aria-pressed', String(ready));
+  $('readyBtn').textContent = ready ? '準備OKを取り消す' : '準備OK';
+  const waitingFor = st.members.filter((m) => !m.ready).length;
+  $('readyNote').textContent = ready
+    ? (waitingFor ? `ほかの${waitingFor}人の準備を待っています` : '')
+    : '定規を決めたら押してください';
+  updateCountdown();
 }
 
-// 待合室の「自分の定規」。ログイン中は持っている定規から、ゲストは基本の4本から選ぶ
+// カウントダウンの表示（部屋と結果画面）
+function updateCountdown() {
+  const st = app.state;
+  if (!st || st.phase !== 'lobby') return;
+  const mode = MODES[st.mode];
+  const need = mode.min - st.members.length;
+  const left = app.startDeadline === null ? null : app.startDeadline - performance.now();
+  const box = $('countdown');
+  if (need > 0) {
+    box.className = 'countdown waiting';
+    $('cdText').textContent = `あと${need}人そろうと始められます（${mode.name}は${mode.min === mode.max ? mode.max + '人' : mode.min + '人から'}）。招待リンクを友だちに送りましょう。`;
+  } else if (st.members.some((m) => !m.connected)) {
+    box.className = 'countdown waiting';
+    $('cdText').textContent = '接続が切れている人がいます。戻ってくるか、部屋から外れるのを待っています。';
+  } else if (left !== null) {
+    box.className = 'countdown' + (left < 10000 ? ' soon' : '');
+    $('cdTime').textContent = mmss(left);
+    $('cdText').textContent = '全員が準備OKになると、すぐに始まります。時間になると、準備中の人も一緒に始まります。';
+  } else {
+    box.className = 'countdown waiting';
+    $('cdText').textContent = '全員が準備OKになると始まります。';
+  }
+  if (showingResult()) {
+    $('resultNext').textContent = need > 0 ? '' : left !== null ? `次の対戦は ${mmss(left)} 後に自動で始まります（全員が準備OKならすぐ）` : '';
+  }
+}
+setInterval(updateCountdown, 250);
+
+// 部屋の「自分の定規」。持っている定規から選ぶ
 function renderMyRuler(me) {
   if (!me) return;
   const lo = me.loadout;
-  const ids = me.account && app.me
-    ? app.me.owned.filter((id) => ITEMS[id]?.kind === 'ruler')
-    : BASIC_RULERS;
-  const opts = ids.map((id) => `<option value="${id}">${esc(ITEMS[id].name)}${ITEMS[id].rarity !== 'basic' ? ` [${ITEMS[id].rarity}]` : ''}</option>`).join('');
+  const ids = me.account && app.me ? app.me.owned.filter((id) => ITEMS[id]?.kind === 'ruler') : BASIC_RULERS;
+  const ids2 = Object.keys(ITEMS).filter((id) => ids.includes(id)); // 定規ケースと同じ並び
+  const opts = ids2.map((id) => `<option value="${id}">${esc(ITEMS[id].name)} Lv.${app.me && me.account ? levelOfRuler(app.me, id).level : 1}${ITEMS[id].rarity !== 'basic' ? ` [${ITEMS[id].rarity}]` : ''}</option>`).join('');
   if ($('myRuler').dataset.opts !== opts) { $('myRuler').innerHTML = opts; $('myRuler').dataset.opts = opts; }
   $('myRuler').value = lo.ruler;
   previewRuler($('lobbyPreview'), lo, Math.max(0, app.state.members.findIndex((m) => m.id === me.id)));
-  const bits = [];
-  if (lo.acc) bits.push(`アクセサリ：${ITEMS[lo.acc].name}（${accText(lo.acc)}）`);
-  if (!me.account) bits.push(app.config?.login ? 'ログインすると、ガチャで集めた定規や飾りが使えます。' : '');
-  $('rulerNote').textContent = bits.filter(Boolean).join('　');
+  const r = ITEMS[lo.ruler];
+  $('rulerNote').innerHTML = `${matChip(r?.mat)} ${esc(r ? affinityText(r.mat) : '')}${lo.acc ? `<br>アクセサリ：${esc(ITEMS[lo.acc].name)}（${esc(accText(lo.acc))}）` : ''}`;
   $('openCase').hidden = !(me.account && app.me);
 }
 
@@ -275,64 +406,67 @@ function renderGame() {
   const st = app.state, g = st.game;
   if (!g) return;
   const teams = MODES[st.mode].teams;
+  const over = showingResult();
   const box = $('players');
   box.dataset.n = g.n;
   box.innerHTML = g.order.map((mid, i) => {
     const m = memberById(mid), pl = PLAYERS[i], p = g.players[i];
     const turn = st.phase === 'aim' && !app.playing && g.turn === i;
-    const won = st.phase === 'over' && !app.playing && g.result?.winners.includes(i);
-    const status = won ? '勝ち' : !p.alive ? (p.selfOut ? '自滅' : '脱落') : m && !m.connected ? '接続待ち' : '';
+    const won = over && g.result?.winners.includes(i);
+    const status = won ? '勝ち' : !p.alive ? (p.selfOut ? '自滅' : '脱落') : st.phase === 'aim' && m && !m.connected ? '接続待ち' : '';
     const bits = [`<b>${st.wins[mid] || 0}</b>勝`];
+    const body = g.bodies[i], mat = Physics.RULERS[body?.specKey]?.mat;
+    if (mat) bits.push(`${MATERIAL_INFO[mat].name} Lv.${body.level || 1}`);
     if (teams) bits.push(TEAMS[teamOf(i)].name);
     if (status) bits.push(status);
     if (app.you && mid === app.you.id) bits.push('あなた');
-    return `<div class="player${turn ? ' is-turn' : ''}${p.alive || won ? '' : ' is-out'}">
-      <span class="seat" style="color:${pl.color}">${pl.name}</span>
-      <span class="who">${esc(m?.name || '?')}</span>
+    return `<div class="player${turn ? ' is-turn' : ''}${p.alive || won ? '' : ' is-out'}" style="--seat:var(--seat-${i})">
+      <span class="seat" style="color:var(--seat-${i})">${pl.name}</span>
+      <span class="who">${esc(m?.name || '（退出）')}</span>
       <span class="stat">${bits.join('・')}</span></div>`;
   }).join('');
 
   const msg = $('msg');
-  const cur = g.turn, curMember = memberById(g.order[cur]), pl = PLAYERS[cur];
+  const cur = g.turn, curMember = memberById(g.order[cur]);
   const mine = myTurn();
   if (app.playing || app.waitingShot) msg.textContent = '……';
   else if (st.phase === 'aim') {
     const first = g.shots < g.n ? '<span class="first">1周目・落ちても戻る</span>' : '';
     const tTag = teams ? `（${TEAMS[teamOf(cur)].name}）` : '';
-    if (mine) msg.innerHTML = `<b style="color:${pl.color}">あなたの番</b>${tTag}<span>自分の定規を押さえて、引っぱって離す</span>${first}`;
-    else msg.innerHTML = `<span><b style="color:${pl.color}">${esc(curMember?.name || '?')}</b>${tTag}の番です${curMember && !curMember.connected ? '（接続が切れています）' : ''}</span>${first}`;
+    if (mine) msg.innerHTML = `<b class="mine">あなたの番</b>${tTag}<span>自分の定規を押さえて、引っぱって離す</span>${first}`;
+    else msg.innerHTML = `<span><b style="color:var(--seat-${cur})">${esc(curMember?.name || '?')}</b>${tTag}の番です${curMember && !curMember.connected ? '（接続が切れています）' : ''}</span>${first}`;
   } else msg.textContent = '対戦終了';
   $('board').classList.toggle('can-aim', canAim());
   $('skip').hidden = !(isHost() && st.phase === 'aim' && !app.playing && curMember && !curMember.connected);
 
-  const over = st.phase === 'over' && !app.playing;
   $('result').hidden = !over;
-  if (over && g.result) {
+  if (over) {
     const r = g.result;
     $('resultTitle').textContent = r.title;
-    $('resultTitle').style.color = teams ? TEAMS[teamOf(r.winners[0])].color : PLAYERS[r.winners[0]].color;
+    $('resultTitle').style.color = `var(--seat-${teams ? teamOf(r.winners[0]) : r.winners[0]})`;
     $('resultReason').textContent = r.reason;
     $('resultOrder').textContent = r.outOrder.length ? '脱落の順：' + r.outOrder.join(' → ') : '';
     const rw = app.lastReward;
     $('resultReward').hidden = !rw;
     if (rw) {
-      $('resultReward').textContent = rw.coins
+      const coins = rw.coins
         ? `${ECONOMY.currency} +${rw.coins}${ECONOMY.unit}（合計 ${rw.total}${ECONOMY.unit}）${rw.capped ? '　今日の対戦ぶんは上限に達しました' : ''}`
         : '今日の対戦でもらえるえんぴつは上限に達しました（記録は残ります）';
+      const x = rw.exp;
+      const exp = x ? `<small>${esc(ITEMS[x.ruler]?.name || '')}に経験値 +${x.gain}　${x.levelUp ? `<span class="lvup">レベルアップ！ Lv.${x.level}</span>` : `Lv.${x.level}${x.max ? '（最大）' : `・次のレベルまで あと${x.need - x.into}点`}`}</small>` : '';
+      $('resultReward').innerHTML = esc(coins) + exp;
     }
-    $('resultActions').innerHTML = isHost()
-      ? '<button class="btn-main" type="button" data-act="start">もう一回</button><button type="button" data-act="lobby">待合室へ（モード・メンバー変更）</button>'
-      : `<span class="wait">${esc(memberById(st.hostId)?.name || '部屋主')}さんの操作を待っています</span>`;
+    updateCountdown();
   }
 }
 
-// ---------------- 待合室の操作 ----------------
+// ---------------- 部屋の操作 ----------------
 $('myRuler').addEventListener('change', () => send({ t: 'ruler', ruler: $('myRuler').value }));
-$('modes').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-mode]');
-  if (b && !b.disabled) send({ t: 'mode', mode: b.dataset.mode });
+$('readyBtn').addEventListener('click', () => {
+  const me = memberById(app.you?.id);
+  send({ t: 'ready', on: !me?.ready });
 });
-$('start').addEventListener('click', () => send({ t: 'start' }));
+$('openCase').addEventListener('click', () => account.open('case'));
 $('copyInvite').addEventListener('click', async () => {
   const input = $('inviteUrl');
   try {
@@ -344,12 +478,11 @@ $('copyInvite').addEventListener('click', async () => {
   }
 });
 $('leave').addEventListener('click', () => {
-  if (app.code) store.del(tokenKey(app.code));
-  toHome('');
+  if (!send({ t: 'leave' })) { if (app.code) store.del(tokenKey(app.code)); leaveRoom(''); }
 });
-$('resultActions').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-act]');
-  if (b) send({ t: b.dataset.act });
+$('backToRoom').addEventListener('click', () => {
+  app.dismissedGame = app.state?.game?.id ?? null;
+  render();
 });
 $('skip').addEventListener('click', () => send({ t: 'skip' }));
 
@@ -376,18 +509,19 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
   const g = app.state.game, b = g.bodies[g.turn];
-  const spec = Physics.RULERS[b.specKey];
-  const hx = spec.length / 2, hy = spec.width / 2;
+  const spec = Physics.RULERS[b.specKey] || Physics.RULERS['straight30-acrylic'];
   const p = board.toWorld(e.clientX, e.clientY);
   const c = Math.cos(b.a), s = Math.sin(b.a);
   const dx = p.x - b.x, dy = p.y - b.y;
   const lx = dx * c + dy * s, ly = -dx * s + dy * c;
   const tol = Math.max(0.8, (e.pointerType === 'touch' ? 16 : 8) / board.scale);
-  if (Math.abs(lx) > hx + tol || Math.abs(ly) > hy + tol) {
+  // 押さえた点を定規の上に収める（少しはみ出しても受け付ける）
+  const near = Physics.nearestOnShape(spec.shape, lx, ly);
+  if (near.dist > tol) {
     hint(`自分の定規（${PLAYERS[g.turn].name}）を押さえてから引っぱってください`);
     return;
   }
-  app.aim = { b, lx: Math.max(-hx, Math.min(hx, lx)), ly: Math.max(-hy, Math.min(hy, ly)), px: p.x, py: p.y };
+  app.aim = { b, lx: near.x, ly: near.y, px: p.x, py: p.y };
   canvas.setPointerCapture(e.pointerId);
   e.preventDefault();
 });
@@ -417,7 +551,7 @@ function startPlayback(m) {
   app.pendingState = null;
   app.playing = {
     frames: m.frames, falls: m.falls, by: m.by, saved: m.saved, next: m.state,
-    looks: m.state.game.bodies.map((b) => ({ specKey: b.specKey, pattern: b.pattern, sticker: b.sticker })),
+    looks: m.state.game.bodies.map((b) => ({ specKey: b.specKey, level: b.level, pattern: b.pattern, sticker: b.sticker })),
     start: performance.now(), fallStart: {}, fxDone: 0,
   };
   if (app.state) renderGame();
@@ -488,16 +622,22 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // ---------------- 起動 ----------------
-account = createAccount({ app, $, esc, toast, show, render: () => render(), send });
-// ログインから戻ってきたときに部屋に入り直せるよう、状態を読み込んでから接続する
+account = createAccount({
+  app, $, esc, toast, show, send,
+  render: () => render(),
+  showHome: () => showHome(),
+  onLogout: () => { if (app.state) { send({ t: 'leave' }); } app.me = null; leaveRoom(''); },
+  onProfile: () => { if (!$('home').hidden) renderHome(); },
+});
 await account.load();
-const params = new URLSearchParams(location.search);
-const roomParam = (params.get('room') || '').toUpperCase();
-show('home');
-if (CODE_RE.test(roomParam)) {
-  $('code').value = roomParam;
-  // 以前この部屋に入っていた端末なら、そのまま席に戻る
-  if (store.get(tokenKey(roomParam))) connect(roomParam);
-  else { homeError(''); $('name').focus(); }
+if (!app.me) {
+  showLogin();
+} else if (roomParam()) {
+  // 招待リンクから来た／部屋の途中で開き直した
+  connect(roomParam());
+  show('lobby');
+} else {
+  showHome();
 }
+window.addEventListener('resize', () => { if (!$('login').hidden) drawLoginArt(); });
 document.fonts?.ready?.then(() => { if (!$('game').hidden) board.layout(); });

@@ -1,7 +1,7 @@
 // 部屋の中身（メンバー・モード・対戦の進行）を扱う純粋なロジック。
 // Cloudflare の機能には依存しないので、Node でもそのままテストできる。
 import Physics from '../public/shared/physics.js';
-import { DESKS, MODES, PLAYERS, TEAMS, MAX_MEMBERS, teamOf, seats, playableReason } from '../public/shared/rules.js';
+import { DESKS, MODES, PLAYERS, TEAMS, teamOf, seats, playableReason } from '../public/shared/rules.js';
 import { resolveLoadout, DEFAULT_RULER } from '../public/shared/catalog.js';
 
 const FPS = 30;
@@ -21,30 +21,36 @@ export function cleanName(raw) {
   return Array.from(s).slice(0, NAME_MAX).join('') || 'ゲスト';
 }
 
+// 最後の人が入ってから（または決着してから）この時間がたつと、準備OKでなくても対戦が始まる
+export const START_WAIT_MS = 60 * 1000;
+
 export class RoomCore {
-  constructor(code, now = Date.now()) {
+  constructor(code, mode = 'standard', now = Date.now()) {
     this.s = {
       code, createdAt: now, lastActive: now,
-      members: [],         // 入室順＝席順。{ id, token, userId, name, loadout, connected }
-      hostId: null,
-      mode: 'standard',
-      phase: 'lobby',      // lobby | aim | over
-      game: null,
+      mode: MODES[mode] ? mode : 'standard', // 部屋を作るときに決め、あとから変えない
+      members: [],         // 入室順＝席順。{ id, token, userId, name, loadout, ready, connected }
+      hostId: null,        // いちばん古くからいる人（切れた人の番を飛ばせる）
+      phase: 'lobby',      // lobby（部屋で準備中）| aim（対戦中）
+      startAt: null,       // この時刻になったら対戦を始める（人数がそろっていないときは null）
+      game: null,          // 対戦中の状態。決着後も結果を見せるために残す
       wins: {},            // memberId -> 勝ち数
     };
   }
 
   static restore(saved) {
-    const r = new RoomCore(saved.code);
+    const r = new RoomCore(saved.code, saved.mode);
     r.s = saved;
+    if (saved.phase === 'over') r.s.phase = 'lobby'; // 古い形式の保存データ
     return r;
   }
   toJSON() { return this.s; }
 
   member(id) { return this.s.members.find((m) => m.id === id) || null; }
+  get capacity() { return MODES[this.s.mode].max; }
 
   // ---- 入退室 ----
-  // user: ログイン中なら { id, name }。ゲストは null
+  // user: ログイン中なら { id, name }
   join(name, token, user = null, now = Date.now()) {
     const s = this.s;
     s.lastActive = now;
@@ -52,53 +58,89 @@ export class RoomCore {
       || (user && s.members.find((x) => x.userId === user.id));
     if (prev && (!prev.userId || (user && prev.userId === user.id))) {
       prev.connected = true;
-      // 待合室でログインしてから入り直した場合は、アカウントにつなげる
       if (user && !prev.userId && s.phase !== 'aim') prev.userId = user.id;
       if (user) prev.name = cleanName(user.name);
       else if (name) prev.name = cleanName(name);
       return { member: prev, rejoined: true };
     }
     if (s.phase === 'aim') return { error: '対戦中のため入れません。今の対戦が終わってから入ってください。' };
-    if (s.members.length >= MAX_MEMBERS) return { error: `この部屋は満員です（${MAX_MEMBERS}人まで）。` };
+    if (s.members.length >= this.capacity) return { error: `この部屋は満員です（${MODES[s.mode].name}は${this.capacity}人まで）。` };
     const m = {
       id: randomHex(4), token: randomHex(12), userId: user ? user.id : null,
-      name: cleanName(user ? user.name : name), loadout: resolveLoadout({ ruler: DEFAULT_RULER }), connected: true,
+      name: cleanName(user ? user.name : name), loadout: resolveLoadout({ ruler: DEFAULT_RULER }),
+      ready: false, connected: true,
     };
     s.members.push(m);
     if (!s.hostId) s.hostId = m.id;
+    // 新しい人が入ったら、そこから1分数え直す
+    this.resetTimer(now);
     return { member: m, rejoined: false };
   }
 
-  // 待合室では席を空ける。対戦中は「接続待ち」にして戻ってこられるようにする。
+  // 部屋では席を空ける。対戦中は「接続待ち」にして戻ってこられるようにする。
   disconnect(id, now = Date.now()) {
     const s = this.s;
     const m = this.member(id);
     if (!m) return;
     s.lastActive = now;
-    const inGame = s.phase !== 'lobby' && s.game && s.game.order.includes(id);
-    if (inGame) {
+    if (s.phase === 'aim' && s.game && s.game.order.includes(id)) {
       m.connected = false;
-    } else {
-      s.members = s.members.filter((x) => x.id !== id);
-    }
+      // 番を飛ばせる人がいなくならないよう、つながっている人に引き継ぐ
+      if (s.hostId === id) s.hostId = (s.members.find((x) => x.connected) || m).id;
+    } else this.removeMember(id);
+  }
+
+  removeMember(id) {
+    const s = this.s;
+    s.members = s.members.filter((x) => x.id !== id);
     if (s.hostId === id || !this.member(s.hostId)) {
       const next = s.members.find((x) => x.connected) || s.members[0];
       s.hostId = next ? next.id : null;
     }
+    // 人数が足りなくなったら、カウントダウンを止める
+    if (s.phase === 'lobby' && s.members.length < MODES[s.mode].min) s.startAt = null;
+  }
+
+  // 人数がそろっていれば、今から1分後に始まるようにする
+  resetTimer(now = Date.now()) {
+    const s = this.s;
+    if (s.phase !== 'lobby') return;
+    s.startAt = s.members.length >= MODES[s.mode].min ? now + START_WAIT_MS : null;
+  }
+
+  // 始められる状態か（人数・接続）
+  canStart() {
+    const s = this.s;
+    return s.phase === 'lobby' && !playableReason(s.mode, s.members.length) && s.members.every((m) => m.connected);
+  }
+
+  // 全員が準備OK、または時間切れなら対戦を始める。始めたら true
+  tick(now = Date.now()) {
+    const s = this.s;
+    if (!this.canStart()) return false;
+    const allReady = s.members.every((m) => m.ready);
+    const timeUp = s.startAt !== null && now >= s.startAt;
+    if (!allReady && !timeUp) return false;
+    this.startGame(now);
+    return true;
   }
 
   // ---- 状態のスナップショット（トークンは含めない） ----
-  snapshot() {
+  snapshot(now = Date.now()) {
     const s = this.s;
+    const m = MODES[s.mode];
     return {
       code: s.code,
       hostId: s.hostId,
       mode: s.mode,
       phase: s.phase,
-      members: s.members.map((m) => ({ id: m.id, name: m.name, account: !!m.userId, loadout: m.loadout, connected: m.connected })),
+      capacity: m.max,
+      minPlayers: m.min,
+      startIn: s.phase === 'lobby' && s.startAt !== null ? Math.max(0, s.startAt - now) : null,
+      members: s.members.map((x) => ({ id: x.id, name: x.name, account: !!x.userId, loadout: x.loadout, ready: !!x.ready, connected: x.connected })),
       wins: s.wins,
       game: s.game && {
-        n: s.game.n, order: s.game.order, turn: s.game.turn, shots: s.game.shots,
+        n: s.game.n, order: s.game.order, turn: s.game.turn, shots: s.game.shots, id: s.game.id,
         bodies: s.game.bodies, players: s.game.players, result: s.game.result,
       },
     };
@@ -130,39 +172,23 @@ export class RoomCore {
     s.lastActive = now;
     const isHost = s.hostId === id;
     const err = (text) => [{ to: id, msg: { t: 'error', text } }];
-    const state = () => [{ to: 'all', msg: { t: 'state', state: this.snapshot() } }];
-    const between = s.phase === 'lobby' || s.phase === 'over';
+    const state = () => [{ to: 'all', msg: { t: 'state', state: this.snapshot(now) } }];
 
     switch (msg.t) {
-      case 'mode': {
-        if (!isHost) return err('モードは部屋を作った人が選びます');
-        if (!MODES[msg.mode]) return err('そのモードはありません');
-        if (!between) return err('モードは対戦の合間に変更できます');
-        s.mode = msg.mode;
-        if (s.phase === 'over') { s.phase = 'lobby'; s.game = null; }
+      case 'ready': {
+        if (s.phase !== 'lobby') return err('今は準備を変えられません');
+        m.ready = !!msg.on;
+        this.tick(now);
         return state();
       }
-      case 'start': {
-        if (!isHost) return err('開始は部屋を作った人が行います');
-        if (!between) return err('すでに対戦中です');
-        const active = s.members.filter((x) => x.connected);
-        if (active.length !== s.members.length) return err('接続が切れている人がいます。戻るのを待ってください');
-        const reason = playableReason(s.mode, s.members.length);
-        if (reason) return err(reason);
-        this.startGame();
-        return state();
-      }
-      case 'lobby': {
-        if (!isHost) return err('待合室に戻すのは部屋を作った人です');
-        if (s.phase !== 'over') return err('対戦が終わってから戻れます');
-        // 対戦中に抜けた人はここで席を空ける
-        s.members = s.members.filter((x) => x.connected);
-        s.phase = 'lobby';
-        s.game = null;
-        return state();
+      case 'leave': {
+        // 対戦中に抜けた人は「接続待ち」のまま残り、決着したときに席が空く
+        this.disconnect(id, now);
+        this.tick(now);
+        return [{ to: id, msg: { t: 'left' } }, ...state()];
       }
       case 'skip': {
-        if (!isHost) return err('番を飛ばせるのは部屋を作った人です');
+        if (!isHost) return err('番を飛ばせるのは、いちばん先に部屋にいた人です');
         if (s.phase !== 'aim') return [];
         const cur = this.member(s.game.order[s.game.turn]);
         if (cur && cur.connected) return err('接続している人の番は飛ばせません');
@@ -173,9 +199,9 @@ export class RoomCore {
         if (s.phase !== 'aim') return err('今ははじけません');
         const g = s.game;
         if (g.order[g.turn] !== id) return err('あなたの番ではありません');
-        const shot = this.shoot(msg);
+        const shot = this.shoot(msg, now);
         if (shot.error) return err(shot.error);
-        return [{ to: 'all', msg: { t: 'shot', by: shot.by, frames: shot.frames, falls: shot.falls, saved: shot.saved, state: this.snapshot() } }];
+        return [{ to: 'all', msg: { t: 'shot', by: shot.by, frames: shot.frames, falls: shot.falls, saved: shot.saved, state: this.snapshot(now) } }];
       }
       default:
         return [];
@@ -183,7 +209,7 @@ export class RoomCore {
   }
 
   // ---- 対戦 ----
-  startGame() {
+  startGame(now = Date.now()) {
     const s = this.s;
     const prev = s.game;
     const order = s.members.map((x) => x.id);
@@ -194,15 +220,17 @@ export class RoomCore {
     const same = prev && prev.n === n && prev.order.every((x, i) => x === order[i]);
     const starter = same ? (prev.starter + 1) % n : 0;
     s.game = {
-      mode: s.mode, n, order, starter, turn: starter, shots: 0, outOrder: [], result: null,
+      id: (prev?.id || 0) + 1, mode: s.mode, n, order, starter, turn: starter, shots: 0, outOrder: [], result: null,
       bodies: order.map((mid, i) => {
         const lo = this.member(mid).loadout;
-        return { owner: i, ruler: lo.ruler, specKey: lo.specKey, mods: lo.mods, pattern: lo.pattern, sticker: lo.sticker, x: st[i].x, y: st[i].y, a: st[i].a, state: 'desk' };
+        return { owner: i, ruler: lo.ruler, specKey: lo.specKey, level: lo.level || 1, mods: lo.mods, pattern: lo.pattern, sticker: lo.sticker, x: st[i].x, y: st[i].y, a: st[i].a, state: 'desk' };
       }),
       kos: order.map(() => 0),
       players: order.map(() => ({ alive: true, selfOut: false })),
     };
     for (const mid of order) if (!(mid in s.wins)) s.wins[mid] = 0;
+    for (const m of s.members) m.ready = false;
+    s.startAt = null;
     s.phase = 'aim';
   }
 
@@ -218,15 +246,15 @@ export class RoomCore {
     return world;
   }
 
-  shoot(input) {
+  shoot(input, now = Date.now()) {
     const g = this.s.game;
     const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : NaN);
     let lx = num(input.lx), ly = num(input.ly), dx = num(input.dx), dy = num(input.dy), power = num(input.power);
     if ([lx, ly, dx, dy, power].some(Number.isNaN)) return { error: 'はじき方のデータが正しくありません' };
     const world = this.buildWorld();
     const body = world.bodies[g.turn];
-    lx = Math.max(-body.hx, Math.min(body.hx, lx));
-    ly = Math.max(-body.hy, Math.min(body.hy, ly));
+    // はじく点は定規の上に収める
+    ({ x: lx, y: ly } = Physics.nearestOnShape(body.spec.shape, lx, ly));
     const len = Math.hypot(dx, dy);
     if (len < 1e-6) return { error: 'はじく向きが正しくありません' };
     dx /= len; dy /= len;
@@ -254,12 +282,12 @@ export class RoomCore {
     });
     const by = g.turn;
     g.shots++;
-    const saved = this.finishTurn(by);
+    const saved = this.finishTurn(by, now);
     return { by, frames, falls, saved };
   }
 
   // はじいた後の判定。1周目に落ちた定規を戻したら true を返す。
-  finishTurn(shooter) {
+  finishTurn(shooter, now = Date.now()) {
     const s = this.s, g = s.game;
     const teams = MODES[g.mode].teams;
     let saved = false;
@@ -309,7 +337,6 @@ export class RoomCore {
       for (const i of winners) s.wins[g.order[i]] = (s.wins[g.order[i]] || 0) + 1;
       const order = g.outOrder.map((grp) => grp.map((i) => label(i) + (g.players[i].selfOut ? '・自滅' : '')).join('、'));
       g.result = { winners, title, reason, outOrder: g.n > 2 ? order : [] };
-      s.phase = 'over';
       // アカウントに残す記録（部屋の外で保存する）
       this.record = {
         room: s.code, mode: g.mode, n: g.n, shots: g.shots,
@@ -319,6 +346,11 @@ export class RoomCore {
           kos: g.kos[i], selfOut: g.players[i].selfOut, ruler: g.bodies[i].ruler,
         })),
       };
+      // 部屋に戻る。対戦中に抜けた人の席を空け、全員の準備を解除して、ここから1分数える
+      s.phase = 'lobby';
+      for (const m of [...s.members]) if (!m.connected) this.removeMember(m.id);
+      for (const m of s.members) m.ready = false;
+      this.resetTimer(now);
     } else {
       this.advanceTurn();
     }

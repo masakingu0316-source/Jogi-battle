@@ -5,39 +5,42 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>設定画面｜定規バトル</title>
 <meta name="robots" content="noindex">
-<meta name="theme-color" content="#1f3c35">
+<meta name="theme-color" content="#f7f9fc" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131a2c" media="(prefers-color-scheme: dark)">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Yusei+Magic&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Klee+One:wght@600&display=swap">
 <link rel="stylesheet" href="style.css">
 <style>
-  .admin { display: grid; gap: 22px; padding-bottom: 80px; }
-  .admin section { border-top: 1px dashed var(--board-line); padding-top: 14px; display: grid; gap: 10px; min-width: 0; }
+  .admin { display: grid; gap: 18px; padding-bottom: 80px; }
+  #panel.admin { padding-bottom: 0; }
+  .admin section { background: var(--card); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); padding: 18px; display: grid; gap: 12px; min-width: 0; }
   .admin h2 { margin: 0; }
   .admin .lead { margin: 0; color: var(--chalk-dim); font-size: 14px; max-width: 46em; }
   .num-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 16px; }
   .num-grid label { display: grid; gap: 4px; font-size: 13px; color: var(--chalk-dim); }
   .num-grid input { width: 100%; font-size: 16px; color: var(--chalk); font-variant-numeric: tabular-nums; }
   .num-grid small { font-size: 11px; }
-  .changed { border-color: var(--chalk-yellow) !important; }
+  .changed { border-color: var(--pen) !important; box-shadow: 0 0 0 2px var(--focus); }
   .tbl { border-collapse: collapse; font-size: 14px; min-width: 520px; width: 100%; }
   .tbl th, .tbl td { padding: 6px 10px; border-bottom: 1px solid var(--board-line); text-align: left; vertical-align: middle; font-variant-numeric: tabular-nums; }
   .tbl th { color: var(--chalk-dim); font-weight: 500; font-size: 12px; }
   .tbl input[type=number] { width: 6.5em; padding: 5px 8px; }
-  .tbl input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--chalk-yellow); }
+  .tbl input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--ink); }
   .tbl tr.off td { opacity: 0.45; }
   .tbl tr.off td:first-child, .tbl tr.off td:last-child { opacity: 1; }
   .pct { color: var(--chalk-yellow); }
   .savebar {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
-    background: rgba(23, 47, 41, 0.97); border-top: 1px solid var(--board-line);
+    background: var(--card); border-top: 1px solid var(--line-strong); box-shadow: 0 -6px 18px -12px rgba(28, 39, 71, 0.35);
     padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px));
   }
   .savebar .inner { max-width: 980px; margin: 0 auto; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
   .savebar .status { font-size: 13px; color: var(--chalk-dim); flex: 1 1 200px; }
   .savebar .status.err { color: var(--danger); }
-  .users { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
-  .users li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; border: 1px solid var(--board-line); border-radius: 8px; padding: 8px 12px; }
+  .users { list-style: none; margin: 0; padding: 0; display: grid; }
+  .users li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; align-items: center; border-bottom: 1px solid var(--line); padding: 10px 2px; }
+  .users li:first-child { border-top: 1px solid var(--line); }
   .users .who { min-width: 0; }
   .users .who small { display: block; color: var(--chalk-dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .users .give { display: flex; gap: 6px; align-items: center; }
@@ -52,8 +55,8 @@
 <body>
 <div class="page">
   <header>
-    <h1><a href="/" style="color:inherit;text-decoration:none">定規バトル</a></h1>
-    <span class="tag" style="font-size:12px;color:var(--chalk-dim);border:1px dashed var(--board-line);border-radius:999px;padding:2px 10px">設定画面</span>
+    <h1><a href="/"><span class="mark">定規バトル</span></a></h1>
+    <span class="badge" style="font-size:12px;padding:2px 10px;border-radius:999px">設定画面</span>
   </header>
 
   <main class="admin">

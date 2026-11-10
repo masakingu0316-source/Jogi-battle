@@ -20,7 +20,24 @@ export const ECONOMY = {
   play: 3,            // 対戦に参加（決着まで）
   win: 7,             // 勝ち（参加ぶんに上乗せ）
   dailyBattleCap: 150, // 対戦で1日にもらえる上限
+  expPlay: 10,        // 定規の経験値：対戦に使った
+  expWin: 10,         // 勝ったときの上乗せ
+  expKo: 5,           // 相手を1本落とすごと
 };
+
+// ---- 定規のレベル ----
+// 対戦で使うと経験値がたまる。1つ上がるごとに、重さとはじく力が0.4%ずつ上がる（Lv.10で+3.6%）
+export const LEVEL_MAX = 10;
+export const LEVEL_STEP = 0.004;
+export const expToNext = (level) => 30 + 20 * (level - 1);
+export function levelInfo(exp) {
+  const total = Math.max(0, Math.floor(Number(exp) || 0));
+  let level = 1, into = total;
+  while (level < LEVEL_MAX && into >= expToNext(level)) { into -= expToNext(level); level++; }
+  const max = level >= LEVEL_MAX;
+  return { level, exp: total, into: max ? 0 : into, need: max ? 0 : expToNext(level), max };
+}
+export const levelBonus = (level) => Math.max(0, Math.min(LEVEL_MAX, level | 0) - 1) * LEVEL_STEP;
 
 // stat: mass 重さ / mu 机とのすべりにくさ / power はじく力（エネルギー）
 export const STATS = {
@@ -29,13 +46,38 @@ export const STATS = {
   power: { name: 'はじく力', up: 'はじく力が強くなる', down: 'はじく力が弱くなる' },
 };
 
+// ---- 定規：形 × 素材（属性） ----
+// まっすぐの30cm定規（3つの素材）は全員が持っている。ほかはガチャで出る
+const SHAPE_INFO = {
+  straight30: { rarity: 'basic', desc: '長くて当てやすい。押し合いに強い定番' },
+  straight15: { rarity: 'R', desc: '短くて軽い。遠くまですべる' },
+  tri45: { rarity: 'SR', desc: '直角二等辺の三角定規。角で当てると相手が回る' },
+  tri60: { rarity: 'SR', desc: '30°・60°の三角定規。長い辺で受け止める' },
+  protractor: { rarity: 'SSR', desc: '半円の分度器。丸い背で当たりを受け流す' },
+};
+export const MATERIAL_INFO = {
+  acrylic: { name: 'アクリル', desc: 'よくすべり、よく跳ね返る', color: '#2f9fd8', aura: '#7fd8ff' },
+  metal: { name: 'メタル', desc: '重くて、押されにくい', color: '#b8892a', aura: '#ffd36b' },
+  rubber: { name: 'ラバー', desc: 'すぐ止まり、跳ね返らない', color: '#d0457f', aura: '#ff7ab6' },
+};
+export const MAT_ORDER = ['acrylic', 'metal', 'rubber'];
+// 三すくみ：strong は当てたとき少し強く弾ける相手、weak はその逆
+export function matInfo(mat) {
+  const weak = Object.keys(Physics.BEATS).find((k) => Physics.BEATS[k] === mat);
+  return { ...MATERIAL_INFO[mat], strong: Physics.BEATS[mat], weak };
+}
+
+const rulerItems = [];
+for (const [shape, info] of Object.entries(SHAPE_INFO)) {
+  for (const mat of MAT_ORDER) {
+    const key = `${shape}-${mat}`;
+    const spec = Physics.RULERS[key];
+    rulerItems.push({ id: 'ruler:' + key, kind: 'ruler', rarity: info.rarity, name: spec.name, specKey: key, shape, mat, desc: `${info.desc}。${MATERIAL_INFO[mat].desc}` });
+  }
+}
+
 const items = [
-  // 定規（基本の4本は全員が持っている）
-  ...Object.entries(Physics.RULERS).filter(([, r]) => r.basic).map(([key, r]) => ({ id: 'ruler:' + key, kind: 'ruler', rarity: 'basic', name: r.name, specKey: key })),
-  { id: 'ruler:plastic20', kind: 'ruler', rarity: 'R', name: '20cm プラ定規', specKey: 'plastic20', desc: '15cmと30cmの間。軽くて扱いやすい' },
-  { id: 'ruler:acrylic30', kind: 'ruler', rarity: 'SR', name: '30cm アクリル定規', specKey: 'acrylic30', desc: '幅広で重い。どっしり構えて押し返す' },
-  { id: 'ruler:steel30', kind: 'ruler', rarity: 'SR', name: '30cm ステンレス定規', specKey: 'steel30', desc: 'いちばん重く、よくすべる' },
-  { id: 'ruler:grid30', kind: 'ruler', rarity: 'SSR', name: '30cm 方眼定規', specKey: 'grid30', desc: '幅5cmの方眼。当たり判定が大きい' },
+  ...rulerItems,
 
   // 柄（見た目だけ）
   { id: 'pattern:stripe', kind: 'pattern', rarity: 'N', name: 'ストライプ' },
@@ -67,7 +109,7 @@ const items = [
 export const ITEMS = Object.fromEntries(items.map((it) => [it.id, it]));
 export const GACHA_POOL = items.filter((it) => it.rarity !== 'basic');
 export const BASIC_RULERS = items.filter((it) => it.kind === 'ruler' && it.rarity === 'basic').map((it) => it.id);
-export const DEFAULT_RULER = 'ruler:plastic30';
+export const DEFAULT_RULER = 'ruler:straight30-acrylic';
 
 // ---- ゲームの設定 ----
 // コードに書いた値が初期値。管理者が設定画面で変えた値はデータベースに保存され、こちらより優先される。
@@ -80,6 +122,9 @@ export const ECONOMY_KEYS = {
   play: { name: '対戦に参加', min: 0, max: 1000 },
   win: { name: '勝ったときの上乗せ', min: 0, max: 1000 },
   dailyBattleCap: { name: '対戦で1日にもらえる上限', min: 0, max: 100000 },
+  expPlay: { name: '定規の経験値：対戦に使った', min: 0, max: 1000, unit: '点' },
+  expWin: { name: '定規の経験値：勝ったときの上乗せ', min: 0, max: 1000, unit: '点' },
+  expKo: { name: '定規の経験値：1本落とすごと', min: 0, max: 1000, unit: '点' },
 };
 
 export function defaultConfig() {
@@ -157,18 +202,23 @@ export function rollOnce(rand, minRarity, cfg = defaultConfig()) {
 
 export const accPct = (id, cfg = defaultConfig()) => cfg.acc?.[id] ?? ITEMS[id]?.pct ?? 0;
 
-// 定規1本ぶんの装備から、対戦で使う情報を作る（所持の確認は呼ぶ側で行う）
-export function resolveLoadout(setup, cfg = defaultConfig()) {
+// 定規1本ぶんの装備から、対戦で使う情報を作る（所持の確認は呼ぶ側で行う）。level は定規のレベル
+export function resolveLoadout(setup, cfg = defaultConfig(), level = 1) {
   const ruler = ITEMS[setup?.ruler] && ITEMS[setup.ruler].kind === 'ruler' ? ITEMS[setup.ruler] : ITEMS[DEFAULT_RULER];
   const pattern = ITEMS[setup?.pattern]?.kind === 'pattern' ? setup.pattern : null;
   const sticker = ITEMS[setup?.sticker]?.kind === 'sticker' ? setup.sticker : null;
   const acc = ITEMS[setup?.acc]?.kind === 'acc' ? setup.acc : null;
+  const lv = Math.max(1, Math.min(LEVEL_MAX, Math.floor(Number(level) || 1)));
   const mods = { mass: 1, mu: 1, power: 1 };
   if (acc) {
     const a = ITEMS[acc];
     mods[a.stat] = 1 + Math.max(-Physics.MOD_LIMIT, Math.min(Physics.MOD_LIMIT, accPct(acc, cfg) / 100));
   }
-  return { ruler: ruler.id, specKey: ruler.specKey, pattern, sticker, acc, mods };
+  const bonus = levelBonus(lv);
+  mods.mass *= 1 + bonus;
+  mods.power *= 1 + bonus;
+  for (const k of Object.keys(mods)) mods[k] = Math.round(mods[k] * 10000) / 10000;
+  return { ruler: ruler.id, specKey: ruler.specKey, pattern, sticker, acc, level: lv, mods };
 }
 
 export function accText(id, cfg = defaultConfig()) {

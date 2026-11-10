@@ -24,7 +24,8 @@ export function createBoard(canvas, wrap) {
     const rot = window.innerHeight > window.innerWidth * 1.05;
     const vw = (rot ? desk.h : desk.w) + MARGIN * 2;
     const vh = (rot ? desk.w : desk.h) + MARGIN * 2;
-    const maxH = Math.max(260, window.innerHeight - 220);
+    // 手番の表示まで含めて1画面に収まる高さ
+    const maxH = Math.max(260, window.innerHeight - 290);
     const s = Math.min(cssW / vw, maxH / vh);
     const cssH = Math.round(vh * s);
     canvas.style.height = cssH + 'px';
@@ -76,26 +77,40 @@ export function createBoard(canvas, wrap) {
     ctx.closePath();
   }
 
+  // 床の色は画面のテーマ（明るい／暗い）に合わせて style.css から読む
+  let theme = null;
+  function readTheme() {
+    const cs = getComputedStyle(document.documentElement);
+    const v = (name, fb) => cs.getPropertyValue(name).trim() || fb;
+    theme = { floor: v('--floor', '#c9d0db'), line: v('--floor-line', 'rgba(28,39,71,0.12)'), ink: v('--floor-ink', '#2d3756') };
+  }
+  window.matchMedia?.('(prefers-color-scheme: dark)').addEventListener?.('change', readTheme);
+  new MutationObserver(readTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+
   // bodies: [{ owner, specKey, x, y, a, alpha, scale }]
   function draw({ bodies, active, aim, fx, now }) {
     const { dpr } = view;
+    if (!theme) readTheme();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.fillStyle = '#2f2823';
+    ctx.fillStyle = theme.floor;
     ctx.fillRect(0, 0, view.w, view.h);
     setWorldTransform();
     const px = view.s;
 
-    // 床板
-    ctx.strokeStyle = 'rgba(0,0,0,0.28)';
+    // 教室の床（30cm角のタイル）
+    ctx.strokeStyle = theme.line;
     ctx.lineWidth = 1.2 / px;
-    for (let x = -120; x <= 120; x += 9.5) { ctx.beginPath(); ctx.moveTo(x, -120); ctx.lineTo(x, 120); ctx.stroke(); }
+    ctx.beginPath();
+    for (let x = -135; x <= 135; x += 30) { ctx.moveTo(x, -135); ctx.lineTo(x, 135); }
+    for (let y = -135; y <= 135; y += 30) { ctx.moveTo(-135, y); ctx.lineTo(135, y); }
+    ctx.stroke();
 
     // 天板（くっつけた机は1台ずつ描き、継ぎ目を見せる）
     const dw = desk.w, dh = desk.h;
     ctx.save();
-    ctx.shadowColor = 'rgba(0,0,0,0.5)';
-    ctx.shadowBlur = 18 * dpr;
-    ctx.shadowOffsetY = 6 * dpr;
+    ctx.shadowColor = 'rgba(20, 28, 50, 0.35)';
+    ctx.shadowBlur = 16 * dpr;
+    ctx.shadowOffsetY = 5 * dpr;
     roundRect(-dw / 2, -dh / 2, dw, dh, 1.4);
     ctx.fillStyle = '#d9bb8f';
     ctx.fill();
@@ -126,13 +141,15 @@ export function createBoard(canvas, wrap) {
 
     // 寸法線
     const dimY = dh / 2 + 3.2;
-    ctx.strokeStyle = 'rgba(241, 239, 230, 0.55)';
+    ctx.strokeStyle = theme.ink;
+    ctx.globalAlpha = 0.6;
     ctx.lineWidth = 1.2 / px;
     ctx.beginPath();
     ctx.moveTo(-dw / 2, dimY); ctx.lineTo(dw / 2, dimY);
     ctx.moveTo(-dw / 2, dimY - 0.9); ctx.lineTo(-dw / 2, dimY + 0.9);
     ctx.moveTo(dw / 2, dimY - 0.9); ctx.lineTo(dw / 2, dimY + 0.9);
     ctx.stroke();
+    ctx.globalAlpha = 1;
 
     for (const b of bodies) {
       if (b.alpha <= 0) continue;
@@ -144,14 +161,14 @@ export function createBoard(canvas, wrap) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const lp = toScreen(0, dimY);
     const label = `机${desk.name}　${desk.w} × ${desk.h} cm`;
-    ctx.font = '500 12px "Zen Kaku Gothic New", system-ui, sans-serif';
+    ctx.font = '400 12px "BIZ UDPGothic", system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const tw = ctx.measureText(label).width + 10;
     ctx.save();
     ctx.translate(lp.x, lp.y);
     if (view.rot) ctx.rotate(-Math.PI / 2);
-    ctx.fillStyle = '#2f2823'; ctx.fillRect(-tw / 2, -8, tw, 16);
-    ctx.fillStyle = 'rgba(241, 239, 230, 0.8)'; ctx.fillText(label, 0, 0);
+    ctx.fillStyle = theme.floor; ctx.fillRect(-tw / 2, -8, tw, 16);
+    ctx.fillStyle = theme.ink; ctx.fillText(label, 0, 0);
     ctx.restore();
 
     for (const f of fx) {
@@ -161,7 +178,7 @@ export function createBoard(canvas, wrap) {
       const x = Math.max(60, Math.min(view.w - 60, p.x));
       const y = Math.max(24, Math.min(view.h - 24, p.y)) - t * 18;
       ctx.globalAlpha = 1 - t * t;
-      ctx.font = '28px "Yusei Magic", "Zen Kaku Gothic New", sans-serif';
+      ctx.font = '600 28px "Klee One", "BIZ UDPGothic", sans-serif';
       ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(30, 24, 20, 0.85)';
       ctx.strokeText(f.text, x, y);
       ctx.fillStyle = f.color; ctx.fillText(f.text, x, y);
@@ -202,7 +219,7 @@ export function createBoard(canvas, wrap) {
     const sp = toScreen(a.px, a.py);
     ctx.save();
     ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
-    ctx.font = '700 14px "Zen Kaku Gothic New", system-ui, sans-serif';
+    ctx.font = '700 14px "BIZ UDPGothic", system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
     const txt = `力 ${Math.round(power * 100)}%`;
     const ty = Math.max(20, sp.y - 26);
