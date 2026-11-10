@@ -304,6 +304,31 @@ const Physics = (() => {
     }
   }
 
+  // 重心が天板の上にあるか。tiles があれば、残っている机のどれかの上
+  function onDesk(desk, x, y) {
+    if (desk.tiles) return desk.tiles.some((t) => x >= t.x0 && x <= t.x1 && y >= t.y0 && y <= t.y1);
+    return Math.abs(x) <= desk.w / 2 && Math.abs(y) <= desk.h / 2;
+  }
+
+  // クリティカル：crit を持つ定規が最初に別の定規へ当たったとき、相手だけを (crit - 1) 倍ぶん余計に押す
+  function applyCrit(world, c) {
+    const { A, B, nx, ny } = c;
+    const src = A.crit > 1 ? A : B.crit > 1 ? B : null;
+    if (!src) return;
+    const target = src === A ? B : A, sign = src === A ? 1 : -1;
+    let px = 0, py = 0;
+    for (const p of c.points) {
+      const P = p.Pn * (src.crit - 1) * sign;
+      const rx = target === B ? p.rBx : p.rAx, ry = target === B ? p.rBy : p.rAy;
+      target.vx += P * nx * target.invM; target.vy += P * ny * target.invM;
+      target.w += target.invI * (rx * P * ny - ry * P * nx);
+      px += target.x + rx; py += target.y + ry;
+    }
+    const k = c.points.length || 1;
+    (world.events ||= []).push({ type: 'crit', time: world.time, owner: src.owner, target: target.owner, x: px / k, y: py / k });
+    src.crit = 0;
+  }
+
   // 1ステップ進める。新しく落ちた定規の配列を返す。
   function step(world, dt) {
     const P = world.params;
@@ -317,6 +342,7 @@ const Physics = (() => {
       }
     for (let it = 0; it < 12; it++) for (const c of contacts) solve(c);
     for (const c of contacts) applyAffinity(c);
+    for (const c of contacts) applyCrit(world, c);
     const fell = [];
     for (const b of world.bodies) {
       if (b.state === 'gone') continue;
@@ -324,7 +350,7 @@ const Physics = (() => {
       if (b.state === 'falling') {
         b.vx *= 0.995; b.vy *= 0.995; b.w *= 0.995;
         if (world.time - b.fallAt > 0.7) b.state = 'gone';
-      } else if (Math.abs(b.x) > world.desk.w / 2 || Math.abs(b.y) > world.desk.h / 2) {
+      } else if (!onDesk(world.desk, b.x, b.y)) {
         // 重心が天板の外に出たら傾いて落ちる
         b.state = 'falling'; b.fallAt = world.time; fell.push(b);
       } else if (Math.hypot(b.vx, b.vy) < 0.25 && Math.abs(b.w) < 0.01) {

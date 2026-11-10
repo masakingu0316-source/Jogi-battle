@@ -30,6 +30,7 @@
   --mat-metal: #8a6510;
   --mat-rubber: #b8306b;
   --xp: #2b59c3;                  /* 経験値のバー */
+  --warn: #c62d24;                /* 机が消える予告 */
 
   --font-display: "Klee One", "Hiragino Maru Gothic ProN", "BIZ UDPGothic", sans-serif;
   --font-body: "BIZ UDPGothic", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
@@ -52,7 +53,7 @@
     --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 8px 22px -12px rgba(0, 0, 0, 0.6);
     --seat-0: #ff8a7a; --seat-1: #7cc4ff; --seat-2: #86e09a; --seat-3: #f6d55c;
     --floor: #232c47; --floor-line: rgba(255, 255, 255, 0.06); --floor-ink: #b9c3da;
-    --mat-acrylic: #7fd0ff; --mat-metal: #ffd36b; --mat-rubber: #ff8cc0; --xp: #8fb4ff;
+    --mat-acrylic: #7fd0ff; --mat-metal: #ffd36b; --mat-rubber: #ff8cc0; --xp: #8fb4ff; --warn: #ff8a7a;
     color-scheme: dark;
   }
 }
@@ -65,7 +66,7 @@
   --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 8px 22px -12px rgba(0, 0, 0, 0.6);
   --seat-0: #ff8a7a; --seat-1: #7cc4ff; --seat-2: #86e09a; --seat-3: #f6d55c;
   --floor: #232c47; --floor-line: rgba(255, 255, 255, 0.06); --floor-ink: #b9c3da;
-  --mat-acrylic: #7fd0ff; --mat-metal: #ffd36b; --mat-rubber: #ff8cc0; --xp: #8fb4ff;
+  --mat-acrylic: #7fd0ff; --mat-metal: #ffd36b; --mat-rubber: #ff8cc0; --xp: #8fb4ff; --warn: #ff8a7a;
   color-scheme: dark;
 }
 
@@ -206,6 +207,7 @@ input:focus { border-color: var(--pen); }
 .player.is-out { opacity: 0.45; box-shadow: none; }
 .msg { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; text-align: center; font-size: 14px; min-height: 34px; padding: 2px 6px; gap: 4px 8px; }
 .msg b { font-family: var(--font-display); font-weight: 600; font-size: 21px; }
+.msg .vanish { font-size: 12px; font-weight: 700; padding: 1px 9px; border-radius: 999px; border: 1.5px solid var(--warn); color: var(--warn); background: var(--card); }
 .msg .first { font-size: 12px; padding: 1px 9px; border-radius: 999px; border: 1px dashed var(--pen); color: var(--pen); white-space: nowrap; background: var(--card); }
 .board-wrap {
   position: relative; border-radius: 14px; overflow: hidden;

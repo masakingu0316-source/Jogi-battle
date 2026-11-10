@@ -1,7 +1,7 @@
 // 部屋の中身（メンバー・モード・対戦の進行）を扱う純粋なロジック。
 // Cloudflare の機能には依存しないので、Node でもそのままテストできる。
 import Physics from '../public/shared/physics.js';
-import { DESKS, MODES, PLAYERS, TEAMS, teamOf, seats, playableReason } from '../public/shared/rules.js';
+import { DESKS, MODES, PLAYERS, TEAMS, teamOf, seats, playableReason, deskTiles, onTile, pickVanish, SHRINK_FROM_PLAYERS, CRIT } from '../public/shared/rules.js';
 import { resolveLoadout, DEFAULT_RULER } from '../public/shared/catalog.js';
 
 const FPS = 30;
@@ -36,6 +36,7 @@ export class RoomCore {
       game: null,          // 対戦中の状態。決着後も結果を見せるために残す
       wins: {},            // memberId -> 勝ち数
     };
+    this.rand = Math.random; // 机が消える順番・クリティカルの抽選（テストでは差し替える）
   }
 
   static restore(saved) {
@@ -141,6 +142,7 @@ export class RoomCore {
       wins: s.wins,
       game: s.game && {
         n: s.game.n, order: s.game.order, turn: s.game.turn, shots: s.game.shots, id: s.game.id,
+        desks: s.game.desks || null, vanish: s.game.vanish ?? null,
         bodies: s.game.bodies, players: s.game.players, result: s.game.result,
       },
     };
@@ -192,6 +194,11 @@ export class RoomCore {
         if (s.phase !== 'aim') return [];
         const cur = this.member(s.game.order[s.game.turn]);
         if (cur && cur.connected) return err('接続している人の番は飛ばせません');
+        // 机が消える予告が出ていれば、飛ばした番でも机は消える
+        if (s.game.vanish !== null && s.game.vanish !== undefined) {
+          const vanished = this.finishTurn(s.game.turn, now, { skipped: true }).vanished;
+          return [{ to: 'all', msg: { t: 'state', state: this.snapshot(now), vanished } }];
+        }
         this.advanceTurn();
         return state();
       }
@@ -201,7 +208,7 @@ export class RoomCore {
         if (g.order[g.turn] !== id) return err('あなたの番ではありません');
         const shot = this.shoot(msg, now);
         if (shot.error) return err(shot.error);
-        return [{ to: 'all', msg: { t: 'shot', by: shot.by, frames: shot.frames, falls: shot.falls, saved: shot.saved, state: this.snapshot(now) } }];
+        return [{ to: 'all', msg: { t: 'shot', by: shot.by, frames: shot.frames, falls: shot.falls, saved: shot.saved, crit: shot.crit, vanished: shot.vanished, state: this.snapshot(now) } }];
       }
       default:
         return [];
@@ -227,6 +234,8 @@ export class RoomCore {
       }),
       kos: order.map(() => 0),
       players: order.map(() => ({ alive: true, selfOut: false })),
+      desks: deskTiles(desk).map((t) => t.i), // 残っている机
+      vanish: null,                           // 次の番が終わると消える机（予告）
     };
     for (const mid of order) if (!(mid in s.wins)) s.wins[mid] = 0;
     for (const m of s.members) m.ready = false;
@@ -237,7 +246,9 @@ export class RoomCore {
   buildWorld() {
     const g = this.s.game;
     const desk = DESKS[MODES[g.mode].desk];
-    const world = Physics.createWorld({}, { w: desk.w, h: desk.h });
+    const all = deskTiles(desk);
+    const left = g.desks || all.map((t) => t.i);
+    const world = Physics.createWorld({}, { w: desk.w, h: desk.h, tiles: left.length < all.length ? all.filter((t) => left.includes(t.i)) : null });
     for (const b of g.bodies) {
       const body = Physics.createBody('p' + b.owner, b.owner, b.specKey, b.x, b.y, b.a, b.mods);
       body.state = b.state === 'desk' ? 'desk' : 'gone';
@@ -259,7 +270,10 @@ export class RoomCore {
     if (len < 1e-6) return { error: 'はじく向きが正しくありません' };
     dx /= len; dy /= len;
     power = Math.max(0.05, Math.min(1, power));
+    // クリティカルの抽選（当たっても、相手に当たらなければ何も起きない）
+    if (this.rand() < CRIT.rate) body.crit = CRIT.mul;
     Physics.flick(world, body, lx, ly, dx, dy, power);
+    let crit = null;
 
     // 1/30秒ごとに位置を記録して、全員に動きをそのまま配る
     const frames = [encodeFrame(world)];
@@ -273,6 +287,10 @@ export class RoomCore {
         steps++;
       }
       frames.push(encodeFrame(world));
+      if (!crit && world.events?.length) {
+        const e = world.events.find((ev) => ev.type === 'crit');
+        if (e) crit = { f: frames.length - 1, x: round2(e.x), y: round2(e.y), target: e.target };
+      }
     }
     for (const b of world.bodies) if (b.state === 'falling') b.state = 'gone';
 
@@ -282,12 +300,12 @@ export class RoomCore {
     });
     const by = g.turn;
     g.shots++;
-    const saved = this.finishTurn(by, now);
-    return { by, frames, falls, saved };
+    const { saved, vanished } = this.finishTurn(by, now);
+    return { by, frames, falls, saved, crit, vanished };
   }
 
-  // はじいた後の判定。1周目に落ちた定規を戻したら true を返す。
-  finishTurn(shooter, now = Date.now()) {
+  // はじいた後の判定。{ saved: 1周目に落ちた定規を戻したか, vanished: 消えた机 { desk, drops } }
+  finishTurn(shooter, now = Date.now(), opt = {}) {
     const s = this.s, g = s.game;
     const teams = MODES[g.mode].teams;
     let saved = false;
@@ -299,12 +317,30 @@ export class RoomCore {
         saved = true;
       }
     }
+    // 予告していた机が消える。重心がその机の上にあった定規は落ちる
+    let vanished = null;
+    if (g.vanish !== null && g.vanish !== undefined && g.desks) {
+      const desk = DESKS[MODES[g.mode].desk];
+      const tiles = deskTiles(desk);
+      const gone = tiles[g.vanish];
+      g.desks = g.desks.filter((i) => i !== g.vanish);
+      const rest = tiles.filter((t) => g.desks.includes(t.i));
+      const drops = [];
+      g.bodies.forEach((b, i) => {
+        if (b.state === 'desk' && onTile(gone, b.x, b.y) && !rest.some((t) => onTile(t, b.x, b.y))) { b.state = 'gone'; drops.push(i); }
+      });
+      vanished = { desk: g.vanish, drops };
+      g.vanish = null;
+    }
     const newly = [];
     g.players.forEach((p, i) => {
-      if (p.alive && g.bodies[i].state !== 'desk') { p.alive = false; p.selfOut = i === shooter; newly.push(i); }
+      if (p.alive && g.bodies[i].state !== 'desk') {
+        const byDesk = !!vanished?.drops.includes(i);
+        p.alive = false; p.selfOut = !byDesk && !opt.skipped && i === shooter; p.byDesk = byDesk; newly.push(i);
+      }
     });
     if (newly.length) g.outOrder.push(newly);
-    for (const i of newly) if (i !== shooter) g.kos[shooter]++;
+    for (const i of newly) if (i !== shooter && !g.players[i].byDesk && !opt.skipped) g.kos[shooter]++;
     const alive = g.players.map((p, i) => (p.alive ? i : -1)).filter((i) => i >= 0);
     const label = (i) => `${this.member(g.order[i])?.name ?? '?'}（${PLAYERS[i].name}）`;
 
@@ -328,14 +364,17 @@ export class RoomCore {
         if (selfOut && oppOut) reason = `両方落ちたので、はじいた${label(shooter)}の負け`;
         else if (selfOut) reason = `${label(shooter)}の定規が自分で落ちた`;
         else reason = `${label(opp)}の定規が机から落ちた`;
+      } else if (alive.length === 1) {
+        const last = newly.filter((i) => g.players[i].byDesk);
+        reason = last.length ? `机が消えて、${last.map(label).join('・')}の定規が落ちた` : '最後まで机に残った';
       } else {
-        reason = alive.length === 1 ? '最後まで机に残った' : `最後の${newly.length}人が同時に落ち、はじいた${label(shooter)}以外が勝ち`;
+        reason = `最後の${newly.length}人が同時に落ち、はじいた${label(shooter)}以外が勝ち`;
       }
     }
 
     if (winners) {
       for (const i of winners) s.wins[g.order[i]] = (s.wins[g.order[i]] || 0) + 1;
-      const order = g.outOrder.map((grp) => grp.map((i) => label(i) + (g.players[i].selfOut ? '・自滅' : '')).join('、'));
+      const order = g.outOrder.map((grp) => grp.map((i) => label(i) + (g.players[i].selfOut ? '・自滅' : g.players[i].byDesk ? '・机が消えた' : '')).join('、'));
       g.result = { winners, title, reason, outOrder: g.n > 2 ? order : [] };
       // アカウントに残す記録（部屋の外で保存する）
       this.record = {
@@ -352,9 +391,13 @@ export class RoomCore {
       for (const m of s.members) m.ready = false;
       this.resetTimer(now);
     } else {
+      // 3人以上で始めて残りが2人になったら、机を1台ずつ消していく（1つ前の番で予告）
+      if (g.n >= SHRINK_FROM_PLAYERS && g.desks && alive.length === 2 && g.desks.length > 1) {
+        g.vanish = pickVanish(DESKS[MODES[g.mode].desk], g.desks, this.rand);
+      }
       this.advanceTurn();
     }
-    return saved;
+    return { saved, vanished };
   }
 
   // 時計回りで、まだ残っている次の人へ

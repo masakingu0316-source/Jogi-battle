@@ -88,7 +88,8 @@ export function createBoard(canvas, wrap) {
   new MutationObserver(readTheme).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
 
   // bodies: [{ owner, specKey, x, y, a, alpha, scale }]
-  function draw({ bodies, active, aim, fx, now }) {
+  // desks: { left: 残っている机の番号（null なら全部）, warn: 消える予告の机, fade: { i, t } 消えている途中の机 }
+  function draw({ bodies, active, aim, fx, now, desks = {} }) {
     const { dpr } = view;
     if (!theme) readTheme();
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -107,15 +108,42 @@ export function createBoard(canvas, wrap) {
 
     // 天板（くっつけた机は1台ずつ描き、継ぎ目を見せる）
     const dw = desk.w, dh = desk.h;
-    ctx.save();
-    ctx.shadowColor = 'rgba(20, 28, 50, 0.35)';
-    ctx.shadowBlur = 16 * dpr;
-    ctx.shadowOffsetY = 5 * dpr;
-    roundRect(-dw / 2, -dh / 2, dw, dh, 1.4);
-    ctx.fillStyle = '#d9bb8f';
-    ctx.fill();
-    ctx.restore();
-    for (const pn of panels) {
+    const left = desks.left || panels.map((_, i) => i);
+    const fade = desks.fade || null;
+    const shown = panels.map((pn, i) => ({ pn, i })).filter(({ i }) => left.includes(i) || fade?.i === i);
+    const full = shown.length === panels.length && !fade;
+    // 消えていく机は、少し縮みながら薄くなる
+    const enter = (i) => {
+      if (fade?.i !== i) return;
+      const pn = panels[i], k = 1 - 0.12 * fade.t;
+      ctx.globalAlpha = 1 - fade.t;
+      ctx.translate(pn.x + pn.w / 2, pn.y + pn.h / 2 + fade.t * 2);
+      ctx.scale(k, k);
+      ctx.translate(-(pn.x + pn.w / 2), -(pn.y + pn.h / 2));
+    };
+    const shadowOn = () => {
+      ctx.shadowColor = 'rgba(20, 28, 50, 0.35)';
+      ctx.shadowBlur = 16 * dpr;
+      ctx.shadowOffsetY = 5 * dpr;
+    };
+    if (full) {
+      ctx.save(); shadowOn();
+      roundRect(-dw / 2, -dh / 2, dw, dh, 1.4);
+      ctx.fillStyle = '#d9bb8f';
+      ctx.fill();
+      ctx.restore();
+    } else {
+      for (const { pn, i } of shown) {
+        ctx.save(); enter(i); shadowOn();
+        roundRect(pn.x, pn.y, pn.w, pn.h, 1.4);
+        ctx.fillStyle = '#d9bb8f';
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+    for (const { pn, i } of shown) {
+      ctx.save();
+      enter(i);
       ctx.save();
       roundRect(pn.x, pn.y, pn.w, pn.h, 1.4);
       ctx.clip();
@@ -132,11 +160,47 @@ export function createBoard(canvas, wrap) {
         }
         ctx.stroke();
       }
+      // 消える予告：赤い斜線が点滅する
+      if (desks.warn === i || fade?.i === i) {
+        const pulse = fade?.i === i ? 1 : 0.55 + 0.45 * Math.sin(now / 220);
+        ctx.globalAlpha *= 0.32 * pulse + 0.12;
+        ctx.strokeStyle = '#d8342a';
+        ctx.lineWidth = 1.1;
+        ctx.beginPath();
+        for (let d = -pn.h; d < pn.w; d += 3.2) { ctx.moveTo(pn.x + d, pn.y + pn.h); ctx.lineTo(pn.x + d + pn.h, pn.y); }
+        ctx.stroke();
+      }
       ctx.restore();
       roundRect(pn.x + 0.35, pn.y + 0.35, pn.w - 0.7, pn.h - 0.7, 1.1);
-      ctx.strokeStyle = 'rgba(110, 72, 40, 0.55)';
-      ctx.lineWidth = 0.7;
+      const warn = desks.warn === i;
+      ctx.strokeStyle = warn ? '#d8342a' : 'rgba(110, 72, 40, 0.55)';
+      ctx.lineWidth = warn ? 0.9 : 0.7;
+      if (warn) ctx.setLineDash([1.6, 1.0]);
       ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+    }
+
+    // 予告の机に「消える」の札（画面の向きに合わせて文字は立てる）
+    if (desks.warn !== null && desks.warn !== undefined && panels[desks.warn]) {
+      // 定規と重なりにくいよう、画面で見たときの机の上の辺に寄せる
+      const pn = panels[desks.warn];
+      const a = toScreen(pn.x, pn.y), b = toScreen(pn.x + pn.w, pn.y + pn.h);
+      const sp = { x: (a.x + b.x) / 2, y: Math.min(a.y, b.y) + 18 };
+      ctx.save();
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.font = '700 15px "BIZ UDPGothic", system-ui, sans-serif';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      const txt = 'この番のあと消える';
+      const tw = ctx.measureText(txt).width + 18;
+      ctx.globalAlpha = 0.85;
+      ctx.fillStyle = '#d8342a';
+      roundRect(sp.x - tw / 2, sp.y - 13, tw, 26, 13);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(txt, sp.x, sp.y + 1);
+      ctx.restore();
+      setWorldTransform();
     }
 
     // 寸法線
@@ -160,7 +224,7 @@ export function createBoard(canvas, wrap) {
     // 画面座標で描く文字
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const lp = toScreen(0, dimY);
-    const label = `机${desk.name}　${desk.w} × ${desk.h} cm`;
+    const label = left.length < panels.length ? `机 残り${left.length}台` : `机${desk.name}　${desk.w} × ${desk.h} cm`;
     ctx.font = '400 12px "BIZ UDPGothic", system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const tw = ctx.measureText(label).width + 10;
@@ -175,10 +239,36 @@ export function createBoard(canvas, wrap) {
       const t = (now - f.t0) / 1600;
       if (t < 0 || t > 1) continue;
       const p = toScreen(f.x, f.y);
-      const x = Math.max(60, Math.min(view.w - 60, p.x));
+      if (f.burst) {
+        // クリティカルの光：放射状の線が広がって消える
+        const bt = Math.min(1, (now - f.t0) / 520);
+        if (bt >= 1) continue;
+        ctx.save();
+        ctx.globalAlpha = 1 - bt;
+        ctx.strokeStyle = '#ffe27a';
+        ctx.lineWidth = 3.5 * (1 - bt) + 1;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (let k = 0; k < 12; k++) {
+          const a = (k / 12) * Math.PI * 2 + 0.2;
+          const r0 = 8 + bt * 26, r1 = r0 + 14 * (1 - bt) + 6;
+          ctx.moveTo(p.x + Math.cos(a) * r0, p.y + Math.sin(a) * r0);
+          ctx.lineTo(p.x + Math.cos(a) * r1, p.y + Math.sin(a) * r1);
+        }
+        ctx.stroke();
+        ctx.globalAlpha = (1 - bt) * 0.6;
+        ctx.fillStyle = '#fff6c8';
+        ctx.beginPath(); ctx.arc(p.x, p.y, 10 * (1 - bt) + 3, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+        continue;
+      }
+      // 画面からはみ出さないよう、文字の幅に合わせて寄せる
+      const size = f.big ? Math.min(36, view.w / 9) : Math.min(28, view.w / 11);
+      ctx.font = `600 ${size}px "Klee One", "BIZ UDPGothic", sans-serif`;
+      const half = ctx.measureText(f.text).width / 2 + 8;
+      const x = Math.max(half, Math.min(view.w - half, p.x));
       const y = Math.max(24, Math.min(view.h - 24, p.y)) - t * 18;
       ctx.globalAlpha = 1 - t * t;
-      ctx.font = '600 28px "Klee One", "BIZ UDPGothic", sans-serif';
       ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(30, 24, 20, 0.85)';
       ctx.strokeText(f.text, x, y);
       ctx.fillStyle = f.color; ctx.fillText(f.text, x, y);

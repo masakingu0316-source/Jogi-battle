@@ -1,7 +1,7 @@
 // 画面の切り替え・サーバーとの通信・はじく操作・動きの再生
 // 流れ：ログイン → ホーム（部屋を作る／入る／定規の編集） → 部屋（全員が準備OKか1分で開始） → 対戦 → 部屋に戻る
 import Physics from './shared/physics.js';
-import { DESKS, MODES, PLAYERS, TEAMS, teamOf } from './shared/rules.js';
+import { DESKS, MODES, PLAYERS, TEAMS, teamOf, deskTiles } from './shared/rules.js';
 import { createBoard, MAX_DRAG } from './board.js';
 import { ITEMS, BASIC_RULERS, ECONOMY, MATERIAL_INFO, DEFAULT_RULER, accText as accTextOf, defaultConfig } from './shared/catalog.js';
 import { matChip, levelHtml, levelOfRuler, affinityText } from './ruler-info.js';
@@ -256,6 +256,7 @@ function onMessage(m) {
     case 'state':
       if (app.playing) app.pendingState = m.state;
       else applyState(m.state);
+      if (m.vanished) toast(m.vanished.drops.length ? '机が消えて、定規が落ちました' : '机が1台消えました');
       break;
     case 'shot':
       app.waitingShot = false;
@@ -431,7 +432,8 @@ function renderGame() {
   const mine = myTurn();
   if (app.playing || app.waitingShot) msg.textContent = '……';
   else if (st.phase === 'aim') {
-    const first = g.shots < g.n ? '<span class="first">1周目・落ちても戻る</span>' : '';
+    const first = (g.shots < g.n ? '<span class="first">1周目・落ちても戻る</span>' : '')
+      + (g.vanish !== null && g.vanish !== undefined ? '<span class="vanish">この番が終わると、赤い斜線の机が消える</span>' : '');
     const tTag = teams ? `（${TEAMS[teamOf(cur)].name}）` : '';
     if (mine) msg.innerHTML = `<b class="mine">あなたの番</b>${tTag}<span>自分の定規を押さえて、引っぱって離す</span>${first}`;
     else msg.innerHTML = `<span><b style="color:var(--seat-${cur})">${esc(curMember?.name || '?')}</b>${tTag}の番です${curMember && !curMember.connected ? '（接続が切れています）' : ''}</span>${first}`;
@@ -550,7 +552,8 @@ function startPlayback(m) {
   app.aim = null;
   app.pendingState = null;
   app.playing = {
-    frames: m.frames, falls: m.falls, by: m.by, saved: m.saved, next: m.state,
+    frames: m.frames, falls: m.falls, by: m.by, saved: m.saved, next: m.state, crit: m.crit, critDone: false,
+    vanished: m.vanished, vanishFx: false, desks: app.state?.game?.desks || null,
     looks: m.state.game.bodies.map((b) => ({ specKey: b.specKey, level: b.level, pattern: b.pattern, sticker: b.sticker })),
     start: performance.now(), fallStart: {}, fxDone: 0,
   };
@@ -565,6 +568,9 @@ function playbackBodies(now) {
   const j = Math.min(last, i + 1);
   const frac = Math.max(0, Math.min(1, t - i));
   const A = p.frames[i], B = p.frames[j];
+  // 動きが止まったあと、予告していた机が消える
+  const vStart = last + 0.3 * FPS, vLen = 0.9 * FPS;
+  const vt = p.vanished ? Math.max(0, Math.min(1, (t - vStart) / vLen)) : 0;
   const bodies = [];
   for (let k = 0; k < p.looks.length; k++) {
     const o = k * 4;
@@ -575,6 +581,8 @@ function playbackBodies(now) {
       if (p.fallStart[k] === undefined) p.fallStart[k] = i;
       const ft = Math.min(1, (t - p.fallStart[k]) / (0.7 * FPS));
       alpha = 1 - ft; scale = 1 - 0.38 * ft;
+    } else if (vt > 0 && p.vanished.drops.includes(k)) {
+      alpha = 1 - vt; scale = 1 - 0.38 * vt;
     }
     const lerp = (q) => (A[o + q] + (B[o + q] - A[o + q]) * frac);
     bodies.push({ owner: k, ...p.looks[k], x: lerp(0) / 100, y: lerp(1) / 100, a: lerp(2) / 1000, alpha, scale });
@@ -589,9 +597,26 @@ function playbackBodies(now) {
       t0: now, text: `${PLAYERS[f.owner].name} ${word}`, color: PLAYERS[f.owner].color,
     });
   }
-  if (t > last + 0.45 * FPS) finishPlayback();
+  // クリティカル：当たった瞬間に文字と光
+  if (p.crit && !p.critDone && t >= p.crit.f) {
+    p.critDone = true;
+    app.fx.push({ x: p.crit.x, y: p.crit.y, t0: now, text: 'クリティカル！', color: '#ffd84a', big: true });
+    app.fx.push({ x: p.crit.x, y: p.crit.y, t0: now, burst: true });
+    if (!reducedMotion()) app.shakeUntil = now + 260;
+  }
+  if (p.vanished && !p.vanishFx && t >= vStart) {
+    p.vanishFx = true;
+    const tile = deskTiles(DESKS[MODES[app.state.mode].desk])[p.vanished.desk];
+    const cx = (tile.x0 + tile.x1) / 2, cy = (tile.y0 + tile.y1) / 2;
+    app.fx.push({ x: cx, y: cy, t0: now, text: '机が消えた！', color: '#ff8a7a' });
+    p.vanished.drops.forEach((k, n) => app.fx.push({ x: cx, y: cy + 6 + n * 5, t0: now + 250, text: `${PLAYERS[k].name} 落ちた！`, color: PLAYERS[k].color }));
+  }
+  p.deskView = p.vanished && vt > 0 ? { left: (p.desks || []).filter((d) => d !== p.vanished.desk), fade: { i: p.vanished.desk, t: vt } } : null;
+  const end = p.vanished ? vStart + vLen + 0.25 * FPS : last + 0.45 * FPS;
+  if (t > end) finishPlayback();
   return bodies;
 }
+const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
 
 function finishPlayback() {
   const p = app.playing;
@@ -615,7 +640,13 @@ function frame(now) {
     }
     app.fx = app.fx.filter((f) => now - f.t0 < 1600);
     const active = !app.playing && app.state.phase === 'aim' ? g.turn : -1;
-    board.draw({ bodies, active, aim, fx: app.fx, now });
+    // 残っている机と、消える予告の机（再生中は、はじく前の状態のまま見せる）
+    const desks = app.playing?.deskView || { left: g.desks || null, warn: app.state.phase === 'aim' ? g.vanish ?? null : null };
+    board.draw({ bodies, active, aim, fx: app.fx, now, desks });
+    // クリティカルの瞬間だけ、盤面を小さく揺らす
+    const cv = $('board');
+    if (app.shakeUntil && now < app.shakeUntil) cv.style.transform = `translate(${(Math.random() - 0.5) * 6}px, ${(Math.random() - 0.5) * 6}px)`;
+    else if (cv.style.transform) { cv.style.transform = ''; app.shakeUntil = 0; }
   }
   requestAnimationFrame(frame);
 }

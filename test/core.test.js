@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RoomCore, cleanName, START_WAIT_MS } from '../src/core.js';
+import { DESKS, deskTiles, tilesConnected, pickVanish, CRIT } from '../public/shared/rules.js';
 import { resolveLoadout } from '../public/shared/catalog.js';
 import Physics from '../public/shared/physics.js';
 const { RULERS } = Physics;
@@ -9,6 +10,7 @@ const lastState = (out) => out.find((o) => o.msg.t === 'state' || o.msg.t === 's
 
 function room(n, mode = 'standard', now = 1000) {
   const r = new RoomCore('ABCDE', mode, now);
+  r.rand = () => 0.99; // クリティカルは出さない（出すテストでは差し替える）
   const ms = [];
   for (let i = 0; i < n; i++) ms.push(r.join('P' + i, null, null, now).member);
   return { r, ms };
@@ -278,4 +280,112 @@ test('レベルが上がると、重さとはじく力が少しだけ上がる�
   const both = resolveLoadout({ ruler: 'ruler:straight30-acrylic', acc: 'acc:goldcot' }, undefined, 99);
   assert.equal(both.level, 10);
   assert.ok(both.mods.power <= 1.1 && both.mods.power > 1.08);
+});
+
+
+test('乱戦で残りが2人になると、消える机を1つ前の番で予告し、番ごとに1台ずつ消える（最後は1台）', () => {
+  const { r, ms } = started(4, 'melee');
+  const g = r.s.game;
+  g.shots = 10;
+  // 赤・青が落ちて、緑・黄の2人が残る
+  g.bodies[0].state = 'gone'; g.bodies[1].state = 'gone';
+  r.finishTurn(0);
+  assert.equal(r.s.phase, 'aim');
+  assert.equal(g.desks.length, 4);
+  assert.notEqual(g.vanish, null, '残り2人になったら予告する');
+  assert.equal(r.snapshot().game.vanish, g.vanish);
+  const seen = [];
+  const desk = DESKS.group;
+  while (g.desks.length > 1) {
+    const v = g.vanish;
+    // 予告された机にいない場所へ2人を置いて、消えても落ちないようにする
+    const safe = deskTiles(desk).filter((t) => g.desks.includes(t.i) && t.i !== v);
+    g.bodies[2].x = (safe[0].x0 + safe[0].x1) / 2; g.bodies[2].y = (safe[0].y0 + safe[0].y1) / 2;
+    g.bodies[3].x = (safe.at(-1).x0 + safe.at(-1).x1) / 2 + 3; g.bodies[3].y = (safe.at(-1).y0 + safe.at(-1).y1) / 2;
+    const out = r.handle(g.order[g.turn], { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.05 });
+    const shot = out[0].msg;
+    assert.equal(shot.vanished.desk, v);
+    assert.ok(!g.desks.includes(v));
+    assert.ok(tilesConnected(desk, g.desks), '残った机は辺でつながっている');
+    seen.push(v);
+  }
+  assert.equal(g.desks.length, 1);
+  assert.equal(g.vanish, null, '最後の1台は消さない');
+  assert.equal(new Set(seen).size, 3);
+});
+
+test('消えた机に乗っていた定規は落ち、はじいた人の手柄にはならない', () => {
+  const { r } = started(3, 'melee');
+  const g = r.s.game;
+  g.shots = 10;
+  g.bodies[0].state = 'gone';
+  r.finishTurn(0);
+  const v = g.vanish;
+  const t = deskTiles(DESKS.group)[v];
+  // 次の番の人（はじく人）ではない方の定規を、消える机の真ん中に置く
+  const shooter = g.turn, other = shooter === 1 ? 2 : 1;
+  Object.assign(g.bodies[other], { x: (t.x0 + t.x1) / 2, y: (t.y0 + t.y1) / 2 });
+  const safe = deskTiles(DESKS.group).find((x) => x.i !== v && g.desks.includes(x.i));
+  Object.assign(g.bodies[shooter], { x: (safe.x0 + safe.x1) / 2, y: (safe.y0 + safe.y1) / 2 });
+  const shot = r.handle(g.order[shooter], { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 })[0].msg;
+  assert.deepEqual(shot.vanished.drops, [other]);
+  assert.equal(r.s.phase, 'lobby');
+  assert.deepEqual(g.result.winners, [shooter]);
+  assert.match(g.result.reason, /机が消えて/);
+  assert.equal(g.kos[shooter], 0);
+  assert.equal(g.players[other].selfOut, false);
+  assert.match(g.result.outOrder.at(-1), /机が消えた/);
+});
+
+test('1対1や、残りが3人以上のときは机は消えない', () => {
+  const a = started(2, 'standard');
+  a.r.s.game.shots = 10;
+  a.r.finishTurn(0);
+  assert.equal(a.r.s.game.vanish, null);
+  const b = started(4, 'melee');
+  b.r.s.game.shots = 10;
+  b.r.s.game.bodies[0].state = 'gone';
+  b.r.finishTurn(0);
+  assert.equal(b.r.s.game.vanish, null);
+});
+
+test('消える机はランダムでも、残りが角だけで接する2台にはならない', () => {
+  const desk = DESKS.group;
+  for (let k = 0; k < 4; k++) {
+    for (let x = 0; x < 1; x += 0.05) {
+      const first = pickVanish(desk, [0, 1, 2, 3], () => (k + 0.5) / 4);
+      const left = [0, 1, 2, 3].filter((i) => i !== first);
+      const second = pickVanish(desk, left, () => x);
+      assert.ok(tilesConnected(desk, left.filter((i) => i !== second)));
+    }
+  }
+});
+
+test('クリティカル：当てた相手が大きく弾かれ、当たった場所が届く', () => {
+  const run = (crit) => {
+    const { r, ms } = started(2, 'quick');
+    r.rand = () => (crit ? 0 : 0.99);
+    const g = r.s.game;
+    g.shots = 10; g.turn = 0;
+    Object.assign(g.bodies[0], { x: -6, y: 0, a: Math.PI / 2 });
+    Object.assign(g.bodies[1], { x: 2, y: 0, a: Math.PI / 2 });
+    const shot = r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.5 })[0].msg;
+    return { shot, moved: g.bodies[1].state === 'desk' ? g.bodies[1].x - 2 : Infinity };
+  };
+  const normal = run(false), crit = run(true);
+  assert.equal(normal.shot.crit, null);
+  assert.ok(crit.shot.crit, 'クリティカルの記録');
+  assert.equal(crit.shot.crit.target, 1);
+  assert.ok(crit.shot.crit.f > 0 && crit.shot.crit.f < crit.shot.frames.length);
+  assert.ok(crit.moved > normal.moved * 1.5, `通常 ${normal.moved.toFixed(1)}cm → クリティカル ${crit.moved.toFixed(1)}cm`);
+});
+
+test('クリティカルに当たっても、だれにも当たらなければ何も起きない', () => {
+  const { r, ms } = started(2, 'quick');
+  r.rand = () => 0;
+  const g = r.s.game;
+  g.shots = 10; g.turn = 0;
+  const shot = r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: -0.2, dy: 1, power: 0.2 })[0].msg;
+  assert.equal(shot.crit, null);
+  assert.equal(CRIT.mul > 1, true);
 });

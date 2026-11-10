@@ -53,3 +53,44 @@ export function playableReason(modeKey, count) {
   if (count > m.max) return `${m.name}は${m.max}人までです`;
   return null;
 }
+
+// ---- 机が消えていく（3人以上で始めて、残りが2人になったら） ----
+// 机を1台ずつに分けた区画。i は左上から横に数えた番号
+export function deskTiles(desk) {
+  const pw = desk.w / desk.cols, ph = desk.h / desk.rows;
+  const out = [];
+  for (let r = 0; r < desk.rows; r++) for (let c = 0; c < desk.cols; c++) {
+    const x0 = -desk.w / 2 + c * pw, y0 = -desk.h / 2 + r * ph;
+    out.push({ i: r * desk.cols + c, r, c, x0, y0, x1: x0 + pw, y1: y0 + ph });
+  }
+  return out;
+}
+export const SHRINK_FROM_PLAYERS = 3; // この人数以上で始めた対戦だけ
+export const onTile = (t, x, y) => x >= t.x0 && x <= t.x1 && y >= t.y0 && y <= t.y1;
+
+// 残った机どうしが辺でつながっているか（角だけで接する2台にはしない）
+export function tilesConnected(desk, list) {
+  if (list.length <= 1) return true;
+  const tiles = deskTiles(desk).filter((t) => list.includes(t.i));
+  const seen = new Set([tiles[0].i]);
+  const stack = [tiles[0]];
+  while (stack.length) {
+    const a = stack.pop();
+    for (const b of tiles) {
+      if (seen.has(b.i) || Math.abs(a.r - b.r) + Math.abs(a.c - b.c) !== 1) continue;
+      seen.add(b.i); stack.push(b);
+    }
+  }
+  return seen.size === tiles.length;
+}
+// 次に消す机をランダムに選ぶ（残りがつながったままになる机の中から）
+export function pickVanish(desk, list, rand = Math.random) {
+  if (list.length <= 1) return null;
+  const ok = list.filter((i) => tilesConnected(desk, list.filter((j) => j !== i)));
+  const from = ok.length ? ok : list;
+  return from[Math.floor(rand() * from.length) % from.length];
+}
+
+// ---- クリティカルヒット ----
+// はじいた瞬間に抽選。当たりなら、この対戦ではじいた定規が最初に当てた相手に伝わる力が mul 倍になる
+export const CRIT = { rate: 0.1, mul: 1.6 };
