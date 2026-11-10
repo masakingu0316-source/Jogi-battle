@@ -205,7 +205,7 @@ export class RoomCore {
         if (g.order[g.turn] !== id) return err('あなたの番ではありません');
         const shot = this.shoot(msg, now);
         if (shot.error) return err(shot.error);
-        return [{ to: 'all', msg: { t: 'shot', by: shot.by, frames: shot.frames, falls: shot.falls, saved: shot.saved, crit: shot.crit, vanished: shot.vanished, skill: shot.skill, wind: shot.wind, state: this.snapshot(now) } }];
+        return [{ to: 'all', msg: { t: 'shot', by: shot.by, frames: shot.frames, falls: shot.falls, saved: shot.saved, crit: shot.crit, vanished: shot.vanished, skill: shot.skill, wind: shot.wind, hits: shot.hits, state: this.snapshot(now) } }];
       }
       default:
         return [];
@@ -227,7 +227,7 @@ export class RoomCore {
       id: (prev?.id || 0) + 1, mode: s.mode, n, order, starter, turn: starter, shots: 0, outOrder: [], result: null,
       bodies: order.map((mid, i) => {
         const lo = this.member(mid).loadout;
-        return { owner: i, ruler: lo.ruler, specKey: lo.specKey, level: lo.level || 1, mods: lo.mods, pattern: lo.pattern, sticker: lo.sticker, x: st[i].x, y: st[i].y, a: st[i].a, state: 'desk' };
+        return { owner: i, hp: Physics.HP.max, ruler: lo.ruler, specKey: lo.specKey, level: lo.level || 1, mods: lo.mods, pattern: lo.pattern, sticker: lo.sticker, x: st[i].x, y: st[i].y, a: st[i].a, state: 'desk' };
       }),
       kos: order.map(() => 0),
       players: order.map(() => ({ alive: true, selfOut: false })),
@@ -263,6 +263,7 @@ export class RoomCore {
         const k = SKILL_TUNE.anchorMass;
         body.m *= k; body.invM /= k; body.I *= k; body.invI /= k;
       }
+      Physics.setHp(body, b.hp ?? Physics.HP.max);
       world.bodies.push(body);
     }
     return world;
@@ -277,6 +278,9 @@ export class RoomCore {
     if ([lx, ly, dx, dy, power].some(Number.isNaN)) return { error: 'はじき方のデータが正しくありません' };
     const world = this.buildWorld();
     const body = world.bodies[g.turn];
+    // はじいた本人は、自分の体力に関係なくふつうにすべる
+    body.shooter = true;
+    Physics.setHp(body, body.hp);
     // はじく点は定規の上に収める
     ({ x: lx, y: ly } = Physics.nearestOnShape(body.spec.shape, lx, ly));
     const len = Math.hypot(dx, dy);
@@ -301,6 +305,8 @@ export class RoomCore {
     // 1/30秒ごとに位置を記録して、全員に動きをそのまま配る
     const frames = [encodeFrame(world)];
     const falls = [];
+    const hits = [];
+    let seen = 0;
     let steps = 0;
     const run = () => {
       while (!Physics.atRest(world) && steps < MAX_SIM_SECONDS / dt) {
@@ -311,6 +317,11 @@ export class RoomCore {
           steps++;
         }
         frames.push(encodeFrame(world));
+        // ぶつかったときのダメージ（画面に数字を出すため、何コマ目かを記録）
+        while (world.events && seen < world.events.length) {
+          const e = world.events[seen++];
+          if (e.type === 'hit') hits.push({ f: frames.length - 1, target: e.target, from: e.from, dmg: e.dmg, x: round2(e.x), y: round2(e.y), kind: e.kind });
+        }
         if (!crit && world.events?.length) {
           const e = world.events.find((ev) => ev.type === 'crit');
           if (e) crit = { f: frames.length - 1, x: round2(e.x), y: round2(e.y), target: e.target };
@@ -325,6 +336,10 @@ export class RoomCore {
       for (let k = 0; k < 8; k++) frames.push(encodeFrame(world)); // ひと呼吸おいてから
       const hit = Physics.blast(world, body, radius, SKILL_TUNE.windSpeed);
       wind = { f: frames.length - 1, x: round2(body.x), y: round2(body.y), r: radius, hit };
+      while (world.events && seen < world.events.length) {
+        const e = world.events[seen++];
+        if (e.type === 'hit') hits.push({ f: frames.length - 1, target: e.target, from: e.from, dmg: e.dmg, x: round2(e.x), y: round2(e.y), kind: e.kind });
+      }
       run();
     }
     for (const b of world.bodies) if (b.state === 'falling') b.state = 'gone';
@@ -333,7 +348,7 @@ export class RoomCore {
     const before = g.bodies.map((b) => ({ x: b.x, y: b.y, state: b.state }));
     g.bodies = g.bodies.map((prev, i) => {
       const b = world.bodies[i];
-      return { ...prev, x: round2(b.x), y: round2(b.y), a: round4(b.a), state: b.state === 'desk' ? 'desk' : 'gone' };
+      return { ...prev, x: round2(b.x), y: round2(b.y), a: round4(b.a), hp: Math.round(b.hp * 10) / 10, state: b.state === 'desk' ? 'desk' : 'gone' };
     });
     if (g.gauge) {
       const add = (i, v) => { g.gauge[i] = Math.min(GAUGE.max, g.gauge[i] + v); };
@@ -349,7 +364,7 @@ export class RoomCore {
     const keepTurn = skill === 'double' && world.bodies[by].state === 'desk';
     if (!keepTurn) { g.shots++; g.extra = false; }
     const { saved, vanished } = this.finishTurn(by, now, { keepTurn });
-    return { by, frames, falls, saved, crit, vanished, skill, wind };
+    return { by, frames, falls, saved, crit, vanished, skill, wind, hits };
   }
 
   // はじいた後の判定。{ saved: 1周目に落ちた定規を戻したか, vanished: 消えた机 { desk, drops } }

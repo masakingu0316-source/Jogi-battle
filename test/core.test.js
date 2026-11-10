@@ -578,3 +578,58 @@ test('いす：椅子のある辺からは落ちない（ほかの辺からは�
   assert.ok(kept.x < 45);
   assert.notEqual(out('left').state, 'desk', '椅子が反対側なら落ちる');
 });
+
+// ---- 体力 ----
+test('体力：当てられた側だけが、当てた勢いに応じてダメージを受ける', () => {
+  const { r, ms, g } = skillGame('ruler:straight30-acrylic');
+  Object.assign(g.bodies[0], { x: -14, y: 0, a: Math.PI / 2 });
+  Object.assign(g.bodies[1], { x: 0, y: 0, a: Math.PI / 2 });
+  const shot = r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.9 })[0].msg;
+  assert.ok(g.bodies[1].hp < 92, `青の体力 ${g.bodies[1].hp}`);
+  assert.equal(g.bodies[0].hp, 100, '当てた側は減らない');
+  assert.ok(shot.hits.some((h) => h.target === 1 && h.from === 0 && h.f > 0));
+  assert.equal(shot.state.game.bodies[1].hp, g.bodies[1].hp);
+  // 弱く当てると少しだけ
+  const weak = skillGame('ruler:straight30-acrylic');
+  Object.assign(weak.g.bodies[0], { x: -6, y: 0, a: Math.PI / 2 });
+  Object.assign(weak.g.bodies[1], { x: 0, y: 0, a: Math.PI / 2 });
+  weak.r.handle(weak.ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.2 });
+  assert.ok(weak.g.bodies[1].hp > g.bodies[1].hp);
+});
+
+test('体力：減っているほど、押されたときに遠くまで飛ぶ（はじいた本人のすべり方は変わらない）', () => {
+  const pushed = (hp) => {
+    const { r, ms, g } = skillGame('ruler:straight30-acrylic');
+    Object.assign(g.bodies[0], { x: -8, y: 0, a: Math.PI / 2 });
+    Object.assign(g.bodies[1], { x: 0, y: 0, a: Math.PI / 2, hp });
+    r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.6 });
+    return g.bodies[1].x;
+  };
+  const full = pushed(100), half = pushed(50), none = pushed(0);
+  assert.ok(full < half && half < none, `体力100: ${full.toFixed(1)} / 50: ${half.toFixed(1)} / 0: ${none.toFixed(1)}`);
+  assert.ok(none > full * 1.8);
+  const own = (hp) => {
+    const { r, ms, g } = skillGame('ruler:straight30-acrylic');
+    Object.assign(g.bodies[0], { x: -40, y: -25, a: 0, hp });
+    Object.assign(g.bodies[1], { x: 40, y: 25, a: 0 });
+    r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.5 });
+    return g.bodies[0].y;
+  };
+  assert.equal(own(100), own(10));
+});
+
+test('体力：1周目に落ちて席に戻っても、受けたダメージは残る。突風でもダメージ', () => {
+  const { r, ms } = started(2, 'standard');
+  const g = r.s.game;
+  Object.assign(g.bodies[1], { x: 40, y: 0, a: Math.PI / 2 });
+  Object.assign(g.bodies[0], { x: 28, y: 0, a: Math.PI / 2 });
+  r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 1 });
+  assert.equal(g.bodies[1].state, 'desk', '1周目なので戻る');
+  assert.ok(g.bodies[1].hp < 100);
+  const w = skillGame('ruler:tri45-acrylic');
+  w.g.gauge[0] = 100;
+  Object.assign(w.g.bodies[0], { x: -10, y: 0, a: 0 });
+  Object.assign(w.g.bodies[1], { x: 0, y: 0, a: Math.PI / 2 });
+  const shot = w.r.handle(w.ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05, skill: true })[0].msg;
+  assert.ok(shot.hits.some((h) => h.kind === 'wind' && h.target === 1));
+});

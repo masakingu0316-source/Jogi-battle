@@ -221,12 +221,15 @@
         <p class="wait" id="resultNext"></p>
       </div>
     </div>
-    <div class="controls" id="controls">
-      <span class="skill-slot" id="skillSlot"></span>
-      <button id="skip" type="button" hidden>この人の番を飛ばす</button>
-      <button class="link quit-practice" id="quitPractice" type="button" hidden>練習をやめてホームへ</button>
-      <span class="spacer"></span>
-      <small>押さえた位置が「はじく点」。端をはじくと回転します。最初の1周は落ちても元の席に戻ります。</small>
+    <div class="controls me-hud" id="controls">
+      <button type="button" class="skill-ring" id="skillBtn" aria-pressed="false" disabled hidden>
+        <span id="skillRing"></span><span class="skill-cap" id="skillCap"></span>
+      </button>
+      <div class="me-panel" id="mePanel" hidden></div>
+      <div class="me-side">
+        <button id="skip" type="button" hidden>この人の番を飛ばす</button>
+        <button class="link quit-practice" id="quitPractice" type="button" hidden>練習をやめる</button>
+      </div>
     </div>
   </main>
   <footer class="site-foot"><a href="/privacy.html">プライバシーポリシー</a></footer>

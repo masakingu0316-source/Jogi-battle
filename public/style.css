@@ -199,7 +199,7 @@ input:focus { border-color: var(--pen); }
   display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 10px; align-items: center;
   transition: border-color .2s, box-shadow .2s;
 }
-.player .seat { font-family: var(--font-display); font-weight: 600; font-size: 24px; line-height: 1; grid-row: span 3; }
+.player .seat { font-family: var(--font-display); font-weight: 600; font-size: 24px; line-height: 1; grid-row: span 4; }
 .player .sp { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 3px; font-size: 11px; color: var(--ink-soft); }
 .player .sp .gauge { flex: 0 1 72px; min-width: 36px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .player .sp .gauge i { display: block; height: 100%; background: var(--sk); border-radius: 3px; transition: width .4s; }
@@ -538,3 +538,102 @@ body.in-game .site-foot { display: none; }
   #game .controls { min-height: 36px; }
   #game .controls small { display: none; }
 }
+
+/* 体力のバー（名前の札） */
+.hpbar { position: relative; display: block; height: 12px; margin-top: 4px; border-radius: 6px; background: var(--line); overflow: hidden; }
+.hpbar i { display: block; height: 100%; border-radius: 6px; transition: width .5s; }
+.hpbar.ok i { background: #43b56b; }
+.hpbar.mid i { background: #e3b230; }
+.hpbar.low i { background: #e2533f; }
+.hpbar b { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); font-size: 10px; line-height: 1; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+#game .player .hpbar { grid-column: 2; }
+@media (max-width: 640px) { #game .player .hpbar { grid-column: 1 / -1; height: 11px; } }
+@media (max-height: 520px) { #game .player .hpbar { grid-column: 1 / -1; height: 10px; margin-top: 2px; } }
+
+/* ==== 対戦中の表示（上：ほかの人を縦に並べ、番の人を大きく／下：自分の体力と、左下の円ゲージ） ==== */
+#game .players { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
+.orow {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) minmax(90px, 38%) auto; align-items: center; gap: 4px 10px;
+  padding: 3px 10px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--seat);
+  font-size: 13px; transition: padding .2s;
+}
+.orow .seat { font-family: var(--font-display); font-weight: 600; color: var(--seat); font-size: 15px; line-height: 1; }
+.orow .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
+.orow .who small { font-weight: 400; color: var(--ink-soft); font-size: 11px; margin-left: 6px; }
+.orow .hpbar { height: 9px; margin: 0; }
+.orow .hpbar b { font-size: 9px; }
+.orow.is-turn { padding: 7px 12px; border: 2px solid var(--ink); border-left: 6px solid var(--seat); font-size: 16px; box-shadow: var(--shadow); }
+.orow.is-turn .seat { font-size: 22px; }
+.orow.is-turn .hpbar { height: 18px; border-radius: 9px; }
+.orow.is-turn .hpbar i { border-radius: 9px; }
+.orow.is-turn .hpbar b { font-size: 12px; }
+.orow.is-out { opacity: .45; }
+
+/* 円ゲージ */
+.ring { display: inline-grid; place-items: center; }
+.ring svg, .skill-ring svg { display: block; }
+.ring-bg { fill: none; stroke: var(--line); stroke-width: 7; }
+.ring-fg { fill: none; stroke: var(--sk); stroke-width: 7; stroke-linecap: round; transition: stroke-dasharray .45s; }
+.ring-num { font: 700 15px var(--font-body, system-ui), sans-serif; fill: var(--ink); }
+.ring-name { font: 600 10px var(--font-body, system-ui), sans-serif; fill: var(--ink-soft); }
+.ring.full svg, .skill-ring.ready svg { filter: drop-shadow(0 0 4px var(--sk)); }
+.ring.anchor svg { outline: 2px solid #8a5cf0; outline-offset: 1px; border-radius: 50%; }
+
+/* 画面下：自分 */
+.me-hud { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; min-height: 76px; }
+.skill-ring {
+  position: relative; width: 76px; height: 76px; padding: 4px; border-radius: 50%;
+  border: 2px solid var(--line); background: var(--card); color: var(--ink); cursor: default; box-shadow: var(--shadow);
+}
+.skill-ring[hidden] { display: none; }
+.skill-ring:disabled { opacity: 1; }
+.skill-ring svg { width: 100%; height: 100%; }
+.skill-ring.ready { cursor: pointer; border-color: var(--sk); animation: ring-pulse 1.1s ease-in-out infinite; }
+.skill-ring[aria-pressed="true"] { background: color-mix(in srgb, var(--sk) 35%, var(--card)); animation: none; border-width: 3px; }
+.skill-ring:focus-visible { outline: 3px solid var(--ink); outline-offset: 3px; }
+.skill-cap { position: absolute; left: 50%; bottom: -8px; transform: translateX(-50%); font-size: 11px; font-weight: 700; white-space: nowrap; padding: 0 7px; border-radius: 999px; background: var(--sk); color: #1a1420; }
+.skill-cap:empty { display: none; }
+@keyframes ring-pulse { 0% { box-shadow: 0 0 0 0 var(--sk); } 100% { box-shadow: 0 0 0 10px transparent; } }
+@media (prefers-reduced-motion: reduce) { .skill-ring.ready { animation: none; } }
+.me-panel { min-width: 0; display: grid; gap: 6px; padding: 8px 12px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); border-left: 6px solid var(--seat); }
+.me-panel[hidden] { display: none; }
+.me-panel.is-turn { border: 2px solid var(--ink); border-left: 6px solid var(--seat); }
+.me-panel.is-out { opacity: .5; }
+.me-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; white-space: nowrap; }
+.me-line .seat { font-family: var(--font-display); font-weight: 600; color: var(--seat); font-size: 18px; line-height: 1; }
+.me-line .who { font-weight: 700; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.me-line small { color: var(--ink-soft); font-size: 11px; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.me-hp .hpbar { height: 24px; border-radius: 12px; margin: 0; }
+.me-hp .hpbar i { border-radius: 12px; }
+.me-hp .hpbar b { font-size: 14px; right: 10px; }
+.me-hp .hpbar::before { content: '体力'; position: absolute; left: 10px; top: 50%; transform: translateY(-50%); font-size: 11px; font-weight: 700; color: #fff; text-shadow: 0 1px 2px rgba(0,0,0,.4); z-index: 1; }
+.me-side { display: grid; gap: 4px; justify-items: end; }
+.me-side:not(:has(:not([hidden]))) { display: none; }
+@media (max-width: 640px) {
+  .orow { grid-template-columns: auto minmax(0, 1fr) minmax(70px, 34%) auto; gap: 2px 7px; padding: 3px 8px; font-size: 12px; }
+  .orow .who small { display: none; }
+  .orow.is-turn { padding: 5px 9px; font-size: 14px; }
+  .orow.is-turn .who small { display: inline; }
+  .me-hud { gap: 9px; min-height: 68px; }
+  .skill-ring { width: 68px; height: 68px; }
+  .me-panel { padding: 6px 10px; gap: 5px; }
+  .me-hp .hpbar { height: 22px; }
+}
+@media (max-height: 520px) {
+  #game .msg { display: none; }
+  .orow.is-turn { padding: 3px 9px; }
+  .orow.is-turn .hpbar { height: 12px; }
+  .me-hud { min-height: 56px; }
+  .skill-ring { width: 56px; height: 56px; }
+  .me-panel { padding: 4px 10px; gap: 3px; }
+  .me-hp .hpbar { height: 16px; }
+}
+
+/* 番が移っても盤面が上下に動かないよう、行の高さを決めておき、上の欄は「大きい行1つ＋小さい行」の高さを常に取る */
+#game { --rowS: 30px; --rowL: 54px; }
+.orow { height: var(--rowS); }
+.orow.is-turn { height: var(--rowL); }
+#game .players { min-height: calc(var(--rowL) + (var(--rowS) + 4px) * (var(--n, 1) - 1)); align-content: start; }
+.me-panel.is-turn { border: 1px solid var(--line); border-left: 6px solid var(--seat); box-shadow: 0 0 0 2px var(--ink); }
+@media (max-width: 640px) { #game { --rowS: 28px; --rowL: 48px; } }
+@media (max-height: 520px) { #game { --rowS: 24px; --rowL: 32px; } }

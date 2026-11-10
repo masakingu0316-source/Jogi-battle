@@ -107,6 +107,27 @@ const Physics = (() => {
   const MOD_TOTAL_LIMIT = 0.1;
   const clampMod = (v) => Math.max(1 - MOD_TOTAL_LIMIT, Math.min(1 + MOD_TOTAL_LIMIT, Number.isFinite(v) ? v : 1));
 
+  // ---- 体力 ----
+  // 押されたときにすべる距離の倍率：体力が満タンで kbMin、0で kbMax（はじいた本人には効かない）
+  // ダメージ：ぶつかった瞬間に近づく速さ（cm/秒）から。当てられた側だけが受ける
+  // ダメージ = dmgK ×（近づく速さ − dmgFloor）^dmgExp（強く当てても伸びすぎないよう、ゆるやかに増える。1回 dmgMax まで）
+  const HP = { max: 100, kbMin: 0.6, kbMax: 1.6, dmgK: 0.32, dmgExp: 0.7, dmgFloor: 12, dmgMax: 35, critDmg: 1.5, windDmg: 18, gripExp: 0.5, massExp: 0.5 };
+  // 体力から、押されたときのすべりにくさ（摩擦の倍率）を決める。すべる距離は摩擦に反比例する
+  // 体力から「押されたときの飛びやすさ」kb を出し、すべりにくさ（摩擦）と、ぶつかったときの重さの両方に分けて効かせる
+  function setHp(b, hp) {
+    b.hp = Math.max(0, Math.min(HP.max, hp));
+    const kb = b.shooter ? 1 : HP.kbMin + (HP.kbMax - HP.kbMin) * (1 - b.hp / HP.max);
+    b.grip = Math.pow(kb, -HP.gripExp);
+    const mk = Math.pow(kb, HP.massExp);
+    b.cM = b.invM * mk; b.cI = b.invI * mk;
+  }
+  function damage(world, target, amount, from, x, y, kind) {
+    const dmg = Math.round(amount * 10) / 10;
+    if (dmg <= 0) return;
+    setHp(target, target.hp - dmg);
+    (world.events ||= []).push({ type: 'hit', time: world.time, target: target.owner, from: from ? from.owner : -1, dmg, x, y, kind });
+  }
+
   const DEFAULT_PARAMS = {
     friction: 1.0,     // 机の摩擦の倍率
     restitution: 1.0,  // 跳ね返りの倍率（素材ごとの値にかける）
@@ -129,9 +150,10 @@ const Physics = (() => {
     return {
       id, owner, specKey, spec: s, shape: sh, mat: s.mat,
       x, y, a, vx: 0, vy: 0, w: 0,
-      m, invM: 1 / m, I, invI: 1 / I,
+      m, invM: 1 / m, I, invI: 1 / I, cM: 1 / m, cI: 1 / I, // cM・cI：ぶつかったときに使う重さ（体力で変わる）
       mu: s.mu * mu, e: s.e, powerMul: pw,
       state: 'desk', fallAt: 0,
+      hp: HP.max, grip: 1, // 体力と、押されたときのすべりにくさ（体力が多いほど止まりやすい）
     };
   }
 
@@ -155,7 +177,7 @@ const Physics = (() => {
 
   // 机との摩擦：定規の面に散らばる点ごとに、滑り速度と逆向きに摩擦力をかける
   function applyDeskFriction(b, dt, scale) {
-    const mu = b.mu * scale;
+    const mu = b.mu * scale * (b.grip ?? 1);
     const pts = b.shape.samples;
     const fPer = mu * (b.m / pts.length) * G;
     const c = Math.cos(b.a), s = Math.sin(b.a);
@@ -250,9 +272,10 @@ const Physics = (() => {
       p.rBx = p.x - B.x; p.rBy = p.y - B.y;
       const rnA = p.rAx * ny - p.rAy * nx, rnB = p.rBx * ny - p.rBy * nx;
       const rtA = p.rAx * ty - p.rAy * tx, rtB = p.rBx * ty - p.rBy * tx;
-      p.mn = 1 / (A.invM + B.invM + A.invI * rnA * rnA + B.invI * rnB * rnB);
-      p.mt = 1 / (A.invM + B.invM + A.invI * rtA * rtA + B.invI * rtB * rtB);
+      p.mn = 1 / (A.cM + B.cM + A.cI * rnA * rnA + B.cI * rnB * rnB);
+      p.mt = 1 / (A.cM + B.cM + A.cI * rtA * rtA + B.cI * rtB * rtB);
       const vn = relVel(A, B, p, nx, ny);
+      c.vn0 = Math.min(c.vn0 ?? 0, vn);
       const bounce = vn < -15 ? -e * vn : 0;
       const push = 0.25 / dt * Math.max(0, -p.sep - 0.01);
       p.bias = Math.max(bounce, Math.min(push, 60));
@@ -267,10 +290,10 @@ const Physics = (() => {
   }
 
   function applyImp(A, B, p, Px, Py) {
-    A.vx -= Px * A.invM; A.vy -= Py * A.invM;
-    A.w -= A.invI * (p.rAx * Py - p.rAy * Px);
-    B.vx += Px * B.invM; B.vy += Py * B.invM;
-    B.w += B.invI * (p.rBx * Py - p.rBy * Px);
+    A.vx -= Px * A.cM; A.vy -= Py * A.cM;
+    A.w -= A.cI * (p.rAx * Py - p.rAy * Px);
+    B.vx += Px * B.cM; B.vy += Py * B.cM;
+    B.w += B.cI * (p.rBx * Py - p.rBy * Px);
   }
 
   function solve(c) {
@@ -299,8 +322,8 @@ const Physics = (() => {
     for (const p of c.points) {
       const P = p.Pn * AFFINITY_BONUS * sign;
       const rx = target === B ? p.rBx : p.rAx, ry = target === B ? p.rBy : p.rAy;
-      target.vx += P * nx * target.invM; target.vy += P * ny * target.invM;
-      target.w += target.invI * (rx * P * ny - ry * P * nx);
+      target.vx += P * nx * target.cM; target.vy += P * ny * target.cM;
+      target.w += target.cI * (rx * P * ny - ry * P * nx);
     }
   }
 
@@ -314,19 +337,20 @@ const Physics = (() => {
   function applyCrit(world, c) {
     const { A, B, nx, ny } = c;
     const src = A.crit > 1 ? A : B.crit > 1 ? B : null;
-    if (!src) return;
+    if (!src) return false;
     const target = src === A ? B : A, sign = src === A ? 1 : -1;
     let px = 0, py = 0;
     for (const p of c.points) {
       const P = p.Pn * (src.crit - 1) * sign;
       const rx = target === B ? p.rBx : p.rAx, ry = target === B ? p.rBy : p.rAy;
-      target.vx += P * nx * target.invM; target.vy += P * ny * target.invM;
-      target.w += target.invI * (rx * P * ny - ry * P * nx);
+      target.vx += P * nx * target.cM; target.vy += P * ny * target.cM;
+      target.w += target.cI * (rx * P * ny - ry * P * nx);
       px += target.x + rx; py += target.y + ry;
     }
     const k = c.points.length || 1;
     (world.events ||= []).push({ type: 'crit', time: world.time, owner: src.owner, target: target.owner, x: px / k, y: py / k });
     src.crit = 0;
+    return true;
   }
 
   // 椅子：机の辺に沿った壁。wall = { nx, ny（外向き）, d（辺の位置 n·p）, lo, hi（辺に沿った範囲） }
@@ -355,6 +379,7 @@ const Physics = (() => {
   function step(world, dt) {
     const P = world.params;
     const live = world.bodies.filter((b) => b.state === 'desk');
+    for (const b of live) { b.vx0 = b.vx; b.vy0 = b.vy; }
     for (const b of live) applyDeskFriction(b, dt, P.friction);
     const contacts = [];
     for (let i = 0; i < live.length; i++)
@@ -364,7 +389,27 @@ const Physics = (() => {
       }
     for (let it = 0; it < 12; it++) for (const c of contacts) solve(c);
     for (const c of contacts) applyAffinity(c);
-    for (const c of contacts) applyCrit(world, c);
+    for (const c of contacts) c.crit = applyCrit(world, c);
+    // 新しくぶつかった組だけダメージ（触れ続けている間や、0.25秒以内の当たり直しは数えない）
+    const touching = new Set();
+    const last = (world.lastHit ||= new Map());
+    for (const c of contacts) {
+      const key = c.A.id + '|' + c.B.id;
+      touching.add(key);
+      if (world.touching?.has(key)) continue;
+      if (world.time - (last.get(key) ?? -1) < 0.25) continue;
+      last.set(key, world.time);
+      const speed = -(c.vn0 ?? 0);
+      if (speed <= HP.dmgFloor) continue;
+      // 相手へ向かって速く動いていた方が「当てた側」
+      const sA = c.A.vx0 * c.nx + c.A.vy0 * c.ny, sB = -(c.B.vx0 * c.nx + c.B.vy0 * c.ny);
+      const [att, rec] = sA >= sB ? [c.A, c.B] : [c.B, c.A];
+      const pt = c.points[0];
+      const base = Math.min(HP.dmgMax, HP.dmgK * Math.pow(speed - HP.dmgFloor, HP.dmgExp) * Math.sqrt(att.m / 26));
+      const amount = base * (c.crit ? HP.critDmg : 1);
+      damage(world, rec, amount, att, pt.x, pt.y, c.crit ? 'crit' : 'hit');
+    }
+    world.touching = touching;
     const fell = [];
     for (const b of world.bodies) {
       if (b.state === 'gone') continue;
@@ -425,6 +470,7 @@ const Physics = (() => {
       const rx = bx - b.x, ry = by - b.y;
       b.w += (rx * uy - ry * ux) * v * b.m * b.invI * 0.15;
       hit.push(b.owner);
+      damage(world, b, HP.windDmg * Math.pow(1 - d / radius, 0.5), src, bx, by, 'wind');
     }
     return hit;
   }
@@ -448,7 +494,7 @@ const Physics = (() => {
 
   return {
     G, DESK, SHAPES, MATERIALS, BEATS, AFFINITY_BONUS, RULERS, DEFAULT_PARAMS, MAX_IMPULSE, MOD_LIMIT, MOD_TOTAL_LIMIT,
-    createBody, createWorld, step, atRest, flick, blast, collide, nearestOnShape, worldVerts,
+    createBody, createWorld, step, atRest, flick, blast, collide, nearestOnShape, worldVerts, HP, setHp, damage,
   };
 })();
 export default Physics;

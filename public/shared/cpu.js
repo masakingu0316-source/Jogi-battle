@@ -43,6 +43,9 @@ function evaluate(before, after, me, mode) {
     if (!wasAlive) return;
     const b = g.bodies[i];
     const m = p.alive && b.state === 'desk' ? margin(tiles, b.x, b.y) : -1;
+    // 体力：相手を削るほど良く、自分や味方が削られるほど悪い
+    const lost = (g0.bodies[i].hp ?? 100) - (b.hp ?? 100);
+    score += i === me ? -lost * 0.6 : isEnemy(i) ? lost * 1.2 : -lost * 0.8;
     if (i === me) {
       if (!p.alive) score -= 300;
       else score += Math.min(m, 12) * 4 - (m <= 0 ? 150 : 0);

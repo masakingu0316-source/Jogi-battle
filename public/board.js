@@ -298,7 +298,7 @@ export function createBoard(canvas, wrap, opt = {}) {
         continue;
       }
       // 画面からはみ出さないよう、文字の幅に合わせて寄せる
-      const size = f.big ? Math.min(36, view.w / 9) : Math.min(28, view.w / 11);
+      const size = f.big ? Math.min(36, view.w / 9) : f.small ? Math.min(22, view.w / 14) : Math.min(28, view.w / 11);
       ctx.font = `600 ${size}px "Klee One", "BIZ UDPGothic", sans-serif`;
       const half = ctx.measureText(f.text).width / 2 + 8;
       const x = Math.max(half, Math.min(view.w - half, p.x));

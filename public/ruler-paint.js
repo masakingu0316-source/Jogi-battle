@@ -276,6 +276,41 @@ function paintScale(ctx, g, mat, P) {
   }
 }
 
+// ヒビ：体力が減るほど増える（70未満で1本、50未満で2本、30未満で3本）
+function paintCracks(ctx, g, hp, P, seed) {
+  const n = hp < 30 ? 3 : hp < 50 ? 2 : 1;
+  let r = 97 + seed * 31;
+  const rnd = () => (r = (r * 16807) % 2147483647) / 2147483647;
+  const cx = (g.box.x0 + g.box.x1) / 2, cy = (g.box.y0 + g.box.y1) / 2;
+  ctx.save();
+  bodyPath(ctx, g);
+  ctx.clip('evenodd');
+  ctx.lineJoin = 'miter';
+  for (let k = 0; k < n; k++) {
+    // 外周の1点から、内側へジグザグに走る
+    const v = g.outer[Math.floor(rnd() * g.outer.length)];
+    const a = g.outer[(g.outer.indexOf(v) + 1) % g.outer.length];
+    const t = 0.2 + rnd() * 0.6;
+    let x = v.x + (a.x - v.x) * t, y = v.y + (a.y - v.y) * t;
+    const dx = cx - x, dy = cy - y, len = Math.hypot(dx, dy) || 1;
+    const reach = Math.min(len * 0.9, 2.5 + rnd() * 3);
+    const pts = [[x, y]];
+    for (let j = 1; j <= 5; j++) {
+      const f = (reach * j) / 5;
+      const side = (rnd() - 0.5) * 1.2;
+      pts.push([x + (dx / len) * f - (dy / len) * side, y + (dy / len) * f + (dx / len) * side]);
+    }
+    for (const [col, w, off] of [['rgba(255,255,255,0.55)', 1.8, 0.06], ['rgba(35,25,25,0.75)', 1.2, 0]]) {
+      ctx.beginPath();
+      pts.forEach(([px, py], j) => (j ? ctx.lineTo(px + off, py + off) : ctx.moveTo(px + off, py + off)));
+      ctx.strokeStyle = col;
+      ctx.lineWidth = Math.max(0.04, w / P);
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
 // シールと名前シールを貼る場所（形を定義した座標。rot は名前シールの向き）
 function stickerSpots(sh) {
   if (sh.kind === 'rect') {
@@ -350,6 +385,7 @@ export function paintRuler(ctx, b, px, active = false, now = 0) {
   }
 
   paintScale(ctx, g, s.mat, P);
+  if ((b.hp ?? 100) < 70) paintCracks(ctx, g, b.hp, P, b.owner || 0);
 
   const spots = stickerSpots(g.sh);
   if (b.sticker) paintSticker(ctx, b.sticker, spots.deco.cx, spots.deco.cy, spots.deco.size);
