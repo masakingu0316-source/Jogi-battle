@@ -141,7 +141,7 @@ export class RoomCore {
       wins: s.wins,
       game: s.game && {
         n: s.game.n, order: s.game.order, turn: s.game.turn, shots: s.game.shots, id: s.game.id,
-        desks: s.game.desks || null, vanish: s.game.vanish ?? null,
+        desks: s.game.desks || null, vanish: s.game.vanish ?? null, vanishIn: s.game.vanishIn ?? null,
         gauge: s.game.gauge || null, extra: !!s.game.extra,
         bodies: s.game.bodies, players: s.game.players, result: s.game.result,
       },
@@ -236,7 +236,8 @@ export class RoomCore {
       kos: order.map(() => 0),
       players: order.map(() => ({ alive: true, selfOut: false })),
       desks: deskTiles(desk).map((t) => t.i), // 残っている机
-      vanish: null,                           // 次の番が終わると消える机（予告）
+      vanish: null,                           // 消える予告が出ている机
+      vanishIn: null,                         // あと何回の番が終わると消えるか（1周＝残っている人数）
       gauge: order.map(() => 0),              // 必殺技のゲージ
       extra: false,                           // 連打の2打目が残っている
     };
@@ -364,7 +365,9 @@ export class RoomCore {
     }
     // 予告していた机が消える。重心がその机の上にあった定規は落ちる
     let vanished = null;
-    if (!opt.keepTurn && g.vanish !== null && g.vanish !== undefined && g.desks) {
+    // 予告は1周（残っている全員が1回ずつはじく）のあいだ出し、その周が終わったら消す
+    if (!opt.keepTurn && g.vanish !== null && g.vanish !== undefined) g.vanishIn = (g.vanishIn ?? 1) - 1;
+    if (!opt.keepTurn && g.vanish !== null && g.vanish !== undefined && g.desks && g.vanishIn <= 0) {
       const desk = DESKS[MODES[g.mode].desk];
       const tiles = deskTiles(desk);
       const gone = tiles[g.vanish];
@@ -376,6 +379,7 @@ export class RoomCore {
       });
       vanished = { desk: g.vanish, drops };
       g.vanish = null;
+      g.vanishIn = null;
     }
     const newly = [];
     g.players.forEach((p, i) => {
@@ -439,9 +443,10 @@ export class RoomCore {
       g.extra = true; // 連打：同じ人の番のまま
     } else {
       g.extra = false;
-      // 3人以上で始めて残りが2人になったら、机を1台ずつ消していく（1つ前の番で予告）
+      // 3人以上で始めて残りが2人になったら、1周ごとに机を1台ずつ消していく（その周のはじめに予告）
       if (g.n >= SHRINK_FROM_PLAYERS && g.desks && alive.length === 2 && g.desks.length > 1 && (g.vanish === null || g.vanish === undefined)) {
         g.vanish = pickVanish(DESKS[MODES[g.mode].desk], g.desks, this.rand);
+        g.vanishIn = alive.length;
       }
       this.advanceTurn();
     }

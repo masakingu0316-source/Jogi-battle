@@ -283,7 +283,7 @@ test('レベルが上がると、重さとはじく力が少しだけ上がる�
 });
 
 
-test('乱戦で残りが2人になると、消える机を1つ前の番で予告し、番ごとに1台ずつ消える（最後は1台）', () => {
+test('乱戦で残りが2人になると、消える机を予告し、1周（2人が1回ずつ）ごとに1台ずつ消える（最後は1台）', () => {
   const { r, ms } = started(4, 'melee');
   const g = r.s.game;
   g.shots = 10;
@@ -302,8 +302,14 @@ test('乱戦で残りが2人になると、消える机を1つ前の番で予告
     const safe = deskTiles(desk).filter((t) => g.desks.includes(t.i) && t.i !== v);
     g.bodies[2].x = (safe[0].x0 + safe[0].x1) / 2; g.bodies[2].y = (safe[0].y0 + safe[0].y1) / 2;
     g.bodies[3].x = (safe.at(-1).x0 + safe.at(-1).x1) / 2 + 3; g.bodies[3].y = (safe.at(-1).y0 + safe.at(-1).y1) / 2;
-    const out = r.handle(g.order[g.turn], { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.05 });
-    const shot = out[0].msg;
+    assert.equal(g.vanishIn, 2);
+    // 1人目がはじいても、まだ消えない
+    const first = r.handle(g.order[g.turn], { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.05 })[0].msg;
+    assert.equal(first.vanished, null);
+    assert.equal(g.vanish, v);
+    assert.equal(first.state.game.vanishIn, 1);
+    // 2人目がはじいて1周が終わると消える
+    const shot = r.handle(g.order[g.turn], { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.05 })[0].msg;
     assert.equal(shot.vanished.desk, v);
     assert.ok(!g.desks.includes(v));
     assert.ok(tilesConnected(desk, g.desks), '残った机は辺でつながっている');
@@ -322,7 +328,8 @@ test('消えた机に乗っていた定規は落ち、はじいた人の手柄�
   r.finishTurn(0);
   const v = g.vanish;
   const t = deskTiles(DESKS.group)[v];
-  // 次の番の人（はじく人）ではない方の定規を、消える机の真ん中に置く
+  // 1周の最後の番にする。はじく人ではない方の定規を、消える机の真ん中に置く
+  g.vanishIn = 1;
   const shooter = g.turn, other = shooter === 1 ? 2 : 1;
   Object.assign(g.bodies[other], { x: (t.x0 + t.x1) / 2, y: (t.y0 + t.y1) / 2 });
   const safe = deskTiles(DESKS.group).find((x) => x.i !== v && g.desks.includes(x.i));

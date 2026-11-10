@@ -16,7 +16,7 @@ export function createPractice({ mode, cpus, level, name, loadout, loadoutFor, o
   core.setLoadout(me.id, loadout);
   const cpuIds = [];
   for (let i = 0; i < cpus; i++) {
-    const m = core.join(`コンピュータ${i + 1}`, null, null).member;
+    const m = core.join(`CPU${i + 1}`, null, null).member;
     const ruler = RULER_IDS[Math.floor(Math.random() * RULER_IDS.length)];
     core.setLoadout(m.id, resolveLoadout({ ruler }, undefined, CPU_LEVELS[lv].level));
     cpuIds.push(m.id);

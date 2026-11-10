@@ -205,6 +205,7 @@
     <div class="hud" aria-live="polite">
       <div class="players" id="players"></div>
       <div class="msg" id="msg"></div>
+      <div class="tags" id="tags"></div>
     </div>
     <div class="board-wrap" id="boardWrap">
       <canvas id="board" aria-label="机の上の定規バトル盤面。自分の番に、自分の定規を押さえて引っぱり、離すとはじけます。"></canvas>
@@ -220,7 +221,8 @@
         <p class="wait" id="resultNext"></p>
       </div>
     </div>
-    <div class="controls">
+    <div class="controls" id="controls">
+      <span class="skill-slot" id="skillSlot"></span>
       <button id="skip" type="button" hidden>この人の番を飛ばす</button>
       <button class="link quit-practice" id="quitPractice" type="button" hidden>練習をやめてホームへ</button>
       <span class="spacer"></span>

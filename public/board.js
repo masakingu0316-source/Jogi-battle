@@ -5,7 +5,8 @@ import { DESKS, PLAYERS } from './shared/rules.js';
 const MARGIN = 9; // 机のまわりに見せる床（cm）
 export const MAX_DRAG = 11; // これ以上引っぱっても力は最大のまま（cm）
 
-export function createBoard(canvas, wrap) {
+// opt.below(): 盤面の下に残す高さ（px）。画面の高さから盤面の上の位置とこれを引いた高さに収める
+export function createBoard(canvas, wrap, opt = {}) {
   const ctx = canvas.getContext('2d');
   const view = { s: 10, rot: false, cx: 0, cy: 0, w: 0, h: 0, dpr: 1 };
   let desk = DESKS.pair;
@@ -24,8 +25,11 @@ export function createBoard(canvas, wrap) {
     const rot = window.innerHeight > window.innerWidth * 1.05;
     const vw = (rot ? desk.h : desk.w) + MARGIN * 2;
     const vh = (rot ? desk.w : desk.h) + MARGIN * 2;
-    // 手番の表示まで含めて1画面に収まる高さ
-    const maxH = Math.max(260, window.innerHeight - 290);
+    // 盤面の上（名前の札・手番の表示）と下（ボタンの列）を除いた高さに収めて、上下に動かさずに遊べるようにする
+    const top = wrap.getBoundingClientRect().top + window.scrollY;
+    const below = opt.below ? opt.below() : 60;
+    const visible = wrap.offsetParent !== null;
+    const maxH = Math.max(140, window.innerHeight - (visible ? top : 290) - below - 2);
     const s = Math.min(cssW / vw, maxH / vh);
     const cssH = Math.round(vh * s);
     canvas.style.height = cssH + 'px';
@@ -191,7 +195,7 @@ export function createBoard(canvas, wrap) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.font = '700 15px "BIZ UDPGothic", system-ui, sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const txt = 'この番のあと消える';
+      const txt = (desks.warnIn ?? 1) <= 1 ? 'この番のあと消える' : `あと${desks.warnIn}回で消える`;
       const tw = ctx.measureText(txt).width + 18;
       ctx.globalAlpha = 0.85;
       ctx.fillStyle = '#d8342a';

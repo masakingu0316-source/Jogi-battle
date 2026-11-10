@@ -36,14 +36,17 @@ const app = {
   cpuLevel: store.get('jogi:cpu') || 'normal',
 };
 if (!MODES[app.pickedMode]) app.pickedMode = 'standard';
-const board = createBoard($('board'), $('boardWrap'));
+// 盤面の下に残す高さ（ボタンの列と、画面の下の余白）
+const board = createBoard($('board'), $('boardWrap'), {
+  below: () => $('controls').offsetHeight + 8 + (parseFloat(getComputedStyle(document.body).paddingBottom) || 0),
+});
 let account; // 下で作る（画面の関数を渡すため）
 
 // ---------------- 共通 ----------------
 let toastTimer = 0;
 // ---------------- 必殺技 ----------------
 const skillOf = (body) => SHAPE_SKILL[Physics.RULERS[body?.specKey]?.shape] || null;
-$('msg').addEventListener('click', (e) => {
+$('skillSlot').addEventListener('click', (e) => {
   if (!e.target.closest('#skillBtn')) return;
   app.skillArmed = !app.skillArmed;
   const sk = skillOf(app.state?.game?.bodies[app.state.game.turn]);
@@ -87,6 +90,8 @@ function setConn(text) {
 }
 function show(screen) {
   for (const id of ['login', 'home', 'lobby', 'game', 'mypage']) $(id).hidden = id !== screen;
+  // 対戦中は見出しや足もとを畳んで、盤面とゲージを1画面に収める
+  document.body.classList.toggle('in-game', screen === 'game');
 }
 const memberById = (id) => app.state?.members.find((m) => m.id === id) || null;
 const isHost = () => app.state && app.you && app.state.hostId === app.you.id;
@@ -403,9 +408,10 @@ function render() {
   if (st.phase === 'aim' || showingResult()) {
     const wasHidden = $('game').hidden;
     show('game');
+    if (wasHidden) window.scrollTo(0, 0);
+    renderGame();
     board.setDesk(MODES[st.mode].desk);
     if (wasHidden) board.layout();
-    renderGame();
   } else {
     show('lobby');
     renderLobby();
@@ -486,15 +492,17 @@ setInterval(updateCountdown, 250);
 function renderMyRuler(me) {
   if (!me) return;
   const lo = me.loadout;
-  const ids = me.account && app.me ? app.me.owned.filter((id) => ITEMS[id]?.kind === 'ruler') : BASIC_RULERS;
+  // ログインしている人（練習ではいつも）は、持っている定規から選べる
+  const acct = !!((me.account || app.practice) && app.me);
+  const ids = acct ? app.me.owned.filter((id) => ITEMS[id]?.kind === 'ruler') : BASIC_RULERS;
   const ids2 = Object.keys(ITEMS).filter((id) => ids.includes(id)); // 定規ケースと同じ並び
-  const opts = ids2.map((id) => `<option value="${id}">${esc(ITEMS[id].name)} Lv.${app.me && me.account ? levelOfRuler(app.me, id).level : 1}${ITEMS[id].rarity !== 'basic' ? ` [${ITEMS[id].rarity}]` : ''}</option>`).join('');
+  const opts = ids2.map((id) => `<option value="${id}">${esc(ITEMS[id].name)} Lv.${acct ? levelOfRuler(app.me, id).level : 1}${ITEMS[id].rarity !== 'basic' ? ` [${ITEMS[id].rarity}]` : ''}</option>`).join('');
   if ($('myRuler').dataset.opts !== opts) { $('myRuler').innerHTML = opts; $('myRuler').dataset.opts = opts; }
   $('myRuler').value = lo.ruler;
   previewRuler($('lobbyPreview'), lo, Math.max(0, app.state.members.findIndex((m) => m.id === me.id)));
   const r = ITEMS[lo.ruler];
   $('rulerNote').innerHTML = `${matChip(r?.mat)} ${esc(r ? affinityText(r.mat) : '')}<br>${esc(skillText(lo.ruler))}${lo.acc ? `<br>アクセサリ：${esc(ITEMS[lo.acc].name)}（${esc(accText(lo.acc))}）` : ''}`;
-  $('openCase').hidden = !(me.account && app.me);
+  $('openCase').hidden = !acct;
 }
 
 function renderGame() {
@@ -520,7 +528,8 @@ function renderGame() {
     const gauge = sk && g.gauge ? `<span class="sp${full ? ' full' : ''}" style="--sk:${SKILLS[sk].color}">
         <span class="gauge" role="img" aria-label="必殺技のゲージ ${Math.round(gv)}%"><i style="width:${Math.round((gv / GAUGE.max) * 100)}%"></i></span>
         <span class="sp-name">${SKILLS[sk].name}${full ? ' 使える' : ''}${body?.anchor ? '・発動中' : ''}</span></span>` : '';
-    return `<div class="player${turn ? ' is-turn' : ''}${p.alive || won ? '' : ' is-out'}" style="--seat:var(--seat-${i})">
+    const isMe = app.you && mid === app.you.id;
+    return `<div class="player${turn ? ' is-turn' : ''}${p.alive || won ? '' : ' is-out'}${isMe ? ' is-me' : ''}" style="--seat:var(--seat-${i})">
       <span class="seat" style="color:var(--seat-${i})">${pl.name}</span>
       <span class="who">${esc(m?.name || '（退出）')}</span>
       <span class="stat">${bits.join('・')}</span>${gauge}</div>`;
@@ -529,10 +538,12 @@ function renderGame() {
   const msg = $('msg');
   const cur = g.turn, curMember = memberById(g.order[cur]);
   const mine = myTurn();
+  let tags = '', skillHtml = '';
   if (app.playing || app.waitingShot) msg.textContent = '……';
   else if (st.phase === 'aim') {
     const first = (g.shots < g.n ? '<span class="first">1周目・落ちても戻る</span>' : '')
-      + (g.vanish !== null && g.vanish !== undefined ? '<span class="vanish">この番が終わると、赤い斜線の机が消える</span>' : '');
+      + (g.vanish !== null && g.vanish !== undefined
+        ? `<span class="vanish">${(g.vanishIn ?? 1) <= 1 ? 'この番が終わると、赤い斜線の机が消える' : `あと${g.vanishIn}回はじくと、赤い斜線の机が消える`}</span>` : '');
     const tTag = teams ? `（${TEAMS[teamOf(cur)].name}）` : '';
     const sk = skillOf(g.bodies[cur]);
     const canSkill = mine && sk && !g.extra && (g.gauge?.[cur] ?? 0) >= GAUGE.max;
@@ -540,10 +551,14 @@ function renderGame() {
     const skillBtn = canSkill
       ? `<button type="button" class="skill-btn" id="skillBtn" aria-pressed="${!!app.skillArmed}" style="--sk:${SKILLS[sk].color}">${app.skillArmed ? `必殺技「${SKILLS[sk].name}」でうつ（もう一度押すとやめる）` : `必殺技「${SKILLS[sk].name}」を使う`}</button>`
       : '';
-    const extra = g.extra ? `<span class="first" style="--sk:${SKILLS.double.color}">連打：もう1回はじける</span>` : '';
-    if (mine) msg.innerHTML = `<b class="mine">あなたの番</b>${tTag}<span>自分の定規を押さえて、引っぱって離す</span>${extra}${first}${skillBtn}`;
-    else msg.innerHTML = `<span><b style="color:var(--seat-${cur})">${esc(curMember?.name || '?')}</b>${tTag}の番です${curMember && !curMember.connected ? '（接続が切れています）' : ''}</span>${extra}${first}`;
+    const extra = g.extra ? `<span class="first">連打：もう1回はじける</span>` : '';
+    if (mine) msg.innerHTML = `<b class="mine">あなたの番</b>${tTag}<span class="sub">自分の定規を押さえて、引っぱって離す</span>`;
+    else msg.innerHTML = `<span class="who-turn"><b style="color:var(--seat-${cur})">${esc(curMember?.name || '?')}</b>${tTag}の番です${curMember && !curMember.connected ? '（接続が切れています）' : ''}</span>`;
+    tags = extra + first;
+    skillHtml = skillBtn;
   } else msg.textContent = '対戦終了';
+  $('tags').innerHTML = tags;
+  if ($('skillSlot').innerHTML !== skillHtml) $('skillSlot').innerHTML = skillHtml;
   $('board').classList.toggle('can-aim', canAim());
   $('skip').hidden = !(isHost() && st.phase === 'aim' && !app.playing && curMember && !curMember.connected);
   $('quitPractice').hidden = !app.practice;
@@ -765,7 +780,7 @@ function frame(now) {
     app.fx = app.fx.filter((f) => now - f.t0 < 1600);
     const active = !app.playing && app.state.phase === 'aim' ? g.turn : -1;
     // 残っている机と、消える予告の机（再生中は、はじく前の状態のまま見せる）
-    const desks = app.playing?.deskView || { left: g.desks || null, warn: app.state.phase === 'aim' ? g.vanish ?? null : null };
+    const desks = app.playing?.deskView || { left: g.desks || null, warn: app.state.phase === 'aim' ? g.vanish ?? null : null, warnIn: g.vanishIn ?? 1 };
     board.draw({ bodies, active, aim, fx: app.fx, now, desks });
     // クリティカルの瞬間だけ、盤面を小さく揺らす
     const cv = $('board');
@@ -799,3 +814,5 @@ if (!app.me) {
 }
 window.addEventListener('resize', () => { if (!$('login').hidden) drawLoginArt(); });
 document.fonts?.ready?.then(() => { if (!$('game').hidden) board.layout(); });
+// 名前の札などの高さが変わったら、盤面の大きさを合わせ直す
+if (window.ResizeObserver) new ResizeObserver(() => { if (!$('game').hidden) board.layout(); }).observe($('players'));

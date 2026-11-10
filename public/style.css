@@ -220,7 +220,13 @@ input:focus { border-color: var(--pen); }
 .player .stat b { color: var(--ink); font-size: 15px; margin-right: 1px; }
 .player.is-turn { border-color: var(--ink); border-left-color: var(--seat, var(--ink)); box-shadow: 0 0 0 1px var(--ink), var(--shadow); }
 .player.is-out { opacity: 0.45; box-shadow: none; }
-.msg { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; text-align: center; font-size: 14px; min-height: 34px; padding: 2px 6px; gap: 4px 8px; }
+.msg { display: flex; flex-wrap: nowrap; align-items: center; justify-content: center; text-align: center; font-size: 14px; height: 32px; padding: 0 6px; gap: 8px; overflow: hidden; white-space: nowrap; }
+.msg .sub, .msg .who-turn { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+/* 1周目・連打・机が消える予告の札。高さを決めておき、出たり消えたりしても盤面が動かないようにする */
+.tags { display: flex; justify-content: center; align-items: center; gap: 6px; height: 22px; overflow: hidden; white-space: nowrap; }
+.tags > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tags .vanish { font-size: 12px; font-weight: 700; padding: 0 9px; border-radius: 999px; border: 1.5px solid var(--warn); color: var(--warn); background: var(--card); line-height: 18px; }
+.tags .first { font-size: 12px; padding: 0 9px; border-radius: 999px; border: 1px dashed var(--pen); color: var(--pen); background: var(--card); line-height: 19px; }
 .msg b { font-family: var(--font-display); font-weight: 600; font-size: 21px; }
 .msg .vanish { font-size: 12px; font-weight: 700; padding: 1px 9px; border-radius: 999px; border: 1.5px solid var(--warn); color: var(--warn); background: var(--card); }
 .msg .first { font-size: 12px; padding: 1px 9px; border-radius: 999px; border: 1px dashed var(--pen); color: var(--pen); white-space: nowrap; background: var(--card); }
@@ -246,7 +252,10 @@ canvas.can-aim:active { cursor: grabbing; }
 .result .order { font-size: 13px; color: var(--ink-soft); }
 .result .reward { color: var(--pen); font-size: 15px; font-weight: 700; margin-top: 4px; }
 .result-actions { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; margin-top: 12px; align-items: center; }
-.controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.controls { display: flex; gap: 8px; flex-wrap: nowrap; align-items: center; min-height: 40px; }
+.skill-slot:empty { display: none; }
+.controls small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-btn { font-size: 14px; padding: 7px 16px; }
 .controls .spacer { flex: 1; }
 .controls small { color: var(--ink-soft); font-size: 12px; }
 
@@ -471,3 +480,55 @@ code { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size:
 .cpu-count[hidden] { display: none; }
 .cpu-count select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--card); color: var(--ink); }
 .room-head.practice-head .code, .room-head.practice-head .invite { display: none; }
+
+/* ---- 対戦中：見出しと足もとを畳み、名前の札・ゲージ・盤面・ボタンを1画面に収める ---- */
+body.in-game { padding-top: max(8px, env(safe-area-inset-top, 0px)); padding-bottom: max(8px, env(safe-area-inset-bottom, 0px)); }
+body.in-game .page { gap: 6px; }
+body.in-game header { padding: 0; border: 0; justify-content: center; }
+body.in-game header > :not(.conn) { display: none; }
+body.in-game header:not(:has(.conn:not([hidden]))) { display: none; }
+body.in-game .site-foot { display: none; }
+#game.screen { gap: 6px; }
+#game .hud { gap: 4px; }
+#game .players { gap: 6px; }
+#game .player { padding: 6px 10px; }
+@media (max-width: 640px) {
+  /* 人数が多くても1列に並べる（ゲージを全員ぶん同時に見る） */
+  #game .players[data-n="3"] { --n: 3; }
+  #game .players[data-n="4"] { --n: 4; }
+  #game .player { padding: 5px 6px; border-left-width: 4px; column-gap: 5px; grid-template-columns: auto minmax(0, 1fr); }
+  #game .player .seat { font-size: 17px; grid-row: auto; }
+  #game .player .who { font-size: 12px; line-height: 1.4; }
+  /* 狭い画面では、勝ち数などの細かい情報は省き、名前とゲージを見せる */
+  #game .player .stat { display: none; }
+  /* 3〜4人のときは名前を2行まで（高さは2行ぶん取っておき、名前の長さで盤面が動かないようにする） */
+  #game .players[data-n="3"] .who, #game .players[data-n="4"] .who {
+    font-size: 11px; line-height: 1.25; white-space: normal; overflow-wrap: anywhere; height: 2.5em;
+    display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2;
+  }
+  #game .players[data-n="3"] .player, #game .players[data-n="4"] .player { align-items: start; }
+  #game .player .sp { grid-column: 1 / -1; margin-top: 2px; gap: 4px; font-size: 10px; align-self: end; }
+  #game .player .sp .gauge { flex: 1 1 auto; min-width: 0; }
+  #game .msg { font-size: 13px; height: 28px; }
+  #game .msg b { font-size: 18px; }
+  #game .msg .sub { display: none; }
+  #game .controls small { display: none; }
+  #game .controls .spacer { display: none; }
+  #game .controls { justify-content: center; }
+}
+
+#game .player.is-me .who { text-decoration: underline 3px var(--marker); text-underline-offset: 3px; text-decoration-skip-ink: none; }
+/* 高さの低い画面（スマホを横にしたときなど） */
+@media (max-height: 520px) {
+  #game .player { padding: 3px 8px; grid-template-columns: auto minmax(0, 1fr); column-gap: 6px; }
+  #game .player .seat { font-size: 16px; grid-row: auto; }
+  #game .player .who { font-size: 12px; line-height: 1.4; }
+  #game .player .stat { display: none; }
+  #game .player .sp { grid-column: 1 / -1; margin-top: 1px; }
+  #game .player .sp .gauge { flex: 1 1 auto; }
+  #game .msg { height: 26px; font-size: 13px; }
+  #game .msg b { font-size: 17px; }
+  #game .tags { height: 20px; }
+  #game .controls { min-height: 36px; }
+  #game .controls small { display: none; }
+}
