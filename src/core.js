@@ -1,7 +1,7 @@
 // 部屋の中身（メンバー・モード・対戦の進行）を扱う純粋なロジック。
 // Cloudflare の機能には依存しないので、Node でもそのままテストできる。
 import Physics from '../public/shared/physics.js';
-import { DESKS, MODES, PLAYERS, TEAMS, teamOf, seats, playableReason, deskTiles, onTile, pickVanish, SHRINK_FROM_PLAYERS, CRIT } from '../public/shared/rules.js';
+import { DESKS, MODES, PLAYERS, TEAMS, teamOf, seats, playableReason, deskTiles, onTile, pickVanish, SHRINK_FROM_PLAYERS, CRIT, SKILLS, SHAPE_SKILL, SKILL_TUNE, GAUGE } from '../public/shared/rules.js';
 import { resolveLoadout, DEFAULT_RULER } from '../public/shared/catalog.js';
 
 const FPS = 30;
@@ -143,6 +143,7 @@ export class RoomCore {
       game: s.game && {
         n: s.game.n, order: s.game.order, turn: s.game.turn, shots: s.game.shots, id: s.game.id,
         desks: s.game.desks || null, vanish: s.game.vanish ?? null,
+        gauge: s.game.gauge || null, extra: !!s.game.extra,
         bodies: s.game.bodies, players: s.game.players, result: s.game.result,
       },
     };
@@ -194,6 +195,7 @@ export class RoomCore {
         if (s.phase !== 'aim') return [];
         const cur = this.member(s.game.order[s.game.turn]);
         if (cur && cur.connected) return err('接続している人の番は飛ばせません');
+        s.game.extra = false; // 連打の2打目も飛ばす
         // 机が消える予告が出ていれば、飛ばした番でも机は消える
         if (s.game.vanish !== null && s.game.vanish !== undefined) {
           const vanished = this.finishTurn(s.game.turn, now, { skipped: true }).vanished;
@@ -208,7 +210,7 @@ export class RoomCore {
         if (g.order[g.turn] !== id) return err('あなたの番ではありません');
         const shot = this.shoot(msg, now);
         if (shot.error) return err(shot.error);
-        return [{ to: 'all', msg: { t: 'shot', by: shot.by, frames: shot.frames, falls: shot.falls, saved: shot.saved, crit: shot.crit, vanished: shot.vanished, state: this.snapshot(now) } }];
+        return [{ to: 'all', msg: { t: 'shot', by: shot.by, frames: shot.frames, falls: shot.falls, saved: shot.saved, crit: shot.crit, vanished: shot.vanished, skill: shot.skill, wind: shot.wind, state: this.snapshot(now) } }];
       }
       default:
         return [];
@@ -236,6 +238,8 @@ export class RoomCore {
       players: order.map(() => ({ alive: true, selfOut: false })),
       desks: deskTiles(desk).map((t) => t.i), // 残っている机
       vanish: null,                           // 次の番が終わると消える机（予告）
+      gauge: order.map(() => 0),              // 必殺技のゲージ
+      extra: false,                           // 連打の2打目が残っている
     };
     for (const mid of order) if (!(mid in s.wins)) s.wins[mid] = 0;
     for (const m of s.members) m.ready = false;
@@ -252,6 +256,11 @@ export class RoomCore {
     for (const b of g.bodies) {
       const body = Physics.createBody('p' + b.owner, b.owner, b.specKey, b.x, b.y, b.a, b.mods);
       body.state = b.state === 'desk' ? 'desk' : 'gone';
+      if (b.anchor) {
+        // 不動：重くして押されにくくする（机との摩擦も重さに比例するので、すべり方は変わらない）
+        const k = SKILL_TUNE.anchorMass;
+        body.m *= k; body.invM /= k; body.I *= k; body.invI /= k;
+      }
       world.bodies.push(body);
     }
     return world;
@@ -270,6 +279,16 @@ export class RoomCore {
     if (len < 1e-6) return { error: 'はじく向きが正しくありません' };
     dx /= len; dy /= len;
     power = Math.max(0.05, Math.min(1, power));
+    // 必殺技（定規の形で決まる。ゲージが満タンのときだけ）
+    const by = g.turn;
+    let skill = null;
+    if (input.skill) {
+      if (g.extra) return { error: '連打の2打目では必殺技は使えません' };
+      if ((g.gauge?.[by] ?? 0) < GAUGE.max) return { error: '必殺技のゲージがまだたまっていません' };
+      skill = SHAPE_SKILL[body.spec.shape] || 'power';
+      g.gauge[by] = 0;
+    }
+    if (skill === 'power') power *= SKILL_TUNE.powerMul;
     // クリティカルの抽選（当たっても、相手に当たらなければ何も起きない）
     if (this.rand() < CRIT.rate) body.crit = CRIT.mul;
     Physics.flick(world, body, lx, ly, dx, dy, power);
@@ -279,29 +298,54 @@ export class RoomCore {
     const frames = [encodeFrame(world)];
     const falls = [];
     let steps = 0;
-    while (!Physics.atRest(world) && steps < MAX_SIM_SECONDS / STEP) {
-      for (let k = 0; k < STEPS_PER_FRAME; k++) {
-        for (const b of Physics.step(world, STEP)) {
-          falls.push({ owner: b.owner, f: frames.length, x: round2(b.x), y: round2(b.y) });
+    const run = () => {
+      while (!Physics.atRest(world) && steps < MAX_SIM_SECONDS / STEP) {
+        for (let k = 0; k < STEPS_PER_FRAME; k++) {
+          for (const b of Physics.step(world, STEP)) {
+            falls.push({ owner: b.owner, f: frames.length, x: round2(b.x), y: round2(b.y) });
+          }
+          steps++;
         }
-        steps++;
+        frames.push(encodeFrame(world));
+        if (!crit && world.events?.length) {
+          const e = world.events.find((ev) => ev.type === 'crit');
+          if (e) crit = { f: frames.length - 1, x: round2(e.x), y: round2(e.y), target: e.target };
+        }
       }
-      frames.push(encodeFrame(world));
-      if (!crit && world.events?.length) {
-        const e = world.events.find((ev) => ev.type === 'crit');
-        if (e) crit = { f: frames.length - 1, x: round2(e.x), y: round2(e.y), target: e.target };
-      }
+    };
+    run();
+    // 突風：止まった場所から周りを吹き飛ばして、また止まるまで動かす
+    let wind = null;
+    if (skill === 'wind' && body.state === 'desk') {
+      const radius = body.spec.shape === 'protractor' ? SKILL_TUNE.windRadiusProtractor : SKILL_TUNE.windRadius;
+      for (let k = 0; k < 8; k++) frames.push(encodeFrame(world)); // ひと呼吸おいてから
+      const hit = Physics.blast(world, body, radius, SKILL_TUNE.windSpeed);
+      wind = { f: frames.length - 1, x: round2(body.x), y: round2(body.y), r: radius, hit };
+      run();
     }
     for (const b of world.bodies) if (b.state === 'falling') b.state = 'gone';
 
+    // ゲージ：はじいた人、当てた相手の数、動かされた人にたまる（必殺技を使った1打では、使った人にはたまらない）
+    const before = g.bodies.map((b) => ({ x: b.x, y: b.y, state: b.state }));
     g.bodies = g.bodies.map((prev, i) => {
       const b = world.bodies[i];
       return { ...prev, x: round2(b.x), y: round2(b.y), a: round4(b.a), state: b.state === 'desk' ? 'desk' : 'gone' };
     });
-    const by = g.turn;
-    g.shots++;
-    const { saved, vanished } = this.finishTurn(by, now);
-    return { by, frames, falls, saved, crit, vanished };
+    if (g.gauge) {
+      const add = (i, v) => { g.gauge[i] = Math.min(GAUGE.max, g.gauge[i] + v); };
+      let moved = 0;
+      g.bodies.forEach((b, i) => {
+        if (i === by || before[i].state !== 'desk') return;
+        if (b.state !== 'desk' || Math.hypot(b.x - before[i].x, b.y - before[i].y) > 1) { moved++; add(i, GAUGE.beHit); }
+      });
+      if (!skill) add(by, GAUGE.shot + moved * GAUGE.hit);
+    }
+    if (skill === 'anchor') g.bodies[by].anchor = true;
+    // 連打の1打目なら、同じ人がもう1回はじく（机が消えるのは2打目のあと）
+    const keepTurn = skill === 'double' && world.bodies[by].state === 'desk';
+    if (!keepTurn) { g.shots++; g.extra = false; }
+    const { saved, vanished } = this.finishTurn(by, now, { keepTurn });
+    return { by, frames, falls, saved, crit, vanished, skill, wind };
   }
 
   // はじいた後の判定。{ saved: 1周目に落ちた定規を戻したか, vanished: 消えた机 { desk, drops } }
@@ -319,7 +363,7 @@ export class RoomCore {
     }
     // 予告していた机が消える。重心がその机の上にあった定規は落ちる
     let vanished = null;
-    if (g.vanish !== null && g.vanish !== undefined && g.desks) {
+    if (!opt.keepTurn && g.vanish !== null && g.vanish !== undefined && g.desks) {
       const desk = DESKS[MODES[g.mode].desk];
       const tiles = deskTiles(desk);
       const gone = tiles[g.vanish];
@@ -390,9 +434,12 @@ export class RoomCore {
       for (const m of [...s.members]) if (!m.connected) this.removeMember(m.id);
       for (const m of s.members) m.ready = false;
       this.resetTimer(now);
+    } else if (opt.keepTurn && g.players[shooter].alive) {
+      g.extra = true; // 連打：同じ人の番のまま
     } else {
+      g.extra = false;
       // 3人以上で始めて残りが2人になったら、机を1台ずつ消していく（1つ前の番で予告）
-      if (g.n >= SHRINK_FROM_PLAYERS && g.desks && alive.length === 2 && g.desks.length > 1) {
+      if (g.n >= SHRINK_FROM_PLAYERS && g.desks && alive.length === 2 && g.desks.length > 1 && (g.vanish === null || g.vanish === undefined)) {
         g.vanish = pickVanish(DESKS[MODES[g.mode].desk], g.desks, this.rand);
       }
       this.advanceTurn();
@@ -406,6 +453,8 @@ export class RoomCore {
     let t = g.turn;
     do { t = (t + 1) % g.n; } while (!g.players[t].alive);
     g.turn = t;
+    // 不動は、使った人の次の番が来たら終わる
+    if (g.bodies[t]) g.bodies[t].anchor = false;
   }
 }
 

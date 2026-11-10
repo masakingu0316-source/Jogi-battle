@@ -239,6 +239,33 @@ export function createBoard(canvas, wrap) {
       const t = (now - f.t0) / 1600;
       if (t < 0 || t > 1) continue;
       const p = toScreen(f.x, f.y);
+      if (f.ring) {
+        // 突風：風の輪が広がる（半径は実際に届く距離）
+        const rt = Math.min(1, (now - f.t0) / 900);
+        if (rt >= 1) continue;
+        ctx.save();
+        setWorldTransform();
+        for (const [k, w] of [[1, 1], [0.72, 0.6], [0.45, 0.35]]) {
+          ctx.globalAlpha = (1 - rt) * w;
+          ctx.strokeStyle = f.color;
+          ctx.lineWidth = Math.max(0.25, 5 / view.s) * (1.4 - rt);
+          ctx.beginPath(); ctx.arc(f.x, f.y, Math.max(0.1, f.ring * k * (0.25 + 0.75 * Math.sqrt(rt))), 0, Math.PI * 2); ctx.stroke();
+        }
+        // 風の筋
+        ctx.globalAlpha = (1 - rt) * 0.8;
+        ctx.lineWidth = Math.max(0.15, 2.5 / view.s);
+        ctx.beginPath();
+        for (let k = 0; k < 16; k++) {
+          const a = (k / 16) * Math.PI * 2 + rt * 0.8;
+          const r0 = f.ring * (0.15 + 0.6 * rt), r1 = r0 + f.ring * 0.22;
+          ctx.moveTo(f.x + Math.cos(a) * r0, f.y + Math.sin(a) * r0);
+          ctx.quadraticCurveTo(f.x + Math.cos(a + 0.25) * (r0 + r1) / 2, f.y + Math.sin(a + 0.25) * (r0 + r1) / 2, f.x + Math.cos(a + 0.1) * r1, f.y + Math.sin(a + 0.1) * r1);
+        }
+        ctx.stroke();
+        ctx.restore();
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        continue;
+      }
       if (f.burst) {
         // クリティカルの光：放射状の線が広がって消える
         const bt = Math.min(1, (now - f.t0) / 520);
@@ -294,7 +321,7 @@ export function createBoard(canvas, wrap) {
     const ux = -dx / len, uy = -dy / len;
     const al = 3 + power * 14;
     const ex = a.cx + ux * al, ey = a.cy + uy * al;
-    const col = `hsl(${50 - power * 45}, 95%, 62%)`;
+    const col = a.skill ? a.skill.color : `hsl(${50 - power * 45}, 95%, 62%)`;
     ctx.strokeStyle = col; ctx.fillStyle = col;
     ctx.lineWidth = Math.max(0.3, 4 / px);
     ctx.lineCap = 'round';
@@ -311,7 +338,7 @@ export function createBoard(canvas, wrap) {
     ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
     ctx.font = '700 14px "BIZ UDPGothic", system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'bottom';
-    const txt = `力 ${Math.round(power * 100)}%`;
+    const txt = a.skill ? `${a.skill.name}　力 ${Math.round(power * 100)}%` : `力 ${Math.round(power * 100)}%`;
     const ty = Math.max(20, sp.y - 26);
     ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(30,24,20,0.85)';
     ctx.strokeText(txt, sp.x, ty);

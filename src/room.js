@@ -4,6 +4,7 @@ import { DurableObject } from 'cloudflare:workers';
 import { RoomCore } from './core.js';
 import { ensureSchema, loadoutFor, recordMatch } from './db.js';
 import { ITEMS, resolveLoadout } from '../public/shared/catalog.js';
+import { VERSION } from '../public/shared/version.js';
 
 const IDLE_LIMIT_MS = 6 * 60 * 60 * 1000; // 6時間だれも使わなかった部屋は片付ける
 const MAX_MESSAGE_BYTES = 4096;
@@ -64,6 +65,12 @@ export class Room extends DurableObject {
     const att = ws.deserializeAttachment() || {};
 
     if (msg.t === 'hello') {
+      // 画面が古い版のままなら、再読み込みを促す（席はトークンで戻れる）
+      if (msg.version !== VERSION) {
+        ws.send(JSON.stringify(msg.version
+          ? { t: 'update' }
+          : { t: 'error', text: '新しい版が公開されています。画面を再読み込みしてください（対戦中でも同じ席に戻れます）' }));
+      }
       const res = this.core.join(msg.name, msg.token, att.user || null);
       if (res.error) {
         ws.send(JSON.stringify({ t: 'error', text: res.error, fatal: true }));

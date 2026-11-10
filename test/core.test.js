@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RoomCore, cleanName, START_WAIT_MS } from '../src/core.js';
-import { DESKS, deskTiles, tilesConnected, pickVanish, CRIT } from '../public/shared/rules.js';
+import { DESKS, deskTiles, tilesConnected, pickVanish, CRIT, GAUGE } from '../public/shared/rules.js';
 import { resolveLoadout } from '../public/shared/catalog.js';
 import Physics from '../public/shared/physics.js';
 const { RULERS } = Physics;
@@ -388,4 +388,100 @@ test('クリティカルに当たっても、だれにも当たらなければ�
   const shot = r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: -0.2, dy: 1, power: 0.2 })[0].msg;
   assert.equal(shot.crit, null);
   assert.equal(CRIT.mul > 1, true);
+});
+
+// ---- 必殺技 ----
+function skillGame(myRuler, otherRuler = 'ruler:straight30-acrylic') {
+  const { r, ms } = started(2, 'standard');
+  r.s.phase = 'lobby';
+  r.setLoadout(ms[0].id, resolveLoadout({ ruler: myRuler }));
+  r.setLoadout(ms[1].id, resolveLoadout({ ruler: otherRuler }));
+  readyAll(r, ms, 5000);
+  const g = r.s.game;
+  g.shots = 10; g.turn = 0;
+  return { r, ms, g };
+}
+
+test('必殺技：ゲージがたまっていないと使えない。使うとゲージは0に戻る', () => {
+  const { r, ms, g } = skillGame('ruler:straight30-acrylic');
+  const out = r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.3, skill: true });
+  assert.equal(out[0].msg.t, 'error');
+  g.gauge[0] = 100;
+  const ok = r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.3, skill: true })[0].msg;
+  assert.equal(ok.skill, 'power');
+  assert.equal(g.gauge[0], 0);
+});
+
+test('ゲージは、はじく・当てる・当てられるでたまる', () => {
+  const { r, ms, g } = skillGame('ruler:straight30-acrylic');
+  Object.assign(g.bodies[0], { x: -6, y: 0, a: Math.PI / 2 });
+  Object.assign(g.bodies[1], { x: 2, y: 0, a: Math.PI / 2 });
+  r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.5 });
+  assert.deepEqual(g.gauge, [GAUGE.shot + GAUGE.hit, GAUGE.beHit]);
+});
+
+test('剛腕：同じ力でも、ずっと遠くまですべる', () => {
+  const dist = (skill) => {
+    const { r, ms, g } = skillGame('ruler:straight30-acrylic');
+    g.gauge[0] = 100;
+    Object.assign(g.bodies[0], { x: -40, y: -25, a: 0 });
+    Object.assign(g.bodies[1], { x: 40, y: 25, a: 0 });
+    r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.5, skill });
+    return g.bodies[0].y + 25;
+  };
+  assert.ok(dist(true) > dist(false) * 1.8);
+});
+
+test('連打：止まったあと、同じ人がもう1回はじける（2打目のあとで番が移る）', () => {
+  const { r, ms, g } = skillGame('ruler:straight15-acrylic');
+  g.gauge[0] = 100;
+  const first = r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.2, skill: true })[0].msg;
+  assert.equal(first.skill, 'double');
+  assert.equal(g.turn, 0);
+  assert.equal(first.state.game.extra, true);
+  const again = r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: -1, power: 0.2, skill: true })[0].msg;
+  assert.equal(again.t, 'error', '2打目では必殺技は使えない');
+  r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: -1, power: 0.2 });
+  assert.equal(g.turn, 1);
+  assert.equal(g.extra, false);
+});
+
+test('突風：止まった場所の近くの定規が吹き飛ぶ（遠くの定規は動かない）', () => {
+  const { r, ms, g } = skillGame('ruler:tri45-acrylic');
+  g.gauge[0] = 100;
+  Object.assign(g.bodies[0], { x: -10, y: 0, a: 0 });
+  Object.assign(g.bodies[1], { x: 0, y: 0, a: Math.PI / 2 });
+  const shot = r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05, skill: true })[0].msg;
+  assert.equal(shot.skill, 'wind');
+  assert.deepEqual(shot.wind.hit, [1]);
+  assert.ok(shot.wind.f > 0 && shot.wind.f < shot.frames.length);
+  assert.ok(g.bodies[1].state !== 'desk' || g.bodies[1].x > 15, `吹き飛んだ距離 ${g.bodies[1].x}`);
+  // 遠くの定規は動かない
+  const far = skillGame('ruler:tri45-acrylic');
+  far.g.gauge[0] = 100;
+  Object.assign(far.g.bodies[0], { x: -30, y: 0, a: 0 });
+  Object.assign(far.g.bodies[1], { x: 25, y: 0, a: Math.PI / 2 });
+  const s2 = far.r.handle(far.ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05, skill: true })[0].msg;
+  assert.deepEqual(s2.wind.hit, []);
+  assert.equal(far.g.bodies[1].x, 25);
+});
+
+test('不動：次の自分の番まで押されにくく、自分の番が来たら元に戻る', () => {
+  const pushed = (anchor) => {
+    const { r, ms, g } = skillGame('ruler:tri60-acrylic', 'ruler:straight30-metal');
+    g.gauge[0] = 100;
+    Object.assign(g.bodies[0], { x: 0, y: 0, a: Math.PI / 2 });
+    Object.assign(g.bodies[1], { x: -12, y: -25, a: Math.PI / 2 });
+    // 赤が（不動を使って／使わずに）ほとんど動かないはじきをする
+    r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05, skill: anchor });
+    assert.equal(!!g.bodies[0].anchor, anchor);
+    const x0 = g.bodies[0].x;
+    Object.assign(g.bodies[1], { x: x0 - 9, y: g.bodies[0].y, a: Math.PI / 2 });
+    r.handle(ms[1].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.7 });
+    assert.equal(g.turn, 0);
+    assert.equal(!!g.bodies[0].anchor, false, '自分の番が来たら不動は終わる');
+    return g.bodies[0].state === 'desk' ? g.bodies[0].x - x0 : Infinity;
+  };
+  const normal = pushed(false), anchored = pushed(true);
+  assert.ok(anchored < normal / 2, `ふつう ${normal.toFixed(1)}cm / 不動 ${anchored.toFixed(1)}cm`);
 });

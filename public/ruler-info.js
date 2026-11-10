@@ -1,6 +1,7 @@
 // 定規のレベル・属性の表示（ホーム・定規ケース・部屋・対戦で共用）
 import Physics from './shared/physics.js';
 import { ITEMS, MATERIAL_INFO, matInfo, levelInfo, levelBonus } from './shared/catalog.js';
+import { SKILLS, SHAPE_SKILL } from './shared/rules.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -33,6 +34,12 @@ export function specText(id, level) {
   const bonus = levelBonus(level);
   const lv = bonus ? `　レベルで 重さ・はじく力 +${(bonus * 100).toFixed(1)}%` : '';
   return `重さ${spec.mass}g・${MATERIAL_INFO[r.mat].desc}（${affinityText(r.mat)}）${lv}`;
+}
+// 必殺技（定規の形で決まる）
+export function skillText(id) {
+  const r = rulerOf(id);
+  const sk = r && SKILLS[SHAPE_SKILL[r.shape]];
+  return sk ? `必殺技「${sk.name}」：${sk.desc}` : '';
 }
 export function rulerTitle(id) {
   const r = rulerOf(id);

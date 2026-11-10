@@ -372,6 +372,23 @@ export function paintRuler(ctx, b, px, active = false, now = 0) {
   }
   ctx.restore();
 
+  // 不動：重くなっている間は、紫の太い輪郭と重りの印
+  if (b.anchor) {
+    ctx.save();
+    ctx.beginPath();
+    addPoly(ctx, outsetPolygon(g, 0.35));
+    ctx.strokeStyle = '#8a5cf0';
+    ctx.globalAlpha = (b.alpha ?? 1) * 0.9;
+    ctx.lineWidth = Math.max(0.3, 4 / P);
+    ctx.stroke();
+    ctx.beginPath();
+    addPoly(ctx, outsetPolygon(g, 0.9));
+    ctx.globalAlpha = (b.alpha ?? 1) * 0.35;
+    ctx.lineWidth = Math.max(0.15, 2 / P);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // 手番の定規はチョークの点線で囲む
   if (active) {
     ctx.globalAlpha = (b.alpha ?? 1) * (0.55 + 0.45 * Math.sin(now / 260));

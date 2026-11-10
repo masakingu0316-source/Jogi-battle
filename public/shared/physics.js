@@ -381,6 +381,31 @@ const Physics = (() => {
     b.w += b.invI * (r.x * Jy - r.y * Jx);
   }
 
+  // 突風：src の重心から半径 radius の中にある定規を外向きに吹き飛ばす。近いほど強く、軽いほど速く飛ぶ
+  function blast(world, src, radius, speed) {
+    const hit = [];
+    for (const b of world.bodies) {
+      if (b === src || b.state !== 'desk') continue;
+      // 相手の定規のいちばん近い所までの距離で決める（長い定規の端が近くにあれば届く）
+      let best = Infinity, bx = b.x, by = b.y;
+      for (const v of worldVerts(b)) {
+        const d = Math.hypot(v.x - src.x, v.y - src.y);
+        if (d < best) { best = d; bx = v.x; by = v.y; }
+      }
+      const dc = Math.hypot(b.x - src.x, b.y - src.y);
+      if (Math.min(best, dc) >= radius) continue;
+      const d = Math.min(best, dc);
+      const ux = (b.x - src.x) / (dc || 1), uy = (b.y - src.y) / (dc || 1);
+      const v = speed * Math.pow(1 - d / radius, 0.5) * Math.sqrt(26 / b.m);
+      b.vx += ux * v; b.vy += uy * v;
+      // 近い端が強く押されるので、少し回る
+      const rx = bx - b.x, ry = by - b.y;
+      b.w += (rx * uy - ry * ux) * v * b.m * b.invI * 0.15;
+      hit.push(b.owner);
+    }
+    return hit;
+  }
+
   // 形の中のいちばん近い点（はじく点を定規の上に収める）と、形からの距離
   function nearestOnShape(shapeKey, lx, ly) {
     const sh = SHAPES[shapeKey];
@@ -400,7 +425,7 @@ const Physics = (() => {
 
   return {
     G, DESK, SHAPES, MATERIALS, BEATS, AFFINITY_BONUS, RULERS, DEFAULT_PARAMS, MAX_IMPULSE, MOD_LIMIT, MOD_TOTAL_LIMIT,
-    createBody, createWorld, step, atRest, flick, collide, nearestOnShape, worldVerts,
+    createBody, createWorld, step, atRest, flick, blast, collide, nearestOnShape, worldVerts,
   };
 })();
 export default Physics;

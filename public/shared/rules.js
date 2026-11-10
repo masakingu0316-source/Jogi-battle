@@ -94,3 +94,22 @@ export function pickVanish(desk, list, rand = Math.random) {
 // ---- クリティカルヒット ----
 // はじいた瞬間に抽選。当たりなら、この対戦ではじいた定規が最初に当てた相手に伝わる力が mul 倍になる
 export const CRIT = { rate: 0.1, mul: 1.6 };
+
+// ---- 必殺技 ----
+// 定規の形で技が決まる。ゲージ（0〜100）が満タンのとき、自分の番に1回使える
+export const SKILLS = {
+  power: { name: '剛腕', desc: 'その1打のはじく力が大きく上がる（自滅もしやすい）', color: '#ff6b4a' },
+  double: { name: '連打', desc: '止まったあと、もう1回続けてはじける', color: '#4ab3ff' },
+  wind: { name: '突風', desc: '止まった場所から風を起こし、周りの定規を吹き飛ばす', color: '#5fd68a' },
+  anchor: { name: '不動', desc: '次の自分の番まで、定規が重くなって押されにくい', color: '#b48cff' },
+};
+export const SHAPE_SKILL = { straight30: 'power', straight15: 'double', tri45: 'wind', tri60: 'anchor', protractor: 'wind' };
+export const SKILL_TUNE = {
+  powerMul: 1.5,            // 剛腕：はじく強さ（速さ）の倍率。すべる距離はおよそ2.2倍
+  windRadius: 20,           // 突風が届く距離（cm）
+  windRadiusProtractor: 26, // 分度器は半円なので広い
+  windSpeed: 260,           // 突風のいちばん近くでの速さ（cm/秒、26gの定規）
+  anchorMass: 3,            // 不動：重さの倍率
+};
+// ゲージのたまり方
+export const GAUGE = { max: 100, shot: 20, hit: 10, beHit: 30 };

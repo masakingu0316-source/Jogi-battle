@@ -5,6 +5,7 @@ import {
   getConfig, saveConfig, resetConfig, clearConfigCache, findUsers, giftCoins,
 } from './db.js';
 import { defaultConfig, sanitizeConfig, configProblem } from '../public/shared/catalog.js';
+import { VERSION } from '../public/shared/version.js';
 
 const json = (obj, status = 200) => Response.json(obj, { status, headers: { 'cache-control': 'no-store' } });
 
@@ -20,9 +21,9 @@ export async function handleApi(request, env, url) {
 
   // ログインしていなくても読める：ログインが使えるかと、ゲームの設定（値段や確率の表示に使う）
   if (path === '/api/config') {
-    if (!loginEnabled(env)) return json({ login: false, game: defaultConfig() });
+    if (!loginEnabled(env)) return json({ login: false, version: VERSION, game: defaultConfig() });
     await ensureSchema(env.DB);
-    return json({ login: true, game: await getConfig(env.DB) });
+    return json({ login: true, version: VERSION, game: await getConfig(env.DB) });
   }
 
   if (!loginEnabled(env)) return json({ error: 'ログイン機能はまだ使えません' }, 503);

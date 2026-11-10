@@ -2,7 +2,7 @@
 import { ITEMS, RARITIES, ECONOMY, GACHA_POOL, odds, accText as accTextOf, defaultConfig } from './shared/catalog.js';
 import { MODES } from './shared/rules.js';
 import { previewRuler } from './ruler-paint.js';
-import { matChip, levelHtml, levelOfRuler, nextText, specText } from './ruler-info.js';
+import { matChip, levelHtml, levelOfRuler, nextText, specText, skillText } from './ruler-info.js';
 
 const ALL_RULERS = Object.values(ITEMS).filter((it) => it.kind === 'ruler');
 
@@ -163,7 +163,7 @@ export function createAccount(ctx) {
     $('edTitle').innerHTML = `${esc(r.name)} ${matChip(r.mat)}`;
     $('edLevel').innerHTML = `${levelHtml(lv)}<span class="xp-note">${nextText(lv)}</span>`;
     const base = specText(e.ruler, lv.level);
-    $('accDesc').textContent = e.acc ? `${base}　アクセサリ：${accText(e.acc)}` : base;
+    $('accDesc').textContent = (e.acc ? `${base}　アクセサリ：${accText(e.acc)}` : base) + `\n${skillText(e.ruler)}`;
   }
   for (const id of ['edPattern', 'edSticker', 'edAcc']) $(id).addEventListener('change', updatePreview);
 
