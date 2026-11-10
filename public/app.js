@@ -382,6 +382,14 @@ function onMessage(m) {
 
 function applyState(st) {
   app.state = st;
+  // 場のイベントが始まったら、盤面に大きく知らせる
+  const ev = st.game?.event;
+  const evKey = ev ? `${st.game.id}:${ev.id}` : null;
+  if (ev && st.phase === 'aim' && evKey !== app.seenEvent && app.seenGame === st.game.id) {
+    const d = DESKS[MODES[st.mode].desk];
+    app.fx.push({ x: 0, y: -d.h / 4, t0: performance.now(), text: ev.type === 'ice' ? '机が凍った！' : '椅子が並んだ！', color: ev.type === 'ice' ? '#8fd8ff' : '#f2c14e', big: true });
+  }
+  if (st.game) { app.seenEvent = evKey ?? app.seenEvent; app.seenGame = st.game.id; }
   app.startDeadline = st.startIn === null || st.startIn === undefined ? null : performance.now() + st.startIn;
   render();
 }
@@ -554,7 +562,10 @@ function renderGame() {
     const extra = g.extra ? `<span class="first">連打：もう1回はじける</span>` : '';
     if (mine) msg.innerHTML = `<b class="mine">あなたの番</b>${tTag}<span class="sub">自分の定規を押さえて、引っぱって離す</span>`;
     else msg.innerHTML = `<span class="who-turn"><b style="color:var(--seat-${cur})">${esc(curMember?.name || '?')}</b>${tTag}の番です${curMember && !curMember.connected ? '（接続が切れています）' : ''}</span>`;
-    tags = extra + first;
+    const ev = g.event;
+    const evTag = ev?.type === 'ice' ? `<span class="ev ice">こおり：この番は机がよくすべる</span>`
+      : ev?.type === 'chair' ? `<span class="ev chair">いす：${ev.left <= 1 ? 'この番まで' : `あと${ev.left}回`}、椅子の辺からは落ちない</span>` : '';
+    tags = evTag + extra + first;
     skillHtml = skillBtn;
   } else msg.textContent = '対戦終了';
   $('tags').innerHTML = tags;
@@ -781,6 +792,7 @@ function frame(now) {
     const active = !app.playing && app.state.phase === 'aim' ? g.turn : -1;
     // 残っている机と、消える予告の机（再生中は、はじく前の状態のまま見せる）
     const desks = app.playing?.deskView || { left: g.desks || null, warn: app.state.phase === 'aim' ? g.vanish ?? null : null, warnIn: g.vanishIn ?? 1 };
+    desks.event = app.state.phase === 'aim' ? g.event : null;
     board.draw({ bodies, active, aim, fx: app.fx, now, desks });
     // クリティカルの瞬間だけ、盤面を小さく揺らす
     const cv = $('board');

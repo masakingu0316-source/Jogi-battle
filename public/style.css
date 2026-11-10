@@ -226,6 +226,12 @@ input:focus { border-color: var(--pen); }
 .tags { display: flex; justify-content: center; align-items: center; gap: 6px; height: 22px; overflow: hidden; white-space: nowrap; }
 .tags > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .tags .vanish { font-size: 12px; font-weight: 700; padding: 0 9px; border-radius: 999px; border: 1.5px solid var(--warn); color: var(--warn); background: var(--card); line-height: 18px; }
+.tags .ev { font-size: 12px; font-weight: 700; padding: 0 9px; border-radius: 999px; line-height: 19px; background: var(--card); }
+.tags .ev.ice { border: 1.5px solid #4aa8d8; color: #2a7fb0; }
+.tags .ev.chair { border: 1.5px solid #d39a1c; color: #9a6c08; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .tags .ev.ice { color: #8fd8ff; } :root:not([data-theme="light"]) .tags .ev.chair { color: #f2c14e; } }
+:root[data-theme="dark"] .tags .ev.ice { color: #8fd8ff; }
+:root[data-theme="dark"] .tags .ev.chair { color: #f2c14e; }
 .tags .first { font-size: 12px; padding: 0 9px; border-radius: 999px; border: 1px dashed var(--pen); color: var(--pen); background: var(--card); line-height: 19px; }
 .msg b { font-family: var(--font-display); font-weight: 600; font-size: 21px; }
 .msg .vanish { font-size: 12px; font-weight: 700; padding: 1px 9px; border-radius: 999px; border: 1.5px solid var(--warn); color: var(--warn); background: var(--card); }

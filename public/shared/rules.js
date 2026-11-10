@@ -113,3 +113,28 @@ export const SKILL_TUNE = {
 };
 // ゲージのたまり方
 export const GAUGE = { max: 100, shot: 20, hit: 10, beHit: 30 };
+
+// ---- 場のイベント ----
+// 2周目から、番が変わるたびに rate の確率で起きる（ほかのイベントが続いている間は起きない）
+//  ice：その番のあいだ机が凍って、すべりやすくなる
+//  chair：机の1つの辺に椅子が並び、1周のあいだその辺からは落ちない
+export const EVENTS = {
+  rate: 0.2,
+  ice: { name: 'こおり', friction: 0.3, desc: 'この番は机が凍って、よくすべる' },
+  chair: { name: 'いす', desc: '椅子が並んだ辺からは落ちない' },
+};
+// 椅子を置ける辺（残っている机の外側の辺）。side: top / bottom / left / right
+export function chairSides(desk, list) {
+  const tiles = deskTiles(desk).filter((t) => !list || list.includes(t.i));
+  if (!tiles.length) return [];
+  const minX = Math.min(...tiles.map((t) => t.x0)), maxX = Math.max(...tiles.map((t) => t.x1));
+  const minY = Math.min(...tiles.map((t) => t.y0)), maxY = Math.max(...tiles.map((t) => t.y1));
+  const span = (arr, a, b) => ({ lo: Math.min(...arr.map((t) => t[a])), hi: Math.max(...arr.map((t) => t[b])) });
+  const near = (v, w) => Math.abs(v - w) < 1e-6;
+  return [
+    { side: 'top', nx: 0, ny: -1, d: -minY, ...span(tiles.filter((t) => near(t.y0, minY)), 'x0', 'x1') },
+    { side: 'bottom', nx: 0, ny: 1, d: maxY, ...span(tiles.filter((t) => near(t.y1, maxY)), 'x0', 'x1') },
+    { side: 'left', nx: -1, ny: 0, d: -minX, ...span(tiles.filter((t) => near(t.x0, minX)), 'y0', 'y1') },
+    { side: 'right', nx: 1, ny: 0, d: maxX, ...span(tiles.filter((t) => near(t.x1, maxX)), 'y0', 'y1') },
+  ];
+}

@@ -1,7 +1,7 @@
 // 部屋の中身（メンバー・モード・対戦の進行）を扱う純粋なロジック。
 // Cloudflare の機能には依存しないので、Node でもそのままテストできる。
 import Physics from './physics.js';
-import { DESKS, MODES, PLAYERS, TEAMS, teamOf, seats, playableReason, deskTiles, onTile, pickVanish, SHRINK_FROM_PLAYERS, CRIT, SKILLS, SHAPE_SKILL, SKILL_TUNE, GAUGE } from './rules.js';
+import { DESKS, MODES, PLAYERS, TEAMS, teamOf, seats, playableReason, deskTiles, onTile, pickVanish, SHRINK_FROM_PLAYERS, CRIT, SKILLS, SHAPE_SKILL, SKILL_TUNE, GAUGE, EVENTS, chairSides } from './rules.js';
 import { resolveLoadout, DEFAULT_RULER } from './catalog.js';
 
 const FPS = 30;
@@ -142,7 +142,7 @@ export class RoomCore {
       game: s.game && {
         n: s.game.n, order: s.game.order, turn: s.game.turn, shots: s.game.shots, id: s.game.id,
         desks: s.game.desks || null, vanish: s.game.vanish ?? null, vanishIn: s.game.vanishIn ?? null,
-        gauge: s.game.gauge || null, extra: !!s.game.extra,
+        gauge: s.game.gauge || null, extra: !!s.game.extra, event: s.game.event || null, eventId: s.game.eventId || 0,
         bodies: s.game.bodies, players: s.game.players, result: s.game.result,
       },
     };
@@ -195,13 +195,9 @@ export class RoomCore {
         const cur = this.member(s.game.order[s.game.turn]);
         if (cur && cur.connected) return err('接続している人の番は飛ばせません');
         s.game.extra = false; // 連打の2打目も飛ばす
-        // 机が消える予告が出ていれば、飛ばした番でも机は消える
-        if (s.game.vanish !== null && s.game.vanish !== undefined) {
-          const vanished = this.finishTurn(s.game.turn, now, { skipped: true }).vanished;
-          return [{ to: 'all', msg: { t: 'state', state: this.snapshot(now), vanished } }];
-        }
-        this.advanceTurn();
-        return state();
+        // 飛ばした番も1回と数える（机が消える予告・場のイベントが進む）
+        const vanished = this.finishTurn(s.game.turn, now, { skipped: true }).vanished;
+        return [{ to: 'all', msg: { t: 'state', state: this.snapshot(now), vanished } }];
       }
       case 'flick': {
         if (s.phase !== 'aim') return err('今ははじけません');
@@ -240,6 +236,8 @@ export class RoomCore {
       vanishIn: null,                         // あと何回の番が終わると消えるか（1周＝残っている人数）
       gauge: order.map(() => 0),              // 必殺技のゲージ
       extra: false,                           // 連打の2打目が残っている
+      event: null,                            // 場のイベント { type: 'ice' | 'chair', left（あと何回の番）, side ... }
+      eventId: 0,
     };
     for (const mid of order) if (!(mid in s.wins)) s.wins[mid] = 0;
     for (const m of s.members) m.ready = false;
@@ -252,7 +250,11 @@ export class RoomCore {
     const desk = DESKS[MODES[g.mode].desk];
     const all = deskTiles(desk);
     const left = g.desks || all.map((t) => t.i);
-    const world = Physics.createWorld({}, { w: desk.w, h: desk.h, tiles: left.length < all.length ? all.filter((t) => left.includes(t.i)) : null });
+    const ev = g.event;
+    const world = Physics.createWorld(
+      { friction: ev?.type === 'ice' ? EVENTS.ice.friction : 1 },
+      { w: desk.w, h: desk.h, tiles: left.length < all.length ? all.filter((t) => left.includes(t.i)) : null, walls: ev?.type === 'chair' ? [ev.wall] : null },
+    );
     for (const b of g.bodies) {
       const body = Physics.createBody('p' + b.owner, b.owner, b.specKey, b.x, b.y, b.a, b.mods);
       body.state = b.state === 'desk' ? 'desk' : 'gone';
@@ -443,6 +445,10 @@ export class RoomCore {
       g.extra = true; // 連打：同じ人の番のまま
     } else {
       g.extra = false;
+      // 場のイベント：続いているものを1回ぶん進め、なければ2周目から確率で起こす（終わった直後の番は起こさない）
+      const had = !!g.event;
+      if (g.event && --g.event.left <= 0) g.event = null;
+      if (!had && g.shots >= g.n && this.rand() < EVENTS.rate) this.startEvent(alive.length);
       // 3人以上で始めて残りが2人になったら、1周ごとに机を1台ずつ消していく（その周のはじめに予告）
       if (g.n >= SHRINK_FROM_PLAYERS && g.desks && alive.length === 2 && g.desks.length > 1 && (g.vanish === null || g.vanish === undefined)) {
         g.vanish = pickVanish(DESKS[MODES[g.mode].desk], g.desks, this.rand);
@@ -451,6 +457,18 @@ export class RoomCore {
       this.advanceTurn();
     }
     return { saved, vanished };
+  }
+
+  startEvent(aliveCount) {
+    const g = this.s.game;
+    g.eventId = (g.eventId || 0) + 1;
+    if (this.rand() < 0.5) {
+      g.event = { type: 'ice', left: 1, id: g.eventId };
+    } else {
+      const sides = chairSides(DESKS[MODES[g.mode].desk], g.desks);
+      const w = sides[Math.floor(this.rand() * sides.length) % sides.length];
+      g.event = { type: 'chair', left: aliveCount, id: g.eventId, side: w.side, wall: { nx: w.nx, ny: w.ny, d: w.d, lo: w.lo, hi: w.hi } };
+    }
   }
 
   // 時計回りで、まだ残っている次の人へ

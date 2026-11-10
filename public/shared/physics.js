@@ -329,6 +329,28 @@ const Physics = (() => {
     src.crit = 0;
   }
 
+  // 椅子：机の辺に沿った壁。wall = { nx, ny（外向き）, d（辺の位置 n·p）, lo, hi（辺に沿った範囲） }
+  // 定規の角が辺の外に出ようとしたら押し戻し、少しだけ跳ね返す
+  const WALL_E = 0.25;
+  function hitWall(b, wl) {
+    let best = null, pen = 0;
+    for (const v of worldVerts(b)) {
+      const t = wl.nx !== 0 ? v.y : v.x;
+      if (t < wl.lo - 1 || t > wl.hi + 1) continue;
+      const p = v.x * wl.nx + v.y * wl.ny - wl.d;
+      if (p > pen) { pen = p; best = v; }
+    }
+    if (!best) return;
+    b.x -= wl.nx * pen; b.y -= wl.ny * pen;
+    const rx = best.x - wl.nx * pen - b.x, ry = best.y - wl.ny * pen - b.y;
+    const vn = (b.vx - b.w * ry) * wl.nx + (b.vy + b.w * rx) * wl.ny;
+    if (vn <= 0) return;
+    const rn = rx * wl.ny - ry * wl.nx;
+    const J = -(1 + WALL_E) * vn / (b.invM + b.invI * rn * rn);
+    b.vx += J * wl.nx * b.invM; b.vy += J * wl.ny * b.invM;
+    b.w += b.invI * (rx * J * wl.ny - ry * J * wl.nx);
+  }
+
   // 1ステップ進める。新しく落ちた定規の配列を返す。
   function step(world, dt) {
     const P = world.params;
@@ -347,6 +369,7 @@ const Physics = (() => {
     for (const b of world.bodies) {
       if (b.state === 'gone') continue;
       b.x += b.vx * dt; b.y += b.vy * dt; b.a += b.w * dt;
+      if (b.state === 'desk' && world.desk.walls) for (const wl of world.desk.walls) hitWall(b, wl);
       if (b.state === 'falling') {
         b.vx *= 0.995; b.vy *= 0.995; b.w *= 0.995;
         if (world.time - b.fallAt > 0.7) b.state = 'gone';

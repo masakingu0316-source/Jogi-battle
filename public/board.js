@@ -185,6 +185,10 @@ export function createBoard(canvas, wrap, opt = {}) {
       ctx.restore();
     }
 
+    // 場のイベント：こおり（机が凍る）・いす（辺に椅子が並ぶ）
+    if (desks.event?.type === 'ice') drawIce(shown.map((x) => x.pn), now);
+    if (desks.event?.type === 'chair') drawChairs(desks.event.wall, now);
+
     // 予告の机に「消える」の札（画面の向きに合わせて文字は立てる）
     if (desks.warn !== null && desks.warn !== undefined && panels[desks.warn]) {
       // 定規と重なりにくいよう、画面で見たときの机の上の辺に寄せる
@@ -308,6 +312,83 @@ export function createBoard(canvas, wrap, opt = {}) {
   }
 
   function drawRuler(b, px, active, now) { paintRuler(ctx, b, px, active, now); }
+
+  // こおり：天板に薄い氷の膜と、光の筋・霜の粒
+  function drawIce(list, now) {
+    for (const pn of list) {
+      ctx.save();
+      roundRect(pn.x, pn.y, pn.w, pn.h, 1.4);
+      ctx.clip();
+      ctx.fillStyle = 'rgba(165, 218, 252, 0.62)';
+      ctx.fillRect(pn.x, pn.y, pn.w, pn.h);
+      // ゆっくり流れる光の筋
+      const shift = ((now / 60) % 40);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.55)';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      for (let d = -pn.h - 40 + shift; d < pn.w; d += 40) {
+        ctx.moveTo(pn.x + d, pn.y + pn.h); ctx.lineTo(pn.x + d + pn.h * 0.6, pn.y);
+        ctx.moveTo(pn.x + d + 4, pn.y + pn.h); ctx.lineTo(pn.x + d + 4 + pn.h * 0.6, pn.y);
+      }
+      ctx.stroke();
+      // 霜の粒（毎回同じ場所）
+      let seed = Math.abs(Math.round(pn.x * 7 + pn.y * 13)) + 99;
+      const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+      for (let k = 0; k < 60; k++) {
+        ctx.beginPath(); ctx.arc(pn.x + rnd() * pn.w, pn.y + rnd() * pn.h, 0.15 + rnd() * 0.25, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+      roundRect(pn.x + 0.35, pn.y + 0.35, pn.w - 0.7, pn.h - 0.7, 1.1);
+      ctx.strokeStyle = 'rgba(120, 190, 235, 0.9)';
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+    }
+  }
+
+  // いす：辺の外側に学校の椅子を並べる（背もたれが机の辺に接する）。外向きを +x として描く
+  function drawChairs(wl, now) {
+    if (!wl) return;
+    const len = wl.hi - wl.lo;
+    const n = Math.max(1, Math.round(len / 42));
+    const cw = (len / n) * 0.86;
+    ctx.save();
+    // 落ちない辺を、黄色の太い線で示す
+    const ang = Math.atan2(wl.ny, wl.nx);
+    const base = (c) => (wl.nx !== 0 ? { x: wl.nx * wl.d, y: c } : { x: c, y: wl.ny * wl.d });
+    const a0 = base(wl.lo), a1 = base(wl.hi);
+    ctx.strokeStyle = `rgba(240, 190, 40, ${0.65 + 0.25 * Math.sin(now / 300)})`;
+    ctx.lineWidth = 1.1;
+    ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(a0.x, a0.y); ctx.lineTo(a1.x, a1.y); ctx.stroke();
+    for (let k = 0; k < n; k++) {
+      const c = wl.lo + (len / n) * (k + 0.5);
+      const p = base(c);
+      ctx.save();
+      ctx.translate(p.x, p.y);
+      ctx.rotate(ang);
+      // 座面（床の上、外側）
+      ctx.fillStyle = 'rgba(30, 30, 40, 0.18)';
+      ctx.fillRect(1.6, -cw / 2 + 1.2, 34, cw);
+      ctx.fillStyle = '#d8b27c';
+      roundRect(4.2, -cw / 2 + 1.5, 30, cw - 3, 2.5);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(120, 80, 40, 0.5)'; ctx.lineWidth = 0.4; ctx.stroke();
+      // 鉄のパイプ
+      ctx.strokeStyle = '#8b96a5'; ctx.lineWidth = 1.1;
+      ctx.beginPath();
+      ctx.moveTo(1.2, -cw / 2 + 1); ctx.lineTo(35, -cw / 2 + 1);
+      ctx.moveTo(1.2, cw / 2 - 1); ctx.lineTo(35, cw / 2 - 1);
+      ctx.stroke();
+      // 背もたれ（机の辺のすぐ外）
+      ctx.fillStyle = '#b9824a';
+      roundRect(0.4, -cw / 2, 3.0, cw, 1.2);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(90, 55, 25, 0.7)'; ctx.lineWidth = 0.4; ctx.stroke();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
 
   // aim: { cx, cy（はじく点）, px, py（指の位置） }
   function drawAim(a, px) {

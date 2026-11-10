@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RoomCore, cleanName, START_WAIT_MS } from '../public/shared/core.js';
-import { DESKS, deskTiles, tilesConnected, pickVanish, CRIT, GAUGE } from '../public/shared/rules.js';
+import { DESKS, deskTiles, tilesConnected, pickVanish, CRIT, GAUGE, chairSides } from '../public/shared/rules.js';
 import { resolveLoadout } from '../public/shared/catalog.js';
 import Physics from '../public/shared/physics.js';
 const { RULERS } = Physics;
@@ -501,17 +501,80 @@ test('コンピュータ：どの強さでも、はじき方を決めて実際�
     for (const k of ['lx', 'ly', 'dx', 'dy', 'power']) assert.ok(Number.isFinite(shot[k]), `${lv} ${k}`);
     assert.equal(r.handle(ms[0].id, { t: 'flick', ...shot })[0].msg.t, 'shot');
   }
-  // つよい（赤）とやさしい（青）を、先手を入れ替えながら4回
+  // つよい（赤）とやさしい（青）を、先手を入れ替えながら6回（乱数は固定）
+  let seed = 12345;
+  const rand = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
   let strong = 0;
-  for (let n = 0; n < 4; n++) {
+  for (let n = 0; n < 6; n++) {
     const { r } = started(2, 'standard');
     r.s.game.turn = n % 2;
     for (let k = 0; k < 60 && r.s.phase === 'aim'; k++) {
       const g = r.s.game;
-      const shot = await planShot(r, g.turn === 0 ? 'hard' : 'easy');
+      const shot = await planShot(r, g.turn === 0 ? 'hard' : 'easy', rand);
       r.handle(g.order[g.turn], { t: 'flick', ...shot });
     }
     if (r.s.game.result?.winners.includes(0)) strong++;
   }
-  assert.ok(strong >= 3, `つよいの勝ち ${strong}/4`);
+  assert.ok(strong >= 4, `つよいの勝ち ${strong}/6`);
+});
+
+// ---- 場のイベント ----
+test('場のイベント：2周目から確率で起き、こおりは1回、いすは1周で終わる', () => {
+  const { r, ms } = started(2, 'standard');
+  const g = r.s.game;
+  r.rand = () => 0; // かならず起きる・こおりを選ぶ
+  r.handle(g.order[g.turn], { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
+  assert.equal(g.event, null, '1周目は起きない');
+  r.handle(g.order[g.turn], { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
+  assert.equal(g.event?.type, 'ice');
+  assert.equal(r.snapshot().game.event.type, 'ice');
+  r.rand = () => 0.99;
+  r.handle(g.order[g.turn], { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
+  assert.equal(g.event, null, 'こおりは1回で終わる');
+  // いす
+  r.rand = () => 0.7; // 起きる確率(0.2)より大きいので起きない
+  r.handle(g.order[g.turn], { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
+  assert.equal(g.event, null);
+  r.rand = () => 0.6;
+  r.startEvent(2);
+  assert.equal(g.event.type, 'chair');
+  assert.equal(g.event.left, 2);
+  r.rand = () => 0.99;
+  r.handle(g.order[g.turn], { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
+  assert.equal(g.event?.type, 'chair');
+  r.handle(g.order[g.turn], { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
+  assert.equal(g.event, null, 'いすは1周で終わる');
+  void ms;
+});
+
+test('こおり：同じはじき方でも、ずっと遠くまですべる', () => {
+  const slide = (ice) => {
+    const { r, ms, g } = skillGame('ruler:straight30-metal');
+    if (ice) g.event = { type: 'ice', left: 1, id: 1 };
+    Object.assign(g.bodies[0], { x: -40, y: -25, a: 0 });
+    Object.assign(g.bodies[1], { x: 40, y: 25, a: 0 });
+    r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.3 });
+    return g.bodies[0].state === 'desk' ? g.bodies[0].y + 25 : Infinity;
+  };
+  const normal = slide(false), ice = slide(true);
+  assert.ok(ice > normal * 2.5, `ふつう ${normal.toFixed(1)}cm / こおり ${ice}cm`);
+});
+
+test('いす：椅子のある辺からは落ちない（ほかの辺からは落ちる）', () => {
+  const out = (side) => {
+    const { r, ms, g } = skillGame('ruler:straight30-acrylic');
+    if (side) {
+      const w = chairSides(DESKS.pair, g.desks).find((x) => x.side === side);
+      g.event = { type: 'chair', left: 2, id: 1, side, wall: { nx: w.nx, ny: w.ny, d: w.d, lo: w.lo, hi: w.hi } };
+    }
+    Object.assign(g.bodies[0], { x: 30, y: 0, a: Math.PI / 2 });
+    Object.assign(g.bodies[1], { x: -30, y: 20, a: 0 });
+    r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 1 });
+    return { state: g.bodies[0].state, x: g.bodies[0].x };
+  };
+  assert.notEqual(out(null).state, 'desk', '椅子がなければ右から落ちる');
+  const kept = out('right');
+  assert.equal(kept.state, 'desk', '右に椅子があれば落ちない');
+  assert.ok(kept.x < 45);
+  assert.notEqual(out('left').state, 'desk', '椅子が反対側なら落ちる');
 });
