@@ -1,12 +1,14 @@
 // 部屋の中身（メンバー・モード・対戦の進行）を扱う純粋なロジック。
 // Cloudflare の機能には依存しないので、Node でもそのままテストできる。
 import Physics from './physics.js';
-import { DESKS, MODES, PLAYERS, TEAMS, teamOf, seats, playableReason, deskTiles, onTile, pickVanish, SHRINK_FROM_PLAYERS, CRIT, SKILLS, skillFor, SKILL_TUNE, GAUGE, EVENTS, chairSides, FIELD_ITEM } from './rules.js';
+import { DESKS, MODES, PLAYERS, TEAMS, teamOf, seats, playableReason, deskTiles, onTile, pickVanish, SHRINK_FROM_PLAYERS, CRIT, SKILLS, skillFor, SKILL_TUNE, GAUGE, EVENTS, EVENT_KINDS, chairSides, FIELD_ITEM, healAmount } from './rules.js';
 import { resolveLoadout, DEFAULT_RULER } from './catalog.js';
 
 export const FPS = 30;
 export const STEP = 1 / 600;
 export const MAX_SIM_SECONDS = 12;
+// 画面に印を出す物理の出来事（一角・ゴム跳び・百八十度・不動の跳ね返し・虹の道に乗った・クリスタルが割れた）
+export const MARK_TYPES = ['tip', 'bounce', 'curve', 'repel', 'ride', 'freeze'];
 const NAME_MAX = 10;
 
 function randomHex(bytes) {
@@ -147,7 +149,8 @@ export class RoomCore {
         desks: s.game.desks || null, vanish: s.game.vanish ?? null, vanishIn: s.game.vanishIn ?? null, vanishWait: s.game.vanishWait ?? null,
         gauge: s.game.gauge || null, extra: !!s.game.extra, event: s.game.event || null, eventId: s.game.eventId || 0,
         walls: s.game.walls || [], icy: s.game.icy || 0, icyNext: !!s.game.icyNext, fx: s.game.fx || [], items: s.game.items || [],
-        bodies: s.game.bodies, players: s.game.players, result: s.game.result,
+        crystals: s.game.crystals || [], rainbow: s.game.rainbow || null,
+        bodies: s.game.bodies, players: s.game.players, result: s.game.result, mode: s.game.mode,
       },
     };
   }
@@ -212,8 +215,14 @@ export class RoomCore {
         if ((g.gauge?.[g.turn] ?? 0) < GAUGE.max) return err('必殺技のゲージがまだたまっていません');
         const k = this.skillOf(g.turn);
         if (SKILLS[k].mode !== 'now') return err(`「${SKILLS[k].name}」は、構えてからはじくと使える必殺技です`);
+        let at = null;
+        if (SKILLS[k].place) {
+          at = { x: Number(msg.x), y: Number(msg.y) };
+          const bad = this.crystalSpotProblem(at.x, at.y);
+          if (bad) return err(bad);
+        }
         g.gauge[g.turn] = 0;
-        this.useNow(g.turn, k);
+        this.useNow(g.turn, k, at);
         return state();
       }
       case 'flick': {
@@ -283,6 +292,7 @@ export class RoomCore {
       // 不動：重くして押されにくくする（机との摩擦も重さに比例するので、すべり方は変わらない）
       const k = SKILL_TUNE.anchorMass;
       body.m *= k; body.invM /= k; body.I *= k; body.invI /= k;
+      body.repel = SKILL_TUNE.anchorRepel; // 当ててきた定規を大きく跳ね返す
     }
     if (b.dmgMul) body.dmgMul = b.dmgMul;
     // 特性：鋭い縁（当てたときのダメージ）・ふんばり（すべりにくさ）・重心（当てられたときの飛び方）
@@ -315,20 +325,28 @@ export class RoomCore {
     const all = deskTiles(desk);
     const left = g.desks || all.map((t) => t.i);
     const ev = g.event;
-    const icy = ev?.type === 'ice' || g.icy > 0; // 場のイベント「こおり」か、必殺技「吹雪」
+    const icy = ev?.type === 'ice' || g.icy > 0; // 場のイベント「こおり」か、吹雪のクリスタルで凍った机
     const walls = [...(ev?.type === 'chair' ? [ev.wall] : []), ...(g.walls || []).map((w) => w.wall)]; // 「いす」と「いす召喚」
+    // ヒーリング：すべりにくい
+    const friction = (icy ? EVENTS.ice.friction : 1) * (ev?.type === 'heal' ? EVENTS.heal.friction : 1);
     const world = Physics.createWorld(
-      { friction: icy ? EVENTS.ice.friction : 1 },
+      { friction },
       { w: desk.w, h: desk.h, tiles: left.length < all.length ? all.filter((t) => left.includes(t.i)) : null, walls: walls.length ? walls : null },
     );
     for (const b of g.bodies) world.bodies.push(this.makeBody(b));
     world.items = (g.items || []).map((it) => ({ ...it, taken: false }));
+    // 吹雪のクリスタル（触れると机が凍る）
+    world.crystals = (g.crystals || []).map((c) => ({ ...c, taken: false }));
+    world.freezeTo = EVENTS.ice.friction * (ev?.type === 'heal' ? EVENTS.heal.friction : 1);
+    // 強風：風の向きと強さ
+    if (ev?.type === 'gale') world.wind = { x: Math.cos(ev.ang) * EVENTS.gale.accel, y: Math.sin(ev.ang) * EVENTS.gale.accel };
+    // 虹の道：作った次の番だけ効く
+    if (g.rainbow && !g.rainbow.wait) world.road = { pts: g.rainbow.pts, w: SKILL_TUNE.roadW, speed: SKILL_TUNE.roadSpeed, owner: g.rainbow.owner };
     return world;
   }
 
-  shoot(input, now = Date.now()) {
-    const dt = STEP;
-    const perFrame = Math.round(1 / FPS / dt);
+  // はじく前の準備（盤面を物理の世界にして、必殺技の効果をのせる）。shoot と traceShot で同じものを使う
+  prepShot(input) {
     const g = this.s.game;
     const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : NaN);
     let lx = num(input.lx), ly = num(input.ly), dx = num(input.dx), dy = num(input.dy), power = num(input.power);
@@ -356,7 +374,6 @@ export class RoomCore {
       if ((g.gauge?.[by] ?? 0) < GAUGE.max) return { error: '必殺技のゲージがまだたまっていません' };
       skill = this.skillOf(by);
       if (SKILLS[skill].mode !== 'shot') return { error: `「${SKILLS[skill].name}」は、ボタンを押した時点で使う必殺技です` };
-      g.gauge[by] = 0;
     }
     const tune = { ...SKILL_TUNE, ...(g.bodies[by].st || {}) };
     if (skill === 'power') power *= SKILL_TUNE.powerMul;
@@ -376,7 +393,46 @@ export class RoomCore {
     if (skill === 'fullopen') body.dmgMul = (body.dmgMul ?? 1) * SKILL_TUNE.fullopenDmg;
     // クリティカルの抽選（当たっても、相手に当たらなければ何も起きない）
     if (this.rand() < CRIT.rate) body.crit = CRIT.mul;
-    const marks = []; // 技の印（一角・ゴム跳び・百八十度）
+    return { world, body, by, skill, lx, ly, dx, dy, power };
+  }
+
+  // 百八十度の照準：いまの盤面で、はじいた定規が通る道を、本当の動きと同じ計算で出す。
+  // ほかの定規に当たる・落ちる・止まるところまで。{ pts, curveAt, hitAt, fell }（はじけないときは null）
+  traceShot(input) {
+    const p = this.prepShot({ ...input });
+    if (p.error) return null;
+    const { world, body } = p;
+    body.crit = 0;
+    const perFrame = Math.round(1 / FPS / STEP);
+    Physics.flick(world, body, p.lx, p.ly, p.dx, p.dy, p.power);
+    const pts = [{ x: round2(body.x), y: round2(body.y) }];
+    let curveAt = null, hitAt = null, steps = 0;
+    const touching = () => [...(world.touching || [])].some((k) => k.split('|').includes(body.id));
+    while (!Physics.atRest(world) && steps < MAX_SIM_SECONDS / STEP) {
+      for (let k = 0; k < perFrame; k++) {
+        Physics.step(world, STEP);
+        steps++;
+        if (touching()) { hitAt = { x: round2(body.x), y: round2(body.y) }; break; }
+        if (body.state !== 'desk') break;
+      }
+      pts.push({ x: round2(body.x), y: round2(body.y) });
+      const e = world.events?.find((ev) => ev.type === 'curve' && ev.owner === body.owner);
+      if (e && !curveAt) curveAt = { x: round2(e.x), y: round2(e.y) };
+      if (hitAt || body.state !== 'desk') break;
+    }
+    return { pts, curveAt, hitAt, fell: body.state !== 'desk' };
+  }
+
+  shoot(input, now = Date.now()) {
+    const dt = STEP;
+    const perFrame = Math.round(1 / FPS / dt);
+    const g = this.s.game;
+    const p = this.prepShot(input);
+    if (p.error) return p;
+    const { world, by, skill, lx, ly, dx, dy, power } = p;
+    const body = p.body;
+    if (skill) g.gauge[by] = 0;
+    const marks = []; // 技の印（一角・ゴム跳び・百八十度・不動の跳ね返し・虹の道・クリスタル）
     Physics.flick(world, body, lx, ly, dx, dy, power);
     let crit = null;
 
@@ -410,7 +466,7 @@ export class RoomCore {
           if (e) crit = { f: frames.length - 1, x: round2(e.x), y: round2(e.y), target: e.target };
         }
         for (const e of world.events || []) {
-          if (['tip', 'bounce', 'curve'].includes(e.type) && !e.marked) { e.marked = true; marks.push({ kind: e.type, f: frames.length - 1, x: round2(e.x), y: round2(e.y) }); }
+          if (MARK_TYPES.includes(e.type) && !e.marked) { e.marked = true; marks.push({ kind: e.type, f: frames.length - 1, x: round2(e.x), y: round2(e.y), owner: e.owner }); }
         }
       }
     };
@@ -428,8 +484,10 @@ export class RoomCore {
       run();
     }
     for (const b of world.bodies) if (b.state === 'falling') b.state = 'gone';
-    // 拾われた回復アイテムは消える
-    if (g.items?.length) g.items = g.items.filter((it) => !world.items.find((w) => w.id === it.id)?.taken);
+    // 拾われた回復アイテム・割れたクリスタルは消える（クリスタルが割れたら、次の人の番も机が凍る）
+    this.takeFieldThings(world);
+    // 虹の道：はじいた定規が通った跡を残す（次の相手の番だけ効く）
+    if (skill === 'niji') this.makeRainbow(by, frames);
 
     // ゲージ：はじいた人、当てた相手の数、動かされた人にたまる（必殺技を使った1打では、使った人にはたまらない）
     const before = g.bodies.map((b) => ({ x: b.x, y: b.y, state: b.state }));
@@ -467,6 +525,42 @@ export class RoomCore {
     if (!keepTurn) { g.shots++; g.extra = false; }
     const { saved, vanished } = this.finishTurn(by, now, { keepTurn });
     return { by, frames, falls, saved, crit, vanished, skill, blast, wind: blast?.kind === 'wind' ? blast : null, hits, marks, pickups };
+  }
+
+  // 物理の世界で拾われた回復アイテム・割れたクリスタルを、盤面から消す
+  takeFieldThings(world) {
+    const g = this.s.game;
+    if (g.items?.length) g.items = g.items.filter((it) => !world.items?.find((w) => w.id === it.id)?.taken);
+    if (g.crystals?.length && world.crystals?.some((c) => c.taken)) {
+      g.crystals = g.crystals.filter((c) => !world.crystals.find((w) => w.id === c.id)?.taken);
+      g.icyNext = true;
+    }
+  }
+
+  // 虹の道：frames（1/30秒ごとの位置）から、はじいた定規 by の重心が通った道を作る
+  makeRainbow(by, frames) {
+    const g = this.s.game;
+    const pts = [];
+    for (const f of frames) {
+      const x = f[by * 4] / 100, y = f[by * 4 + 1] / 100, st = f[by * 4 + 3];
+      if (st === 2) break;
+      const last = pts.at(-1);
+      if (!last || Math.hypot(x - last.x, y - last.y) >= 1.2) pts.push({ x: round2(x), y: round2(y) });
+      if (st === 1) break; // 落ちはじめた所まで（その先へ乗った定規も机の外へ出ていく）
+    }
+    if (pts.length < 2) return;
+    g.rainbowId = (g.rainbowId || 0) + 1;
+    g.rainbow = { id: g.rainbowId, owner: by, pts: pts.slice(0, 120), wait: true };
+  }
+
+  // 番が終わるたびに進めるもの（身代わり・虹の道は「次の相手の番」だけ効く）
+  tickTurn() {
+    const g = this.s.game;
+    for (const b of g.bodies) {
+      if (b.sub) b.sub = false;                         // 相手の番が終わった：身代わりは消える
+      if (b.subWait) { b.subWait = false; b.sub = true; } // 使った番が終わった：次の相手の番から効く
+    }
+    if (g.rainbow) { if (g.rainbow.wait) g.rainbow.wait = false; else g.rainbow = null; }
   }
 
   // はじいた後の判定。{ saved: 1周目に落ちた定規を戻したか, vanished: 消えた机 { desk, drops } }
@@ -513,7 +607,7 @@ export class RoomCore {
       if (b.state !== 'desk' || !g.players[i].alive || (b.hp ?? 1) > 0 || this.zeroSurvives(i)) return;
       b.state = 'gone'; b.ko = true;
     });
-    // 身代わり：落ちた（倒れた）定規が1回だけ机の真ん中に戻る（体力は半分。倒れたときは最大の半分）
+    // 身代わり：使った次の相手の番のあいだに落ちた（倒れた）定規が、机の真ん中に戻る（体力は半分。倒れたときは最大の半分）
     g.bodies.forEach((b, i) => {
       if (!b.sub || b.state === 'desk' || !g.players[i].alive) return;
       b.state = 'desk'; b.sub = false;
@@ -591,6 +685,7 @@ export class RoomCore {
       // 場のイベント：続いているものを1回ぶん進め、なければ2周目から確率で起こす（終わった直後の番は起こさない）
       const had = !!g.event;
       if (g.event && --g.event.left <= 0) g.event = null;
+      this.tickTurn();
       // いす召喚・吹雪の残りを進める
       if (g.walls?.length) g.walls = g.walls.map((w) => ({ ...w, left: w.left - 1 })).filter((w) => w.left > 0);
       if (g.icy > 0) g.icy--;
@@ -639,15 +734,17 @@ export class RoomCore {
     return { x: round2(best.x), y: round2(best.y) };
   }
 
-  useNow(i, k) {
+  // その場で使う必殺技。at：吹雪のクリスタルを置く場所 { x, y }
+  useNow(i, k, at) {
     const g = this.s.game, b = g.bodies[i];
     const alive = g.players.filter((p) => p.alive).length;
     if (k === 'heal') {
       const before = b.hp ?? 100;
-      b.hp = Math.min(b.maxHp || Physics.HP.max, before + SKILL_TUNE.heal);
+      const max = b.maxHp || Physics.HP.max;
+      b.hp = Math.min(max, Math.round((before + healAmount(max, SKILL_TUNE.heal)) * 10) / 10);
       this.pushFx({ kind: 'heal', owner: i, x: b.x, y: b.y, amount: Math.round(b.hp - before) });
     } else if (k === 'sub') {
-      b.sub = true;
+      b.subWait = true; // 次の相手の番だけ効く（この番の残りでは効かない）
       this.pushFx({ kind: 'sub', owner: i, x: b.x, y: b.y });
     } else if (k === 'counter') {
       b.counter = true;
@@ -662,20 +759,51 @@ export class RoomCore {
       g.walls = [...(g.walls || []), { left: alive, side: w.side, wall: { nx: w.nx, ny: w.ny, d: w.d, lo: w.lo, hi: w.hi } }];
       this.pushFx({ kind: 'chair', owner: i, x: b.x, y: b.y, side: w.side });
     } else if (k === 'blizzard') {
-      g.icyNext = true;
-      this.pushFx({ kind: 'blizzard', owner: i, x: b.x, y: b.y });
+      // 氷のクリスタルを置く（1人1つまで。置き直すと前のものは消える）
+      g.crystalId = (g.crystalId || 0) + 1;
+      const c = { id: g.crystalId, owner: i, x: round2(at.x), y: round2(at.y), r: SKILL_TUNE.crystalR };
+      g.crystals = [...(g.crystals || []).filter((o) => o.owner !== i), c];
+      this.pushFx({ kind: 'blizzard', owner: i, x: c.x, y: c.y, crystal: c.id });
     }
   }
 
-  startEvent(aliveCount) {
+  // 吹雪のクリスタルを置ける場所か（残っている机の上で、定規と重ならない）。だめなら理由
+  crystalSpotProblem(x, y) {
+    const g = this.s.game;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return 'クリスタルを置く場所を、机の上でタップしてください';
+    const r = SKILL_TUNE.crystalR;
+    const tiles = deskTiles(this.deskDef()).filter((t) => !g.desks || g.desks.includes(t.i));
+    if (!tiles.some((t) => x >= t.x0 + r && x <= t.x1 - r && y >= t.y0 + r && y <= t.y1 - r)) return 'クリスタルは机の上（端から少し内側）に置いてください';
+    if (g.bodies.some((b) => b.state === 'desk' && Physics.distToBody(this.makeBody(b), x, y) < r + 0.3)) return '定規と重ならない所に置いてください';
+    return null;
+  }
+
+  startEvent(aliveCount, type) {
     const g = this.s.game;
     g.eventId = (g.eventId || 0) + 1;
-    if (this.rand() < 0.5) {
+    const kind = type || EVENT_KINDS[Math.floor(this.rand() * EVENT_KINDS.length) % EVENT_KINDS.length];
+    if (kind === 'ice') {
       g.event = { type: 'ice', left: 1, id: g.eventId };
-    } else {
+    } else if (kind === 'chair') {
       const sides = chairSides(this.deskDef(), g.desks);
       const w = sides[Math.floor(this.rand() * sides.length) % sides.length];
       g.event = { type: 'chair', left: aliveCount, id: g.eventId, side: w.side, wall: { nx: w.nx, ny: w.ny, d: w.d, lo: w.lo, hi: w.hi } };
+    } else if (kind === 'heal') {
+      // ヒーリング：机の上の全員の体力を回復（この番は机がすべりにくい）
+      g.event = { type: 'heal', left: 1, id: g.eventId };
+      const healed = [];
+      g.bodies.forEach((b, i) => {
+        if (b.state !== 'desk' || !g.players[i].alive) return;
+        const max = b.maxHp || Physics.HP.max;
+        const before = b.hp ?? max;
+        b.hp = Math.min(max, Math.round((before + healAmount(max, EVENTS.heal.pct)) * 10) / 10);
+        if (b.hp > before) healed.push({ owner: i, x: b.x, y: b.y, amount: Math.round(b.hp - before) });
+      });
+      this.pushFx({ kind: 'healing', healed });
+      this.markWeak();
+    } else {
+      // 強風：この番だけ、決まった向きに風が吹く
+      g.event = { type: 'gale', left: 1, id: g.eventId, ang: round4(this.rand() * Math.PI * 2) };
     }
   }
 

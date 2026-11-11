@@ -1,6 +1,6 @@
 // 盤面（机・定規・狙いの矢印・落下の文字）を canvas に描く
 import { paintRuler } from './ruler-paint.js';
-import { DESKS, PLAYERS } from './shared/rules.js';
+import { DESKS, PLAYERS, SKILL_TUNE } from './shared/rules.js';
 import Physics from './shared/physics.js';
 
 const MARGIN = 9; // 机のまわりに見せる床（cm）
@@ -186,9 +186,12 @@ export function createBoard(canvas, wrap, opt = {}) {
       ctx.restore();
     }
 
-    // 場のイベント：こおり（机が凍る）・いす（辺に椅子が並ぶ）
+    // 場のイベント：こおり（机が凍る）・いす（辺に椅子が並ぶ）・ヒーリング・強風
     if (desks.event?.type === 'ice' || desks.icy) drawIce(shown.map((x) => x.pn), now);
     if (desks.event?.type === 'chair') drawChairs(desks.event.wall, now);
+    if (desks.event?.type === 'heal') drawHealing(shown.map((x) => x.pn), now);
+    // 虹の道（作った次の番だけ効く。作ったばかりのものは薄く）
+    if (desks.rainbow?.pts?.length > 1) drawRainbow(desks.rainbow, now);
     for (const w of desks.walls || []) drawChairs(w, now);
 
     // 予告の机に「消える」の札（画面の向きに合わせて文字は立てる）
@@ -225,12 +228,15 @@ export function createBoard(canvas, wrap, opt = {}) {
     ctx.stroke();
     ctx.globalAlpha = 1;
 
-    // 回復アイテム（ばんそうこう）は、定規の下に置く
+    // 回復アイテム（ばんそうこう）・吹雪のクリスタルは、定規の下に置く
     if (desks.items?.length) drawItems(desks.items, now);
+    if (desks.crystals?.length) drawCrystals(desks.crystals, now);
     for (const b of bodies) {
       if (b.alpha <= 0) continue;
       drawRuler(b, px, b.owner === active && !aim, now);
     }
+    // 強風：盤面の上を流れる風の筋
+    if (desks.event?.type === 'gale') drawGale(desks.event.ang, dw, dh, now);
     if (aim) drawAim(aim, px);
 
     // 画面座標で描く文字
@@ -539,6 +545,144 @@ export function createBoard(canvas, wrap, opt = {}) {
     }
   }
 
+  // ヒーリング：机がうっすら緑に光り、光の粒がのぼる
+  function drawHealing(list, now) {
+    for (const pn of list) {
+      ctx.save();
+      roundRect(pn.x, pn.y, pn.w, pn.h, 1.4);
+      ctx.clip();
+      const pulse = 0.5 + 0.5 * Math.sin(now / 500);
+      ctx.fillStyle = `rgba(126, 227, 160, ${0.18 + 0.08 * pulse})`;
+      ctx.fillRect(pn.x, pn.y, pn.w, pn.h);
+      let seed = Math.abs(Math.round(pn.x * 11 + pn.y * 5)) + 7;
+      const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+      for (let k = 0; k < 26; k++) {
+        const x = pn.x + rnd() * pn.w, sp = 2 + rnd() * 3, ph = rnd();
+        const t = ((now / 1000) * sp / pn.h + ph) % 1;
+        const y = pn.y + pn.h * (1 - t);
+        ctx.globalAlpha = Math.sin(t * Math.PI) * 0.9;
+        ctx.fillStyle = k % 3 ? '#c9ffd9' : '#ffffff';
+        const r = 0.25 + (k % 4) * 0.08;
+        // 小さな十字の光
+        ctx.fillRect(x - r * 2, y - r / 2, r * 4, r);
+        ctx.fillRect(x - r / 2, y - r * 2, r, r * 4);
+      }
+      ctx.restore();
+      roundRect(pn.x + 0.35, pn.y + 0.35, pn.w - 0.7, pn.h - 0.7, 1.1);
+      ctx.strokeStyle = 'rgba(80, 200, 130, 0.85)';
+      ctx.lineWidth = 0.6;
+      ctx.stroke();
+    }
+  }
+
+  // 強風：風の向きに流れる白い筋（机の外まで）
+  function drawGale(ang, dw, dh, now) {
+    const ux = Math.cos(ang), uy = Math.sin(ang);
+    const span = Math.hypot(dw, dh) / 2 + 10;
+    ctx.save();
+    ctx.lineCap = 'round';
+    let seed = 4242;
+    const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    for (let k = 0; k < 34; k++) {
+      const side = (rnd() - 0.5) * 2 * span, sp = 28 + rnd() * 26, len = 5 + rnd() * 9, ph = rnd();
+      const t = (((now / 1000) * sp) / (span * 2) + ph) % 1;
+      const along = -span + t * span * 2;
+      const x = ux * along - uy * side, y = uy * along + ux * side;
+      const wob = Math.sin(now / 260 + k) * 0.6;
+      ctx.globalAlpha = Math.sin(t * Math.PI) * 0.55;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 0.22 + (k % 3) * 0.08;
+      ctx.beginPath();
+      ctx.moveTo(x - ux * len, y - uy * len);
+      ctx.quadraticCurveTo(x - ux * len / 2 - uy * wob, y - uy * len / 2 + ux * wob, x, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // 吹雪のクリスタル：青白く光る氷の結晶
+  function drawCrystals(list, now) {
+    for (const c of list) {
+      const born = c.born ? Math.min(1, Math.max(0, (now - c.born) / 450)) : 1;
+      if (born <= 0) continue;
+      const pulse = 0.5 + 0.5 * Math.sin(now / 380 + c.id);
+      ctx.save();
+      ctx.translate(c.x, c.y);
+      ctx.globalAlpha = born;
+      const R = c.r * (1.5 + 0.25 * pulse);
+      const gr = ctx.createRadialGradient(0, 0, c.r * 0.2, 0, 0, R);
+      gr.addColorStop(0, 'rgba(190, 235, 255, 0.75)'); gr.addColorStop(1, 'rgba(190, 235, 255, 0)');
+      ctx.fillStyle = gr;
+      ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill();
+      // 雪の結晶の線
+      ctx.rotate(now / 3000);
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+      ctx.lineWidth = 0.12;
+      for (let k = 0; k < 6; k++) {
+        ctx.rotate(Math.PI / 3);
+        ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(c.r * 1.25, 0);
+        ctx.moveTo(c.r * 0.8, 0); ctx.lineTo(c.r * 1.0, 0.3); ctx.moveTo(c.r * 0.8, 0); ctx.lineTo(c.r * 1.0, -0.3);
+        ctx.stroke();
+      }
+      ctx.rotate(-now / 3000);
+      // 結晶（縦長の六角柱を2本、斜めに）
+      ctx.scale(born, born);
+      for (const [a, s] of [[-0.25, 1], [0.55, 0.72]]) {
+        ctx.save();
+        ctx.rotate(a);
+        const h = c.r * 0.95 * s, w = c.r * 0.38 * s;
+        ctx.beginPath();
+        ctx.moveTo(0, -h); ctx.lineTo(w, -h * 0.55); ctx.lineTo(w, h * 0.55); ctx.lineTo(0, h); ctx.lineTo(-w, h * 0.55); ctx.lineTo(-w, -h * 0.55); ctx.closePath();
+        const cg = ctx.createLinearGradient(-w, -h, w, h);
+        cg.addColorStop(0, '#f2fbff'); cg.addColorStop(0.45, '#8fd8ff'); cg.addColorStop(1, '#3f8fd0');
+        ctx.fillStyle = cg; ctx.fill();
+        ctx.strokeStyle = '#2d6fa8'; ctx.lineWidth = 0.08; ctx.stroke();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.7)';
+        ctx.beginPath(); ctx.moveTo(-w * 0.3, -h * 0.5); ctx.lineTo(0, -h * 0.85); ctx.lineTo(0, h * 0.2); ctx.lineTo(-w * 0.3, h * 0.35); ctx.closePath(); ctx.fill();
+        ctx.restore();
+      }
+      ctx.restore();
+    }
+  }
+
+  // 虹の道：通った跡に6色の帯（効いている番は濃く、作ったばかりは薄く）
+  function drawRainbow(road, now) {
+    const pts = road.pts;
+    const cols = ['#ff6b6b', '#ffb84d', '#ffe66d', '#7bd389', '#5ab8ff', '#a78bfa'];
+    const W = SKILL_TUNE.roadW * 2;
+    const live = !road.wait;
+    ctx.save();
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.globalAlpha = live ? 0.75 : 0.35;
+    // 白いふち
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.lineWidth = W + 0.5;
+    ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+    for (const q of pts.slice(1)) ctx.lineTo(q.x, q.y);
+    ctx.stroke();
+    // 色の帯（外側から内側へ細くして重ねる）
+    cols.forEach((c, k) => {
+      ctx.strokeStyle = c;
+      ctx.lineWidth = W * (1 - k / cols.length);
+      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+      for (const q of pts.slice(1)) ctx.lineTo(q.x, q.y);
+      ctx.stroke();
+    });
+    // 進む向きに流れる光
+    if (live) {
+      ctx.globalAlpha = 0.9;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 0.3;
+      ctx.setLineDash([0.6, 3.4]);
+      ctx.lineDashOffset = -now / 40;
+      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+      for (const q of pts.slice(1)) ctx.lineTo(q.x, q.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    ctx.restore();
+  }
+
   // いす：辺の外側に学校の椅子を並べる（背もたれが机の辺に接する）。外向きを +x として描く
   function drawChairs(wl, now) {
     if (!wl) return;
@@ -610,8 +754,43 @@ export function createBoard(canvas, wrap, opt = {}) {
     ctx.lineTo(ex - ux * hw * 1.5 - uy * hw, ey - uy * hw * 1.5 + ux * hw);
     ctx.lineTo(ex - ux * hw * 1.5 + uy * hw, ey - uy * hw * 1.5 - ux * hw);
     ctx.closePath(); ctx.fill();
-    // 百八十度：矢印の先から、曲がったあとの向きを点線で
-    if (a.curve !== undefined) {
+    // 百八十度：本当の動きと同じ計算で出した通り道（曲がる所・当たる所まで）
+    if (a.trace?.pts?.length > 1) {
+      const tp = a.trace.pts;
+      ctx.save();
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = 'rgba(30, 24, 20, 0.55)';
+      ctx.lineWidth = Math.max(0.35, 5 / px);
+      ctx.beginPath(); ctx.moveTo(tp[0].x, tp[0].y);
+      for (const q of tp.slice(1)) ctx.lineTo(q.x, q.y);
+      ctx.stroke();
+      ctx.strokeStyle = col;
+      ctx.lineWidth = Math.max(0.22, 3 / px);
+      ctx.setLineDash([0.9, 0.5]);
+      ctx.beginPath(); ctx.moveTo(tp[0].x, tp[0].y);
+      for (const q of tp.slice(1)) ctx.lineTo(q.x, q.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      const dot = (p, r, fill, stroke) => {
+        ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+        ctx.fillStyle = fill; ctx.fill();
+        if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = Math.max(0.12, 1.5 / px); ctx.stroke(); }
+      };
+      if (a.trace.curveAt) dot(a.trace.curveAt, Math.max(0.5, 5 / px), '#fff', col);
+      const end = a.trace.hitAt || tp.at(-1);
+      if (a.trace.hitAt) {
+        // 当たる所：ばつ印
+        const r = Math.max(0.7, 7 / px);
+        ctx.strokeStyle = '#ff4f4f'; ctx.lineWidth = Math.max(0.25, 3 / px); ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(end.x - r, end.y - r); ctx.lineTo(end.x + r, end.y + r); ctx.moveTo(end.x + r, end.y - r); ctx.lineTo(end.x - r, end.y + r); ctx.stroke();
+      } else if (a.trace.fell) {
+        dot(end, Math.max(0.6, 6 / px), '#ff4f4f', '#fff');
+      } else {
+        dot(end, Math.max(0.6, 6 / px), col, '#fff');
+      }
+      ctx.restore();
+    } else if (a.curve !== undefined) {
+      // 百八十度（通り道が出せないとき）：矢印の先から、曲がったあとの向きを点線で
       const c = Math.cos(a.curve), s = Math.sin(a.curve);
       const vx = ux * c - uy * s, vy = ux * s + uy * c;
       ctx.setLineDash([0.9, 0.6]);
@@ -650,5 +829,7 @@ export function createBoard(canvas, wrap, opt = {}) {
 
   window.addEventListener('resize', layout);
   layout();
-  return { setDesk, layout, draw, toWorld, get scale() { return view.s; } };
+  // 盤面の向き (x, y) が、画面ではどちら向きに見えるか
+  const screenDir = (x, y) => (view.rot ? { x: -y, y: x } : { x, y });
+  return { setDesk, layout, draw, toWorld, screenDir, get scale() { return view.s; } };
 }

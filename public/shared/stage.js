@@ -26,8 +26,8 @@ export const ENEMIES = {
   },
   tape: {
     name: '修正テープ', spec: 'en-tape', hp: 45, color: '#2fb3a5',
-    act: 'heal', range: 24, amount: 10,
-    desc: '番が来るたびに、近くの敵の体力を直す',
+    act: 'heal', range: 24, amount: 20,
+    desc: '番が来るたびに、近くの敵の体力を最大の20%ずつ直す',
   },
   compass: {
     name: 'コンパス', spec: 'en-compass', hp: 70, color: '#7a8696', pinned: true,
@@ -66,10 +66,10 @@ export const aiOf = (map) => ({
   skillRate: Math.min(1, 0.35 + 0.07 * map),
 });
 
-// 盤面と盤面の間の回復
+// 盤面と盤面の間の回復（体力の最大に対する％）
 export const BOARD_HEAL = 20;
-// ライフ：1マップに3つ。落ちても（体力0で倒れても）2回までは盤面に戻れる
-// 戻ったとき、体力は RESPAWN_HP（100）になる（それより多く残っていれば、そのまま）
+// ライフ：1マップに3つ。落ちても2回までは盤面に戻れる
+// 戻ったとき、体力は最大の RESPAWN_HP ％ になる（それより多く残っていれば、そのまま）
 export const LIVES = 3;
 export const RESPAWN_HP = 100;
 

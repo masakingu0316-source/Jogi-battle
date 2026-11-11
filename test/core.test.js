@@ -568,8 +568,7 @@ test('場のイベント：2周目から確率で起き、こおりは1回、い
   r.rand = () => 0.7; // 起きる確率(0.2)より大きいので起きない
   r.handle(g.order[g.turn], { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
   assert.equal(g.event, null);
-  r.rand = () => 0.6;
-  r.startEvent(2);
+  r.startEvent(2, 'chair');
   assert.equal(g.event.type, 'chair');
   assert.equal(g.event.left, 2);
   r.rand = () => 0.99;
@@ -756,12 +755,14 @@ test('ワープ：机の真ん中近くの空いた場所へ移る', () => {
   assert.ok(Math.hypot(b.g.bodies[0].x, b.g.bodies[0].y) > 8);
 });
 
-test('身代わり：1回だけ、落ちても机の真ん中に戻る（体力は半分）', () => {
+test('身代わり：次の相手の番のあいだだけ、落ちても机の真ん中に戻る（体力は半分）', () => {
   const { r, ms, g } = skillGame('ruler:protractor-metal');
   full(g);
   r.handle(ms[0].id, { t: 'skill' });
-  assert.equal(g.bodies[0].sub, true);
+  assert.equal(g.bodies[0].subWait, true);
+  assert.ok(!g.bodies[0].sub, '使った番の残りでは、まだ効かない');
   r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
+  assert.equal(g.bodies[0].sub, true, '次の相手の番から効く');
   // 青に押し出される
   g.bodies[0].hp = 80;
   Object.assign(g.bodies[0], { x: 38, y: 0, a: Math.PI / 2 });
@@ -772,6 +773,27 @@ test('身代わり：1回だけ、落ちても机の真ん中に戻る（体力�
   assert.ok(g.bodies[0].hp <= 40 && g.bodies[0].hp > 20, `体力 ${g.bodies[0].hp}（押されたダメージのあと半分）`);
   assert.equal(r.s.phase, 'aim');
   assert.ok(g.fx.some((f) => f.kind === 'subUsed'));
+});
+
+test('身代わり：使った番の自分の打ちでは効かず、次の相手の番が終わると消える', () => {
+  // 使った番に自分で落ちたら、そのまま負け
+  const a = skillGame('ruler:protractor-metal');
+  full(a.g);
+  a.r.handle(a.ms[0].id, { t: 'skill' });
+  Object.assign(a.g.bodies[0], { x: 38, y: 0, a: Math.PI / 2 });
+  a.r.handle(a.ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 1 });
+  assert.equal(a.g.players[0].alive, false);
+  assert.deepEqual(a.g.result.winners, [1]);
+  // 相手の番で落ちなければ、そこで消える（次の自分の番には効かない）
+  const { r, ms, g } = skillGame('ruler:protractor-metal');
+  full(g);
+  r.handle(ms[0].id, { t: 'skill' });
+  r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
+  r.handle(ms[1].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
+  assert.ok(!g.bodies[0].sub && !g.bodies[0].subWait);
+  Object.assign(g.bodies[0], { x: 38, y: 0, a: Math.PI / 2 });
+  r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 1 });
+  assert.equal(g.players[0].alive, false);
 });
 
 test('反撃：構えている間に当てられると、当てた側も同じだけ減る（次の自分の番で終わる）', () => {
@@ -789,7 +811,7 @@ test('反撃：構えている間に当てられると、当てた側も同じ�
   assert.equal(g.bodies[1].counter, false, '自分の番が来たら終わる');
 });
 
-test('いす召喚：近い辺に椅子が並んで落ちない。吹雪：次の人の番は机が凍る', () => {
+test('いす召喚：近い辺に椅子が並んで落ちない', () => {
   const { r, ms, g } = skillGame('ruler:tri60-metal');
   full(g);
   Object.assign(g.bodies[0], { x: 30, y: 0, a: Math.PI / 2 });
@@ -799,15 +821,47 @@ test('いす召喚：近い辺に椅子が並んで落ちない。吹雪：次�
   r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 1 });
   assert.equal(g.bodies[0].state, 'desk', '右の椅子で止まる');
   assert.equal(g.walls.length, 1);
-  const b = skillGame('ruler:tri60-rubber');
-  full(b.g);
-  b.r.handle(b.ms[0].id, { t: 'skill' });
-  assert.equal(b.g.icyNext, true);
-  b.r.handle(b.ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
-  assert.equal(b.g.icy, 1);
-  assert.equal(b.r.buildWorld().params.friction, 0.3);
-  b.r.handle(b.ms[1].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
-  assert.equal(b.g.icy, 0);
+});
+
+test('吹雪：机の好きな所にクリスタルを置き、触れると机が凍る（その動きの残りと、次の人の番）', () => {
+  const { r, ms, g } = skillGame('ruler:tri60-rubber');
+  full(g);
+  Object.assign(g.bodies[0], { x: -30, y: -20, a: 0 });
+  Object.assign(g.bodies[1], { x: 20, y: 0, a: Math.PI / 2 });
+  // 場所を決めないと置けない・定規と重なる所・机の外には置けない
+  assert.equal(r.handle(ms[0].id, { t: 'skill' })[0].msg.t, 'error');
+  assert.equal(r.handle(ms[0].id, { t: 'skill', x: 20, y: 0 })[0].msg.t, 'error');
+  assert.equal(r.handle(ms[0].id, { t: 'skill', x: 60, y: 0 })[0].msg.t, 'error');
+  assert.equal(g.gauge[0], 100, '置けなかったらゲージは減らない');
+  r.handle(ms[0].id, { t: 'skill', x: 4, y: 0 });
+  assert.equal(g.gauge[0], 0);
+  assert.equal(g.crystals.length, 1);
+  assert.equal(r.snapshot().game.crystals[0].x, 4);
+  assert.ok(g.fx.some((f) => f.kind === 'blizzard' && f.crystal));
+  r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
+  assert.equal(g.crystals.length, 1, 'だれも触れなければ残る');
+  assert.ok(!g.icy);
+  // 青がクリスタルに触れる → 割れて凍る
+  const m = r.handle(ms[1].id, { t: 'flick', lx: 0, ly: 0, dx: -1, dy: 0, power: 0.5 })[0].msg;
+  assert.ok(m.marks.some((k) => k.kind === 'freeze'));
+  assert.equal(g.crystals.length, 0);
+  assert.equal(g.icy, 1, '次の人（赤）の番は凍っている');
+  assert.equal(r.buildWorld().params.friction, 0.3);
+  r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
+  assert.equal(g.icy, 0);
+});
+
+test('吹雪：クリスタルに触れたら、その動きの残りもよくすべる', () => {
+  const slide = (crystal) => {
+    const { r, ms, g } = skillGame('ruler:straight30-metal');
+    Object.assign(g.bodies[0], { x: -40, y: -25, a: 0 });
+    Object.assign(g.bodies[1], { x: 40, y: 25, a: 0 });
+    if (crystal) g.crystals = [{ id: 1, owner: 1, x: -40, y: -21, r: 2.6 }];
+    r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.3 });
+    return g.bodies[0].state === 'desk' ? g.bodies[0].y + 25 : Infinity;
+  };
+  const normal = slide(false), ice = slide(true);
+  assert.ok(ice > normal * 1.8, `ふつう ${normal.toFixed(1)}cm / クリスタル ${ice}cm`);
 });
 
 test('設定画面で変えた定規の性能が、対戦に使われる', () => {

@@ -445,6 +445,24 @@ const Physics = (() => {
     (world.events ||= []).push({ type: 'tip', time: world.time, owner: src.owner, target: target.owner, x: hit.x, y: hit.y });
     return { by: src, dmg: t.dmg };
   }
+  // 不動：src（構えている定規）に当たった相手だけを、ぶつかった力の src.repel 倍ぶん余計に押し返す
+  function applyRepel(world, c, src) {
+    const { A, B, nx, ny } = c;
+    const target = src === A ? B : A, sign = src === A ? 1 : -1;
+    if (target.pinned) return;
+    let px = 0, py = 0, sum = 0;
+    for (const p of c.points) {
+      const P = p.Pn * src.repel * sign;
+      const rx = target === B ? p.rBx : p.rAx, ry = target === B ? p.rBy : p.rAy;
+      target.vx += P * nx * target.cM; target.vy += P * ny * target.cM;
+      target.w += target.cI * (rx * P * ny - ry * P * nx) * 0.5;
+      px += target.x + rx; py += target.y + ry; sum += p.Pn;
+    }
+    if (sum <= 0) return;
+    const k = c.points.length || 1;
+    (world.events ||= []).push({ type: 'repel', time: world.time, owner: src.owner, target: target.owner, x: px / k, y: py / k });
+  }
+
   // 形のいちばん鋭い角（重心から見た位置）と、形のいちばん長い所
   function sharpestCorner(shapeKey) {
     const sh = SHAPES[shapeKey];
@@ -483,10 +501,64 @@ const Physics = (() => {
     b.w += b.invI * (rx * J * wl.ny - ry * J * wl.nx);
   }
 
+  // ---- 虹の道 ----
+  // road = { pts: [{x,y}…], w（半分の幅）, speed（乗ったときの速さの下限）, owner（道を作った定規。乗らない） }
+  // 点から道（折れ線）までのいちばん近い所。lo〜hi の区間だけを調べる
+  function nearestOnRoad(pts, x, y, lo = 0, hi = pts.length - 2) {
+    let best = null;
+    for (let i = Math.max(0, lo); i <= Math.min(pts.length - 2, hi); i++) {
+      const a = pts[i], q = pts[i + 1];
+      const ex = q.x - a.x, ey = q.y - a.y, L2 = ex * ex + ey * ey || 1e-9;
+      const t = Math.max(0, Math.min(1, ((x - a.x) * ex + (y - a.y) * ey) / L2));
+      const px = a.x + ex * t, py = a.y + ey * t;
+      const d = Math.hypot(x - px, y - py);
+      if (!best || d < best.d) { const L = Math.sqrt(L2); best = { d, i, t, px, py, tx: ex / L, ty: ey / L }; }
+    }
+    return best;
+  }
+  // 道に乗った定規：道の向きに速さを向け直し、道の上へ寄せる（机との摩擦は効かない）。道の端まで来たら降りる
+  function rideRoad(world, b, dt) {
+    const road = world.road;
+    const pts = road.pts;
+    if (!b.ride) {
+      if (b.rode || b.owner === road.owner || b.pinned) return;
+      const sp = Math.hypot(b.vx, b.vy);
+      if (sp < 3) return;
+      const n = nearestOnRoad(pts, b.x, b.y);
+      if (!n || n.d > road.w) return;
+      b.ride = { dir: b.vx * n.tx + b.vy * n.ty >= 0 ? 1 : -1, i: n.i };
+      (world.events ||= []).push({ type: 'ride', time: world.time, owner: b.owner, x: n.px, y: n.py });
+    }
+    const n = nearestOnRoad(pts, b.x, b.y, b.ride.i - 2, b.ride.i + 2);
+    b.ride.i = n.i;
+    const last = pts.length - 2;
+    const atEnd = b.ride.dir > 0 ? n.i === last && n.t >= 0.999 : n.i === 0 && n.t <= 0.001;
+    if (atEnd || n.d > road.w * 3) { b.ride = null; b.rode = true; return; }
+    const sp = Math.max(road.speed, Math.hypot(b.vx, b.vy));
+    // 道の向き＋道の上へ戻る分
+    const k = Math.min(1, 10 * dt) / dt;
+    b.vx = n.tx * b.ride.dir * sp + (n.px - b.x) * k;
+    b.vy = n.ty * b.ride.dir * sp + (n.py - b.y) * k;
+    b.w *= 0.85;
+  }
+
+  const WIND_CAP = 0.75;
   // 1ステップ進める。新しく落ちた定規の配列を返す。
   function step(world, dt) {
     const P = world.params;
     const live = world.bodies.filter((b) => b.state === 'desk');
+    // 虹の道：乗った定規は道に沿って進む
+    if (world.road?.pts?.length > 1) for (const b of live) rideRoad(world, b, dt);
+    // 強風：動いている定規だけ、風の向きに流される（止まっている定規は動かさない）。
+    // 風の強さは、その定規が机から受ける摩擦の WIND_CAP 倍までにする（風だけで動き続けないように）
+    if (world.wind) {
+      const wa = Math.hypot(world.wind.x, world.wind.y) || 1;
+      for (const b of live) {
+        if (b.pinned || b.ride || Math.hypot(b.vx, b.vy) < 0.5) continue;
+        const k = Math.min(1, (WIND_CAP * b.mu * P.friction * (b.grip ?? 1) * G) / wa);
+        b.vx += world.wind.x * k * dt; b.vy += world.wind.y * k * dt;
+      }
+    }
     for (const b of live) {
       // 百八十度：決めた時間がたったら、速さを保ったまま向きを変える
       if (b.curve && !b.curve.done && world.time >= b.curve.at) {
@@ -500,6 +572,7 @@ const Physics = (() => {
     // スティックのり：のりの周りでは、ほかの定規が止まりやすい
     const zones = live.filter((z) => z.zone);
     for (const b of live) {
+      if (b.ride) continue; // 虹の道に乗っている間は、すべって減速しない
       let k = P.friction;
       for (const z of zones) if (z !== b && Math.hypot(b.x - z.x, b.y - z.y) < z.zone.r) k *= z.zone.mul;
       applyDeskFriction(b, dt, k);
@@ -525,6 +598,9 @@ const Physics = (() => {
       if (world.touching?.has(key)) continue;
       if (world.time - (last.get(key) ?? -1) < 0.25) continue;
       last.set(key, world.time);
+      // 不動：構えている定規に当たった定規を、大きく跳ね返す
+      const rp = c.A.repel && !c.B.repel ? c.A : c.B.repel && !c.A.repel ? c.B : null;
+      if (rp) applyRepel(world, c, rp);
       const speed = -(c.vn0 ?? 0);
       // 画びょう：ぶつかった相手もトゲでダメージを受ける（ゆっくり触れただけでも）
       if (speed > 3) {
@@ -578,8 +654,22 @@ const Physics = (() => {
           if (distToBody(b, it.x, it.y) > it.r) continue;
           it.taken = true;
           const before = b.hp;
-          setHp(b, b.hp + it.heal);
+          setHp(b, b.hp + (b.maxHp || HP.max) * it.heal / 100); // heal は体力の最大に対する％
           (world.events ||= []).push({ type: 'pickup', time: world.time, item: it.id, owner: b.owner, amount: Math.round((b.hp - before) * 10) / 10, x: it.x, y: it.y, big: !!it.big });
+          break;
+        }
+      }
+    }
+    // 吹雪のクリスタル：机の上の定規が触れたら割れて、机が凍る（この動きの残りもすべりやすくなる）
+    if (world.crystals?.length) {
+      for (const cr of world.crystals) {
+        if (cr.taken) continue;
+        for (const b of world.bodies) {
+          if (b.state !== 'desk' || Math.hypot(b.x - cr.x, b.y - cr.y) > b.shape.radius + cr.r) continue;
+          if (distToBody(b, cr.x, cr.y) > cr.r) continue;
+          cr.taken = true;
+          if (!world.frozen) { world.frozen = true; P.friction = Math.min(P.friction, world.freezeTo ?? 0.3); }
+          (world.events ||= []).push({ type: 'freeze', time: world.time, crystal: cr.id, owner: b.owner, x: cr.x, y: cr.y });
           break;
         }
       }
@@ -671,7 +761,7 @@ const Physics = (() => {
   return {
     G, DESK, SHAPES, MATERIALS, BEATS, AFFINITY_BONUS, RULERS, DEFAULT_PARAMS, MAX_IMPULSE, MOD_LIMIT, MOD_TOTAL_LIMIT,
     createBody, createWorld, step, atRest, flick, blast, collide, nearestOnShape, worldVerts, HP, setHp, damage,
-    formIndex, shapeOf, ENEMY_SPECS, sharpestCorner, onDesk, distToBody,
+    formIndex, shapeOf, ENEMY_SPECS, sharpestCorner, onDesk, distToBody, nearestOnRoad,
   };
 })();
 export default Physics;

@@ -43,9 +43,10 @@ export function createPractice({ mode, cpus, level, name, loadout, loadoutFor, o
     try {
       const id = g.order[g.turn];
       // その場で使う必殺技なら、先に使ってから考える
-      if (decideNow(core, lv)) {
+      const now = decideNow(core, lv);
+      if (now) {
         while (!closed && busy()) await new Promise((r) => setTimeout(r, 120));
-        out(core.handle(id, { t: 'skill' }));
+        out(core.handle(id, { t: 'skill', ...(typeof now === 'object' ? now : {}) }));
         await new Promise((r) => setTimeout(r, 900));
       }
       const shot = await planShot(core, lv);

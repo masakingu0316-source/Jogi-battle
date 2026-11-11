@@ -106,24 +106,24 @@ export const SKILLS = {
   power: { name: '剛腕', mode: 'shot', color: '#ff6b4a', desc: 'その1打のはじく力が大きく上がる（自滅もしやすい）' },
   double: { name: '連打', mode: 'shot', color: '#4ab3ff', desc: '止まったあと、もう1回続けてはじける' },
   wind: { name: '突風', mode: 'shot', color: '#5fd68a', desc: '止まった場所から風を起こし、周りの定規を吹き飛ばす' },
-  anchor: { name: '不動', mode: 'shot', color: '#b48cff', desc: 'はじいたあと、次の自分の番まで重くなって押されにくい' },
+  anchor: { name: '不動', mode: 'shot', color: '#b48cff', desc: 'はじいたあと、次の自分の番まで重くなって押されにくく、当ててきた定規を大きく跳ね返す' },
   heavy: { name: '渾身', mode: 'shot', color: '#ff4f7b', desc: 'この1打で当てた相手へのダメージが2.5倍' },
   ink: { name: 'インク漏れ', mode: 'shot', color: '#6c5ce7', desc: 'この1打で当てた相手は3周のあいだ、自分の番が来るたびに体力が5減る' },
   bomb: { name: '爆発', mode: 'shot', color: '#ff9f1a', desc: '止まった場所で爆発し、近くの定規に大きなダメージ（吹き飛ばしは弱め）' },
   magnet: { name: '磁石', mode: 'shot', color: '#e84393', desc: '止まった場所へ、周りの定規を引き寄せる' },
-  heal: { name: '保健室', mode: 'now', color: '#2ecc71', desc: 'その場で体力を35回復する（そのあとふつうにはじける）' },
-  sub: { name: '身代わり', mode: 'now', color: '#7a8ba8', desc: 'この対戦で1回だけ、落ちても机の真ん中に戻ってくる（体力は半分になる）' },
+  heal: { name: '保健室', mode: 'now', color: '#2ecc71', desc: 'その場で体力を最大の35%回復する（そのあとふつうにはじける）' },
+  sub: { name: '身代わり', mode: 'now', color: '#7a8ba8', desc: '次の相手の番のあいだだけ、落ちても机の真ん中に戻ってくる（体力は半分になる）' },
   counter: { name: '反撃', mode: 'now', color: '#fd9644', desc: '次の自分の番までに当てられたら、受けたダメージと同じだけ相手にも返す' },
   warp: { name: 'ワープ', mode: 'now', color: '#00cec9', desc: 'その場で自分の定規を机の真ん中へ移す（そのあとふつうにはじける）' },
   chair: { name: 'いす召喚', mode: 'now', color: '#d39a1c', desc: '自分にいちばん近い辺に椅子を並べ、1周のあいだそこから落ちない' },
-  blizzard: { name: '吹雪', mode: 'now', color: '#74b9ff', desc: '次の人の番のあいだ、机が凍ってよくすべる' },
+  blizzard: { name: '吹雪', mode: 'now', color: '#74b9ff', place: true, desc: '机の好きな所に氷のクリスタルを置く。だれかの定規が触れると机が凍り、その動きの残りと次の人の番のあいだ、よくすべる' },
   fullopen: { name: '全開', mode: 'shot', color: '#22c3b0', desc: 'この1打だけいちばん長い形に伸び、当てた相手へのダメージが1.8倍' },
   // SSR の専用技（数値は SKILL_TUNE。設定画面で変えられる）
   ichimonji: { name: '一文字', mode: 'shot', color: '#d4a72c', ssr: true, desc: 'この1打は回らずにまっすぐすべり、最初に当てた相手には必ずクリティカル' },
   gomu: { name: 'ゴム跳び', mode: 'shot', color: '#e0567a', ssr: true, desc: 'この1打のあいだ、机の端で1回だけ跳ね返る（速さ{gomuSpeed}%で戻る）' },
-  niji: { name: '虹の道', mode: 'shot', color: '#7b6cff', ssr: true, desc: '照準線に1回目の跳ね返りの先まで見え、はじく力{nijiPower}%' },
+  niji: { name: '虹の道', mode: 'shot', color: '#7b6cff', ssr: true, desc: '照準線に1回目の跳ね返りの先まで見え、はじく力{nijiPower}%。通った跡に虹の道が残り、次の相手の番に虹の道に乗った定規は、道に沿って強制的に進む' },
   ikkaku: { name: '一角', mode: 'shot', color: '#e2402b', ssr: true, desc: 'いちばん鋭い角の先で当てたときだけ、弾く力{ikkakuPush}%・ダメージ{ikkakuDmg}%' },
-  hyaku: { name: '百八十度', mode: 'shot', color: '#f0b429', ssr: true, desc: '曲がる角度（±{hyakuMax}°）も決めてはじくと、{hyakuDelay}ミリ秒後に1回だけ曲がる' },
+  hyaku: { name: '百八十度', mode: 'shot', color: '#f0b429', ssr: true, desc: '曲がる角度（±{hyakuMax}°）も決めてはじくと、{hyakuDelay}ミリ秒後に1回だけ曲がる。構えると、定規の通り道が正確に見える' },
 };
 // 技の説明（数値の入った技は、設定画面の値で書きかえる）
 export function skillDesc(key, tune) {
@@ -151,11 +151,15 @@ export const SKILL_TUNE = {
   windRadiusProtractor: 26, // 分度器は半円なので広い
   windSpeed: 260,           // 突風のいちばん近くでの速さ（cm/秒、26gの定規）
   anchorMass: 3,            // 不動：重さの倍率
+  anchorRepel: 1.2,         // 不動：当ててきた定規を跳ね返す強さ（ぶつかった力に上乗せする倍率）
   heavyDmg: 2.5,            // 渾身：ダメージの倍率
   inkRounds: 3, inkDmg: 5,  // インク漏れ：何周、1回いくつ
   bombRadius: 18, bombSpeed: 110, bombDmg: 32, // 爆発：届く距離・吹き飛ばし・いちばん近くのダメージ
   magnetRadius: 30, magnetSpeed: -150,         // 磁石：届く距離・引き寄せる速さ（マイナスは内向き）
-  heal: 35,                 // 保健室：回復する量
+  heal: 35,                 // 保健室：回復する量（体力の最大に対する％）
+  crystalR: 2.6,            // 吹雪：氷のクリスタルの大きさ（触れたとみなす半径・cm）
+  roadW: 1.8,               // 虹の道：道の半分の幅（cm）。定規の重心がこの中に入ると乗る
+  roadSpeed: 55,            // 虹の道：道に乗った定規の速さの下限（cm/秒）
   fullopenDmg: 1.8,         // 全開：ダメージの倍率
   // SSR の専用技（設定画面で変えられる。％・ミリ秒・度）
   gomuSpeed: 70,            // ゴム跳び：跳ね返ったあとの速さ（％）
@@ -192,22 +196,30 @@ export const GAUGE = { max: 100, shot: 20, hit: 10, beHit: 30 };
 
 // ---- 回復アイテム（ばんそうこう・救急箱） ----
 // 2周目から、番が変わるたびに rate の確率で、机の上の空いている所に出る（同時に max 個まで）。
-// どの定規でも（敵でも）触れると heal だけ体力が回復し、アイテムは消える。r は大きさ（触れたとみなす半径・cm）
+// どの定規でも（敵でも）触れると、体力が最大の heal ％ 回復し、アイテムは消える。r は大きさ（触れたとみなす半径・cm）
 // big：出るときに chance の確率で、ばんそうこうの代わりに大回復の「救急箱」になる
+// （回復の数値はどれも、その定規の体力の最大に対する％）
+// 体力の最大に対する pct ％ の量
+export const healAmount = (maxHp, pct) => Math.round((maxHp || 100) * pct) / 100;
 export const FIELD_ITEM = {
   name: 'ばんそうこう', rate: 0.18, max: 1, heal: 25, r: 2.4,
   big: { name: '救急箱', chance: 0.25, heal: 60, r: 2.8 },
 };
 
 // ---- 場のイベント ----
-// 2周目から、番が変わるたびに rate の確率で起きる（ほかのイベントが続いている間は起きない）
+// 2周目から、番が変わるたびに rate の確率で起きる（ほかのイベントが続いている間は起きない）。どれが起きるかは同じ確率
 //  ice：その番のあいだ机が凍って、すべりやすくなる
 //  chair：机の1つの辺に椅子が並び、1周のあいだその辺からは落ちない
+//  heal：ヒーリング。始まったときに机の上の全員の体力が最大の pct ％ 回復し、その番のあいだ机がすべりにくい（摩擦 friction 倍）
+//  gale：強風。その番のあいだ1つの向きに風が吹き、動いている定規が風に流される（accel は風の強さ・cm/秒²。止まっている定規は動かない）
 export const EVENTS = {
   rate: 0.2,
   ice: { name: 'こおり', friction: 0.3, desc: 'この番は机が凍って、よくすべる' },
   chair: { name: 'いす', desc: '椅子が並んだ辺からは落ちない' },
+  heal: { name: 'ヒーリング', pct: 30, friction: 1.8, desc: '全員の体力が30%回復し、この番は机がすべりにくい' },
+  gale: { name: '強風', accel: 320, desc: 'この番は強い風が吹き、動いている定規が流される' },
 };
+export const EVENT_KINDS = ['ice', 'chair', 'heal', 'gale'];
 // 椅子を置ける辺（残っている机の外側の辺）。side: top / bottom / left / right
 export function chairSides(desk, list) {
   const tiles = deskTiles(desk).filter((t) => !list || list.includes(t.i));

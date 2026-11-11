@@ -180,7 +180,7 @@ test('ステージ：自分の体力が0になってもライフは減らず、�
   dg.turn = 1;
   const m = d.handle('E1', { t: 'flick', lx: 0, ly: 0, dx: -1, dy: 0, power: 0.5 })[0].msg;
   assert.equal(m.pickups[0].owner, 1);
-  assert.equal(dg.bodies[1].hp, 35);
+  assert.equal(dg.bodies[1].hp, Math.min(pen.maxHp, 10 + pen.maxHp * 0.25), '体力の最大の25%回復');
 });
 
 test('ステージ：敵は体力0で倒れる（今までどおり）', () => {

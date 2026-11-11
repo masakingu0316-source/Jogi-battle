@@ -95,6 +95,7 @@
   <main id="mypage" class="screen" hidden>
     <div class="my-head" id="myHead" hidden>
       <button class="link" id="myBack" type="button">← 部屋に戻る</button>
+      <p class="pick-note" id="pickNote" hidden>部屋で使う定規をタップして、「この定規で戦う」を押してください</p>
     </div>
 
     <section class="tab-panel" id="tab-case">
@@ -287,9 +288,10 @@
         <div class="my-ruler">
           <canvas class="preview" id="lobbyPreview" aria-hidden="true"></canvas>
           <select id="myRuler" aria-label="自分の定規"></select>
+          <p class="my-ruler-name" id="myRulerName" hidden></p>
         </div>
+        <button class="btn-sub btn-case" id="openCase" type="button">定規ケースから選ぶ</button>
         <p class="note" id="rulerNote"></p>
-        <button class="link" id="openCase" type="button">定規ケースで飾りやアクセサリを付ける</button>
         <div class="ready-row">
           <button class="btn-main btn-ready" id="readyBtn" type="button" aria-pressed="false">準備OK</button>
           <span class="wait" id="readyNote"></span>

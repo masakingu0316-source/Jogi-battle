@@ -1,7 +1,7 @@
 // 画面の切り替え・サーバーとの通信・はじく操作・動きの再生
 // 流れ：ログイン → ホーム（部屋を作る／入る／定規の編集） → 部屋（全員が準備OKか1分で開始） → 対戦 → 部屋に戻る
 import Physics from './shared/physics.js';
-import { DESKS, MODES, PLAYERS, TEAMS, teamOf, deskTiles, SKILLS, skillFor, GAUGE, skillDesc, SKILL_TUNE } from './shared/rules.js';
+import { DESKS, MODES, PLAYERS, TEAMS, teamOf, deskTiles, SKILLS, skillFor, GAUGE, skillDesc, SKILL_TUNE, EVENTS } from './shared/rules.js';
 import { VERSION } from './shared/version.js';
 import { CPU_LEVELS } from './shared/cpu.js';
 import { createPractice } from './practice.js';
@@ -14,6 +14,8 @@ import { createStageRun } from './stage-client.js';
 import { createStageUI } from './stage-ui.js';
 import { createHome } from './home.js';
 import { ENEMIES, deskText } from './shared/stage.js';
+import { RoomCore } from './shared/core.js';
+import { StageCore } from './shared/stage-core.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -67,7 +69,13 @@ $('skillBtn').addEventListener('click', () => {
   const sk = skillOf(app.state?.game?.bodies[app.state.game.turn]);
   if (!sk) return;
   // その場で効く技は、1回目で説明、2回目（3秒以内）で発動。構える技は、押すたびに構える／やめる
-  if (SKILLS[sk].mode === 'now') {
+  if (SKILLS[sk].place) {
+    // 吹雪：押したあと、机の上のクリスタルを置きたい所をタップ（もう一度押すとやめる）
+    app.skillArmed = !app.skillArmed;
+    app.placing = app.skillArmed;
+    clearTimeout(app.skillTimer);
+    if (app.placing) hint('吹雪：氷のクリスタルを置きたい所を、机の上でタップ（触れた定規があると机が凍る）');
+  } else if (SKILLS[sk].mode === 'now') {
     if (app.skillArmed) { app.skillArmed = false; send({ t: 'skill' }); }
     else {
       app.skillArmed = true;
@@ -458,6 +466,12 @@ function onMessage(m) {
   }
 }
 
+// 場のイベントが始まったときの大きな文字
+const EVENT_BANNER = {
+  ice: ['机が凍った！', '#8fd8ff'], chair: ['椅子が並んだ！', '#f2c14e'],
+  heal: ['ヒーリング！', '#7fe3a0'], gale: ['強風！', '#d9f2ff'],
+};
+
 function applyState(st) {
   app.state = st;
   // 場のイベントが始まったら、盤面に大きく知らせる
@@ -465,7 +479,8 @@ function applyState(st) {
   const evKey = ev ? `${st.game.id}:${ev.id}` : null;
   if (ev && st.phase === 'aim' && evKey !== app.seenEvent && app.seenGame === st.game.id) {
     const d = DESKS[deskKeyOf(st)];
-    app.fx.push({ x: 0, y: -d.h / 4, t0: performance.now(), text: ev.type === 'ice' ? '机が凍った！' : '椅子が並んだ！', color: ev.type === 'ice' ? '#8fd8ff' : '#f2c14e', big: true });
+    const [text, color] = EVENT_BANNER[ev.type] || ['イベント！', '#fff'];
+    app.fx.push({ x: 0, y: -d.h / 4, t0: performance.now(), text, color, big: true });
   }
   // 必殺技などの出来事（回復・ワープ・インクのダメージ…）
   if (st.game?.fx && app.seenGame === st.game.id) {
@@ -492,6 +507,14 @@ function applyState(st) {
         app.itemBorn = { ...(app.itemBorn || {}), [f.item]: performance.now() };
         continue;
       }
+      if (f.kind === 'healing') {
+        // ヒーリング：全員の回復
+        f.healed.forEach((h, n) => {
+          app.fx.push({ x: h.x, y: h.y - 4, t0: t0 + 350 + n * 120, text: `+${h.amount}`, color: '#7fe3a0', small: true });
+          app.fx.push({ x: h.x, y: h.y, t0: t0 + 350 + n * 120, ring: 5, color: '#7fe3a0', inward: true });
+        });
+        continue;
+      }
       if (f.kind === 'mend') {
         app.fx.push({ x: f.x, y: f.y, t0, ring: f.r, color: '#2fb3a5', inward: true });
         f.healed.forEach((h, n) => app.fx.push({ x: h.x, y: h.y - 4, t0: t0 + 200 + n * 120, text: `+${h.amount}`, color: '#7fe3c8', small: true }));
@@ -515,7 +538,8 @@ function applyState(st) {
         if (!reducedMotion()) app.shakeUntil = performance.now() + 160;
         continue;
       }
-      const text = { heal: `保健室！ +${f.amount}`, sub: '身代わり！', subUsed: '身代わり発動！', counter: '反撃の構え！', warp: 'ワープ！', chair: 'いす召喚！', blizzard: '吹雪！', ink: `インク -${f.amount}` }[f.kind];
+      if (f.kind === 'blizzard') app.crystalBorn = { ...(app.crystalBorn || {}), [f.crystal]: t0 };
+      const text = { heal: `保健室！ +${f.amount}`, sub: '身代わり！', subUsed: '身代わり発動！', counter: '反撃の構え！', warp: 'ワープ！', chair: 'いす召喚！', blizzard: 'クリスタル！', ink: `インク -${f.amount}` }[f.kind];
       const col = f.kind === 'subUsed' ? SKILLS.sub.color : f.kind === 'ink' ? SKILLS.ink.color : SKILLS[f.kind]?.color || '#fff';
       if (f.kind === 'warp' && f.from) app.fx.push({ x: f.from.x, y: f.from.y, t0, ring: 8, color: col, inward: true });
       if (text) app.fx.push({ x: f.x, y: f.y - 4, t0, text, color: col, big: f.kind !== 'ink', small: f.kind === 'ink' });
@@ -528,6 +552,14 @@ function applyState(st) {
   }
   app.startDeadline = st.startIn === null || st.startIn === undefined ? null : performance.now() + st.startIn;
   render();
+}
+
+// 強風の向き（画面で見たときの向き。盤面は回して見せることがあるので、board に聞く）
+function windWord(ang) {
+  const v = board.screenDir ? board.screenDir(Math.cos(ang), Math.sin(ang)) : { x: Math.cos(ang), y: Math.sin(ang) };
+  const a = (Math.atan2(v.y, v.x) * 180) / Math.PI;
+  const names = ['右', '右下', '下', '左下', '左', '左上', '上', '右上'];
+  return names[((Math.round(a / 45) % 8) + 8) % 8] + '向き';
 }
 
 // ---------------- 画面の描画 ----------------
@@ -644,6 +676,10 @@ function renderMyRuler(me) {
   const opts = ids2.map((id) => `<option value="${id}">[${ITEMS[id].rarity}] ${esc(ITEMS[id].name)} Lv.${acct ? levelOfRuler(app.me, id).level : 1}</option>`).join('');
   if ($('myRuler').dataset.opts !== opts) { $('myRuler').innerHTML = opts; $('myRuler').dataset.opts = opts; }
   $('myRuler').value = lo.ruler;
+  // ログインしている人は、定規ケースを開いて選ぶ（選べる一覧の代わりに、名前を出す）
+  $('myRuler').hidden = acct;
+  $('myRulerName').hidden = !acct;
+  if (acct && ITEMS[lo.ruler]) $('myRulerName').innerHTML = `<span class="rar-mini">${esc(ITEMS[lo.ruler].rarity)}</span>${esc(ITEMS[lo.ruler].name)} <small>Lv.${levelOfRuler(app.me, lo.ruler).level}</small>`;
   previewRuler($('lobbyPreview'), lo, Math.max(0, app.state.members.findIndex((m) => m.id === me.id)));
   const r = ITEMS[lo.ruler];
   $('rulerNote').innerHTML = `${matChip(r?.mat)} ${esc(r ? affinityText(r.mat) : '')}<br>${esc(skillText(lo.ruler, app.game))}${lo.acc ? `<br>アクセサリ：${esc(ITEMS[lo.acc].name)}（${esc(accText(lo.acc))}）` : ''}`;
@@ -676,7 +712,7 @@ function renderGame() {
         : stage ? [mat ? `${MATERIAL_INFO[mat].name} Lv.${body.level || 1}` : ''].filter(Boolean).join('・')
         : [mat ? `${MATERIAL_INFO[mat].name} Lv.${body.level || 1}` : '', teams ? TEAMS[teamOf(i)].name : '', `${st.wins[mid] || 0}勝`].filter(Boolean).join('・'),
       // 続いている必殺技の効果
-      fxs: [p.alive && !body?.enemy && body?.state === 'desk' && (body?.hp ?? 1) <= 0 && '瀕死', body?.anchor && '不動', body?.counter && '反撃の構え', body?.sub && '身代わり', body?.ink > 0 && `インク あと${body.ink}`].filter(Boolean),
+      fxs: [p.alive && !body?.enemy && body?.state === 'desk' && (body?.hp ?? 1) <= 0 && '瀕死', body?.anchor && '不動', body?.counter && '反撃の構え', body?.sub && '身代わり', body?.subWait && '身代わり（次の相手の番）', body?.ink > 0 && `インク あと${body.ink}`].filter(Boolean),
     };
   };
   const hpBar = (x) => `<span class="hpbar ${x.hpCls}" role="img" aria-label="体力 ${x.hp}"><i style="width:${x.pct}%"></i><b>${x.hp}</b></span>`;
@@ -728,14 +764,18 @@ function renderGame() {
     const tTag = teams ? `（${TEAMS[teamOf(cur)].name}）` : '';
     const sk = skillOf(g.bodies[cur]);
     canSkill = !!(mine && sk && !g.extra && (g.gauge?.[cur] ?? 0) >= GAUGE.max);
-    if (!canSkill) app.skillArmed = false;
+    if (!canSkill) { app.skillArmed = false; app.placing = false; }
     const extra = g.extra ? `<span class="first">連打：もう1回はじける</span>` : '';
     if (mine) msg.innerHTML = `<b class="mine">あなたの番</b>${tTag}<span class="sub">自分の定規を押さえて、引っぱって離す</span>`;
     else msg.innerHTML = `<span class="who-turn"><b style="color:${seatLook(cur).css}">${esc(curMember?.name || '?')}</b>${tTag}の番です${curMember && !curMember.connected ? '（接続が切れています）' : ''}</span>`;
     const ev = g.event;
     const evTag = ev?.type === 'ice' ? `<span class="ev ice">こおり：この番は机がよくすべる</span>`
-      : ev?.type === 'chair' ? `<span class="ev chair">いす：${ev.left <= 1 ? 'この番まで' : `あと${ev.left}回`}、椅子の辺からは落ちない</span>` : '';
-    const skTags = (g.icy > 0 ? `<span class="ev ice">吹雪：この番は机がよくすべる</span>` : g.icyNext ? `<span class="ev ice">吹雪：次の番は机が凍る</span>` : '')
+      : ev?.type === 'chair' ? `<span class="ev chair">いす：${ev.left <= 1 ? 'この番まで' : `あと${ev.left}回`}、椅子の辺からは落ちない</span>`
+      : ev?.type === 'heal' ? `<span class="ev heal">ヒーリング：この番は机がすべりにくい</span>`
+      : ev?.type === 'gale' ? `<span class="ev gale">強風：${windWord(ev.ang)}の風。動いた定規が流される</span>` : '';
+    const skTags = (g.icy > 0 ? `<span class="ev ice">吹雪：この番は机がよくすべる</span>` : '')
+      + (g.crystals?.length ? `<span class="ev ice">吹雪のクリスタル：触れると机が凍る</span>` : '')
+      + (g.rainbow && !g.rainbow.wait ? `<span class="ev niji">虹の道：この番だけ、乗った定規は道に沿って進む</span>` : '')
       + (g.walls?.length ? `<span class="ev chair">いす召喚：${g.walls[0].left <= 1 ? 'この番まで' : `あと${g.walls[0].left}回`}、椅子の辺から落ちない</span>` : '');
     const lives = st.stage?.lives ?? 3, livesMax = st.stage?.livesMax ?? 3;
     const hearts = stage ? `<span class="lives" role="img" aria-label="ライフ ${lives}／${livesMax}">${Array.from({ length: livesMax }, (_, k) => `<i class="${k < lives ? 'on' : ''}"></i>`).join('')}</span>` : '';
@@ -758,7 +798,7 @@ function renderGame() {
   $('curveBox').hidden = !showCurve;
   const skName = SKILLS[skillOf(g.bodies[meIdx])]?.name || '';
   const skNow = SKILLS[skillOf(g.bodies[meIdx])]?.mode === 'now';
-  $('skillCap').textContent = canSkill ? (app.skillArmed ? (skNow ? 'もう一度で発動' : '構え中') : 'タップ') : '';
+  $('skillCap').textContent = canSkill ? (app.placing ? '置く所をタップ' : app.skillArmed ? (skNow ? 'もう一度で発動' : '構え中') : 'タップ') : '';
   sb.setAttribute('aria-label', canSkill ? `必殺技「${skName}」${app.skillArmed ? 'を構えています。もう一度押すとやめる' : 'を使う'}` : `必殺技「${skName}」のゲージ`);
   $('board').classList.toggle('can-aim', canAim());
   $('skip').hidden = !(isHost() && st.phase === 'aim' && !app.playing && curMember && !curMember.connected);
@@ -883,7 +923,7 @@ $('readyBtn').addEventListener('click', () => {
   const me = memberById(app.you?.id);
   send({ t: 'ready', on: !me?.ready });
 });
-$('openCase').addEventListener('click', () => account.open('case', { edit: true }));
+$('openCase').addEventListener('click', () => account.open('case', { pick: true }));
 $('copyInvite').addEventListener('click', async () => {
   const input = $('inviteUrl');
   try {
@@ -924,6 +964,15 @@ const canvas = $('board');
 canvas.addEventListener('pointerdown', (e) => {
   if (!canAim()) {
     if (app.state?.phase === 'aim' && !app.playing && !app.waitingShot) hint('今はほかの人の番です');
+    return;
+  }
+  // 吹雪：タップした所にクリスタルを置く
+  if (app.placing) {
+    const p = board.toWorld(e.clientX, e.clientY);
+    app.placing = false; app.skillArmed = false;
+    send({ t: 'skill', x: Math.round(p.x * 10) / 10, y: Math.round(p.y * 10) / 10 });
+    renderGame();
+    e.preventDefault();
     return;
   }
   const g = app.state.game, b = g.bodies[g.turn];
@@ -1101,10 +1150,15 @@ function playbackBodies(now) {
   // SSRの技の印：一角（角の先で当てた）・ゴム跳び（端で跳ね返った）・百八十度（曲がった）
   while (p.markDone < p.marks.length && t >= p.marks[p.markDone].f) {
     const mk = p.marks[p.markDone++];
-    const look = { tip: ['一角！', SKILLS.ikkaku.color], bounce: ['ゴム跳び！', SKILLS.gomu.color], curve: ['曲がる！', SKILLS.hyaku.color] }[mk.kind];
+    const look = {
+      tip: ['一角！', SKILLS.ikkaku.color], bounce: ['ゴム跳び！', SKILLS.gomu.color], curve: ['曲がる！', SKILLS.hyaku.color],
+      repel: ['跳ね返し！', SKILLS.anchor.color], ride: ['虹の道！', SKILLS.niji.color], freeze: ['こおった！', '#8fd8ff'],
+    }[mk.kind];
     if (!look) continue;
-    app.fx.push({ x: mk.x, y: mk.y - 4, t0: now, text: look[0], color: look[1], big: mk.kind === 'tip' });
-    if (mk.kind === 'tip') { app.fx.push({ x: mk.x, y: mk.y, t0: now, burst: true }); if (!reducedMotion()) app.shakeUntil = now + 220; }
+    const big = ['tip', 'repel', 'freeze'].includes(mk.kind);
+    app.fx.push({ x: mk.x, y: mk.y - 4, t0: now, text: look[0], color: look[1], big });
+    if (mk.kind === 'freeze') p.frozeAt = now;
+    if (big) { app.fx.push({ x: mk.x, y: mk.y, t0: now, burst: true }); if (!reducedMotion()) app.shakeUntil = now + 220; }
     else app.fx.push({ x: mk.x, y: mk.y, t0: now, ring: 6, color: look[1] });
   }
   if (p.crit && !p.critDone && t >= p.crit.f) {
@@ -1126,6 +1180,23 @@ function playbackBodies(now) {
   return bodies;
 }
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+// 百八十度の照準：いまの盤面を写した計算用の部屋で、はじいたときの通り道を出す（サーバーと同じ計算）
+function traceAim(input) {
+  const st = app.state;
+  const r2 = (v) => Math.round(v * 200) / 200;
+  const key = [r2(input.lx), r2(input.ly), r2(input.dx), r2(input.dy), r2(input.power), input.curve].join(',');
+  if (app.traceCache?.st === st && app.traceCache.key === key) return app.traceCache.res;
+  let res = null;
+  try {
+    const sim = Object.create((isStage(st) ? StageCore : RoomCore).prototype);
+    sim.s = { game: st.game, stage: st.stage, members: st.members, mode: st.mode, fair: st.fair, phase: 'aim' };
+    sim.rand = () => 0.99;
+    res = sim.traceShot(input);
+  } catch { res = null; }
+  app.traceCache = { st, key, res };
+  return res;
+}
 
 // 虹の道：まっすぐ進んだときに、最初にぶつかる所（ほかの定規か机の端）と、跳ね返った先
 function predictPath(g, i, ux, uy) {
@@ -1201,8 +1272,12 @@ function frame(now) {
       const ab = app.aim.b;
       // 特性「目盛り読み」：矢印が長く見える
       if (ab.trait === 'aim') aim.reach = 1 + (ab.traitPct || 0) / 100;
-      // 百八十度：曲がる向きも見せる
-      if (sk === 'hyaku') aim.curve = (+$('curveDeg').value * Math.PI) / 180;
+      // 百八十度：本当の動きと同じ計算で、通り道を見せる
+      if (sk === 'hyaku') {
+        aim.curve = (+$('curveDeg').value * Math.PI) / 180;
+        const ddx = app.aim.px - cp.x, ddy = app.aim.py - cp.y, dl = Math.hypot(ddx, ddy);
+        if (dl > 0.8) aim.trace = traceAim({ lx: app.aim.lx, ly: app.aim.ly, dx: -ddx / dl, dy: -ddy / dl, power: Math.min(dl, MAX_DRAG) / MAX_DRAG, skill: true, curve: +$('curveDeg').value });
+      }
       // 虹の道：1回目の跳ね返りの先まで見せる
       if (sk === 'niji') {
         const ddx = app.aim.px - cp.x, ddy = app.aim.py - cp.y, dl = Math.hypot(ddx, ddy);
@@ -1220,6 +1295,10 @@ function frame(now) {
     // 回復アイテム：再生中は、はじく前のものから拾われた分を消して見せる
     const items = app.playing ? app.playing.items.filter((it) => !app.playing.picked.has(it.id)) : app.state.phase === 'aim' ? g.items || [] : [];
     desks.items = items.map((it) => ({ ...it, born: app.itemBorn?.[it.id] }));
+    // 吹雪のクリスタル（再生中に割れたら消す）・虹の道
+    const crystals = app.state.phase === 'aim' ? g.crystals || [] : [];
+    desks.crystals = app.playing?.frozeAt ? [] : crystals.map((c) => ({ ...c, born: app.crystalBorn?.[c.id] }));
+    desks.rainbow = app.state.phase === 'aim' ? g.rainbow : null;
     board.draw({ bodies, active, aim, fx: app.fx, now, desks });
     // クリティカルの瞬間だけ、盤面を小さく揺らす
     const cv = $('board');

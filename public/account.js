@@ -1,9 +1,9 @@
 // ログイン・マイページ（定規ケース・ガチャ・戦績）
 import {
   ITEMS, RARITIES, ECONOMY, GACHA_POOL, odds, accText as accTextOf, defaultConfig, levelInfo, STAGE_LEVEL_MAX,
-  rulerList, rulerOdds, RULER_RARITY, RARITY_ORDER, applyConfig,
+  rulerList, rulerOdds, RULER_RARITY, RARITY_ORDER, applyConfig, brandSkill,
 } from './shared/catalog.js';
-import { MODES, TRAITS, traitDesc } from './shared/rules.js';
+import { MODES, TRAITS, traitDesc, SKILLS } from './shared/rules.js';
 import { previewRuler, iconRuler } from './ruler-paint.js';
 import { matChip, levelHtml, levelOfRuler, nextText, specText, skillText } from './ruler-info.js';
 
@@ -15,6 +15,7 @@ export function createAccount(ctx) {
   const { app, $, esc, toast } = ctx;
   let tab = 'case';
   let editing = null; // 定規ケースで選んでいる定規
+  let picking = false; // 部屋から開いた：選んだ定規で戦う（選んだら部屋に戻る）
   // 値段・確率・アクセサリの効き目は、管理者の設定（/api/config）に合わせる
   const game = () => app.game || defaultConfig();
   const accText = (id) => accTextOf(id, game());
@@ -67,12 +68,16 @@ export function createAccount(ctx) {
 
   // ---- 画面の出し入れ ----
   // opt.edit：相棒の定規の編集をすぐ開く（ホームの相棒を押したとき・部屋から）
+  // opt.pick：部屋から「定規ケースから選ぶ」で開いた（選んだら、その定規で部屋に戻る）
   function open(which = 'case', opt = {}) {
     if (!app.me) return;
     app.view = 'mypage';
     ctx.show('mypage');
+    picking = !!(opt.pick && app.state && app.state.phase !== 'aim');
     // 部屋にいるときは、下のタブの代わりに「部屋に戻る」を出す
     $('myHead').hidden = !app.state;
+    $('pickNote').hidden = !picking;
+    $('mypage').classList.toggle('picking', picking);
     window.scrollTo(0, 0);
     select(which);
     ctx.onTab?.(which);
@@ -84,6 +89,8 @@ export function createAccount(ctx) {
     }
   }
   function close() {
+    picking = false;
+    $('mypage').classList.remove('picking');
     if ($('rulerSheet').open) $('rulerSheet').close?.();
     if (app.state) { app.view = 'room'; ctx.render(); }
     else ctx.showHome();
@@ -100,7 +107,6 @@ export function createAccount(ctx) {
 
   $('meChip').addEventListener('click', () => open('case'));
   $('myBack').addEventListener('click', close);
-  $('openCase').addEventListener('click', () => open('case', { edit: true }));
 
   // ---- 定規ケース ----
   const owned = () => new Set(app.me?.owned || []);
@@ -176,12 +182,14 @@ export function createAccount(ctx) {
       const slv = levelInfo(me.exp?.[r.id] || 0, STAGE_LEVEL_MAX);
       const fresh = has && (me.acquired?.[r.id] || 0) > now - NEW_MS;
       const using = r.id === me.selectedRuler;
-      const label = has ? `${r.name} Lv.${lv.level}${slv.level > lv.level ? `（ステージLv.${slv.level}）` : ''}${using ? '・使用中' : ''}` : `${r.name}（まだ持っていません）`;
+      const sk = SKILLS[brandSkill(r, app.game)];
+      const label = (has ? `${r.name} Lv.${lv.level}${slv.level > lv.level ? `（ステージLv.${slv.level}）` : ''}${using ? '・使用中' : ''}` : `${r.name}（まだ持っていません）`) + (sk ? `・必殺技「${sk.name}」` : '');
       return `<button type="button" class="box-tile r-${r.rarity} m-${r.mat}${has ? '' : ' locked'}${using ? ' using' : ''}" data-ruler="${r.id}" aria-label="${esc(label)}">
         <canvas data-icon="${r.id}" aria-hidden="true"></canvas>
         <span class="bt-rar">${r.rarity}</span>
         ${using ? '<span class="bt-use">使用中</span>' : fresh ? '<span class="bt-new">NEW</span>' : ''}
         ${has ? `<span class="bt-lv${lv.max ? ' max' : ''}">Lv${slv.level > lv.level ? slv.level : lv.level}</span>` : '<span class="bt-q">？</span>'}
+        ${sk ? `<span class="bt-sk${sk.ssr ? ' ssr' : ''}${[...sk.name].length > 3 ? ' long' : ''}" style="--sk:${sk.color}" aria-hidden="true">${esc(sk.name)}</span>` : ''}
       </button>`;
     }).join('') || '<p class="box-empty">この素材の定規はまだありません</p>';
     $('caseChip').textContent = `${list.filter((r) => have.has(r.id)).length}/${list.length}`;
@@ -241,7 +249,7 @@ export function createAccount(ctx) {
     fillSelect($('edPattern'), 'pattern', s.pattern);
     fillSelect($('edSticker'), 'sticker', s.sticker);
     fillSelect($('edAcc'), 'acc', s.acc, (it) => accText(it.id));
-    $('saveSetup').textContent = editing === me.selectedRuler ? '保存する（相棒）' : '相棒にする';
+    $('saveSetup').textContent = picking ? 'この定規で戦う' : editing === me.selectedRuler ? '保存する（相棒）' : '相棒にする';
     $('saveNote').textContent = '';
     updatePreview();
   }
@@ -270,6 +278,12 @@ export function createAccount(ctx) {
       ctx.onProfile?.();
       // 待合室にいれば、部屋の定規もすぐに入れ替える
       if (app.state && app.state.phase !== 'aim') ctx.send({ t: 'ruler', ruler: e.ruler });
+      if (picking) {
+        // 部屋から選んだときは、そのまま部屋に戻る
+        ctx.toast?.(`「${ITEMS[e.ruler].name}」で戦います`);
+        close();
+        return;
+      }
       renderCase();
       $('saveNote').textContent = '保存しました';
     } catch (err) {

@@ -2,7 +2,7 @@
 // 「自分1人 対 敵（文房具）」の盤面を、自分 → 敵1体ずつ の順に回す。
 // 敵は体力0か机から落ちると倒れる。自分は机から落ちたらそのマップは失敗（体力0では負けない）。
 import Physics from './physics.js';
-import { RoomCore, encodeFrame, round2, round4, FPS, STEP, MAX_SIM_SECONDS } from './core.js';
+import { RoomCore, encodeFrame, round2, round4, FPS, STEP, MAX_SIM_SECONDS, MARK_TYPES } from './core.js';
 import { DESKS, deskTiles, onTile, GAUGE, SKILLS, skillFor, PLAYERS } from './rules.js';
 import { ENEMIES, scaleOf, aiOf, BOARD_HEAL, enemyLook, mapOf, STAGES, stageMaxHp, LIVES, RESPAWN_HP, enemyMaxHp } from './stage.js';
 
@@ -48,11 +48,11 @@ export class StageCore extends RoomCore {
     const desk = DESKS[def.desk];
     const maxHp = stageMaxHp(lo.level || 1);
     const bodies = [{
-      owner: 0, hp: carry ? Math.min(maxHp, carry.hp + BOARD_HEAL) : maxHp, maxHp,
+      owner: 0, hp: carry ? Math.min(maxHp, Math.round((carry.hp + maxHp * BOARD_HEAL / 100) * 10) / 10) : maxHp, maxHp,
       tune: lo.tune || null, skill: SKILLS[lo.skill] ? lo.skill : skillFor(lo.specKey), ruler: lo.ruler, specKey: lo.specKey,
       rarity: lo.rarity || 'N', art: lo.art || 'plain', trait: lo.trait || null, traitPct: lo.traitPct || 0, st: lo.skillTune || null,
       level: lo.level || 1, mods: lo.mods, pattern: lo.pattern, sticker: lo.sticker,
-      x: def.me.x, y: def.me.y, a: def.me.a ?? 0, state: 'desk', sub: !!carry?.sub,
+      x: def.me.x, y: def.me.y, a: def.me.a ?? 0, state: 'desk',
     }];
     const members = [me];
     const looks = [{ name: me.name, color: null }];
@@ -130,6 +130,7 @@ export class StageCore extends RoomCore {
         desk: g.desk, desks: g.desks, vanish: null, vanishIn: null, vanishWait: null,
         gauge: g.gauge, extra: !!g.extra, event: null, eventId: 0,
         walls: g.walls || [], icy: g.icy || 0, icyNext: !!g.icyNext, fx: g.fx || [], items: g.items || [],
+        crystals: g.crystals || [], rainbow: g.rainbow || null, mode: 'stage',
         bodies: g.bodies, players: g.players, result: g.result, looks: g.looks, board: g.board, boardClear: !!g.boardClear, boss: !!g.boss,
       },
     };
@@ -139,7 +140,7 @@ export class StageCore extends RoomCore {
   finishTurn(shooter, now = Date.now(), opt = {}) {
     const s = this.s, g = s.game;
     if (!opt.keepTurn && !opt.again && !opt.skipped) s.stage.shots += shooter === 0 ? 1 : 0;
-    // 身代わり：落ちた（体力0で倒れた）定規が1回だけ机の真ん中に戻る（体力は半分。倒れたときは最大の半分）
+    // 身代わり：使った次の相手の番に落ちた（体力0で倒れた）定規が、机の真ん中に戻る（体力は半分。倒れたときは最大の半分）
     g.bodies.forEach((b, i) => {
       const down = b.state !== 'desk' || ((b.hp ?? 1) <= 0 && !this.zeroSurvives(i));
       if (!b.sub || !down || !g.players[i].alive) return;
@@ -195,6 +196,7 @@ export class StageCore extends RoomCore {
       return { saved: false, vanished: null };
     }
     g.extra = false;
+    this.tickTurn();
     if (g.walls?.length) g.walls = g.walls.map((w) => ({ ...w, left: w.left - 1 })).filter((w) => w.left > 0);
     if (g.icy > 0) g.icy--;
     if (g.icyNext) { g.icy = 1; g.icyNext = false; }
@@ -211,7 +213,7 @@ export class StageCore extends RoomCore {
     const body = this.makeBody(me);
     const blocked = g.bodies.some((o, j) => j > 0 && o.state === 'desk' && g.players[j].alive && Physics.collide(body, this.makeBody(o)));
     if (blocked) Object.assign(me, this.freeSpot(0));
-    me.hp = Math.max(me.hp ?? 0, Math.min(me.maxHp, RESPAWN_HP));
+    me.hp = Math.max(me.hp ?? 0, Math.round(me.maxHp * RESPAWN_HP) / 100);
     this.pushFx({ kind: 'respawn', owner: 0, x: me.x, y: me.y, lives: st.lives });
   }
 
@@ -228,7 +230,7 @@ export class StageCore extends RoomCore {
     }
     const me = g.bodies[0];
     st.board++;
-    this.loadBoard(st.board, { hp: me.hp ?? me.maxHp, gauge: g.gauge?.[0] ?? 0, sub: !!me.sub });
+    this.loadBoard(st.board, { hp: me.hp ?? me.maxHp, gauge: g.gauge?.[0] ?? 0 });
     return { t: 'state', state: this.snapshot(), stage: 'board', board: st.board };
   }
 
@@ -278,12 +280,11 @@ export class StageCore extends RoomCore {
   // 修正テープ：近くの敵（自分以外）の体力を直す
   mend(i, d) {
     const g = this.s.game, b = g.bodies[i];
-    const amount = Math.round(d.amount * scaleOf(this.s.stage.map).act);
     const healed = [];
     g.bodies.forEach((o, j) => {
       if (j === 0 || j === i || !g.players[j].alive || o.state !== 'desk') return;
       if (Math.hypot(o.x - b.x, o.y - b.y) > d.range || o.hp >= o.maxHp) return;
-      const add = Math.min(amount, o.maxHp - o.hp);
+      const add = Math.min(Math.round(o.maxHp * d.amount) / 100, o.maxHp - o.hp); // amount は体力の最大に対する％
       o.hp = Math.round((o.hp + add) * 10) / 10;
       healed.push({ owner: j, x: o.x, y: o.y, amount: Math.round(add) });
     });
@@ -306,16 +307,16 @@ export class StageCore extends RoomCore {
     for (let k = 0; k < 8; k++) frames.push(encodeFrame(world));
     const hit = Physics.blast(world, src, d.range, d.speed * sc.body, 0, 'compass');
     const blast = { kind: 'compass', f: frames.length - 1, x: round2(src.x), y: round2(src.y), r: d.range, hit };
-    const { falls, hits, pickups } = runWorld(world, frames);
+    const { falls, hits, pickups, marks } = runWorld(world, frames);
     this.applyWorld(world);
     this.finishTurn(i, now);
-    return [{ t: 'shot', by: i, frames, falls, saved: false, crit: null, vanished: null, skill: null, blast, hits, pickups, state: this.snapshot() }];
+    return [{ t: 'shot', by: i, frames, falls, saved: false, crit: null, vanished: null, skill: null, blast, hits, pickups, marks, state: this.snapshot() }];
   }
 
   // 物理の結果を盤面に書き戻す
   applyWorld(world) {
     const g = this.s.game;
-    if (g.items?.length) g.items = g.items.filter((it) => !world.items?.find((w) => w.id === it.id)?.taken);
+    this.takeFieldThings(world);
     g.bodies = g.bodies.map((prev, i) => {
       const b = world.bodies[i];
       return { ...prev, x: round2(b.x), y: round2(b.y), a: round4(b.a), hp: Math.round(b.hp * 10) / 10, state: b.state === 'desk' ? 'desk' : 'gone' };
@@ -326,7 +327,7 @@ export class StageCore extends RoomCore {
 // 止まるまで動かす（コンパスの弾き飛ばし用）
 function runWorld(world, frames) {
   const dt = STEP, perFrame = Math.round(1 / FPS / dt);
-  const falls = [], hits = [], pickups = [];
+  const falls = [], hits = [], pickups = [], marks = [];
   let steps = 0, seen = 0;
   while (!Physics.atRest(world) && steps < MAX_SIM_SECONDS / dt) {
     for (let k = 0; k < perFrame; k++) {
@@ -338,12 +339,13 @@ function runWorld(world, frames) {
   }
   drain(); // 動かなかったとき（刺さっている相手だけ）も、ダメージは記録する
   for (const b of world.bodies) if (b.state === 'falling') b.state = 'gone';
-  return { falls, hits, pickups };
+  return { falls, hits, pickups, marks };
   function drain() {
     while (world.events && seen < world.events.length) {
       const e = world.events[seen++];
       if (e.type === 'hit') hits.push({ f: frames.length - 1, target: e.target, from: e.from, dmg: e.dmg, x: round2(e.x), y: round2(e.y), kind: e.kind });
       if (e.type === 'pickup') pickups.push({ f: frames.length - 1, item: e.item, owner: e.owner, amount: e.amount, x: round2(e.x), y: round2(e.y), ...(e.big ? { big: true } : {}) });
+      if (MARK_TYPES.includes(e.type)) marks.push({ kind: e.type, f: frames.length - 1, x: round2(e.x), y: round2(e.y), owner: e.owner });
     }
   }
 }

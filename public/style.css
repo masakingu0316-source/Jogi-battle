@@ -1165,3 +1165,41 @@ body.with-tabs { --toast-lift: var(--tabbar-h); }
 /* ホームでは、お知らせを上の帯のすぐ下に出す（大ボタンにかぶらないように） */
 body.on-home .toast { bottom: auto; top: calc(max(10px, env(safe-area-inset-top, 0px)) + 7dvh + 8px); }
 .foe-chip .foe-hp { font-weight: 700; font-size: 12px; margin-left: 4px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+
+/* ---- 定規ケース：アイコンの右下に必殺技（縦書きの札） ---- */
+.bt-sk {
+  position: absolute; right: 2px; bottom: 2px; max-height: calc(100% - 20px); overflow: hidden;
+  writing-mode: vertical-rl; text-orientation: upright; letter-spacing: -0.04em;
+  font-size: 11px; font-weight: 800; line-height: 1; padding: 3px 2px; border-radius: 4px;
+  background: var(--sk, #555); color: #fff; text-shadow: 0 1px 0 rgba(0, 0, 0, 0.45);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.75), 0 1px 3px rgba(0, 0, 0, 0.35); pointer-events: none;
+}
+.bt-sk.long { font-size: 10px; }
+.bt-sk.ssr { box-shadow: 0 0 0 1.5px #ffe27a, 0 1px 4px rgba(0, 0, 0, 0.4); }
+.box-tile.locked .bt-sk { opacity: 0.6; }
+
+/* ---- 部屋から定規ケースを開いたとき ---- */
+.pick-note { margin: 0; flex: 1 1 220px; font-size: 13px; font-weight: 700; color: #fff; background: var(--red-pen); padding: 6px 12px; border-radius: 8px; }
+.btn-case {
+  justify-self: start; margin: 4px 0 2px; padding: 10px 18px; border-radius: 10px; border: 2px solid var(--ink, #2a2320);
+  background: #fffaf0; color: var(--ink, #2a2320); font: inherit; font-weight: 800; font-size: 15px; cursor: pointer;
+  box-shadow: 0 3px 0 var(--ink, #2a2320);
+}
+.btn-case:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--ink, #2a2320); }
+.btn-case::before { content: '▦ '; color: var(--red-pen); }
+.my-ruler-name { margin: 0; font-weight: 800; font-size: 16px; display: flex; align-items: center; gap: 6px; }
+.my-ruler-name small { font-weight: 600; opacity: 0.7; }
+.rar-mini { font-size: 11px; line-height: 1; padding: 3px 5px; border-radius: 4px; background: rgba(10, 12, 20, 0.75); color: #fff; }
+
+/* 場のイベント「ヒーリング」「強風」・虹の道の札 */
+.tags .ev.heal { border: 1.5px solid #3fb874; color: #23864f; }
+.tags .ev.gale { border: 1.5px solid #7f9bb3; color: #4f6b82; }
+.tags .ev.niji { border: 1.5px solid transparent; background: linear-gradient(var(--card), var(--card)) padding-box, linear-gradient(90deg, #ff6b6b, #ffb84d, #ffe66d, #7bd389, #5ab8ff, #a78bfa) border-box; color: #6a4fd8; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .tags .ev.heal { color: #7fe3a0; }
+  :root:not([data-theme="light"]) .tags .ev.gale { color: #cfe6f7; }
+  :root:not([data-theme="light"]) .tags .ev.niji { color: #c3b6ff; }
+}
+:root[data-theme="dark"] .tags .ev.heal { color: #7fe3a0; }
+:root[data-theme="dark"] .tags .ev.gale { color: #cfe6f7; }
+:root[data-theme="dark"] .tags .ev.niji { color: #c3b6ff; }

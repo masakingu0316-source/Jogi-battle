@@ -116,6 +116,19 @@ export function decideNow(core, levelKey = 'normal', rand = Math.random) {
   const tiles = deskTiles(DESKS[MODES[core.s.mode].desk]).filter((t) => !g.desks || g.desks.includes(t.i));
   const m = margin(tiles, b.x, b.y);
   if (k === 'heal') return (b.hp ?? 100) < 65;
+  // 吹雪：相手の定規のそばにクリスタルを置く（戻り値は置く場所）
+  if (k === 'blizzard') {
+    if (rand() >= lv.skillRate) return false;
+    for (const [j, o] of g.bodies.entries()) {
+      if (j === me || o.state !== 'desk' || !g.players[j].alive) continue;
+      for (let t = 0; t < 12; t++) {
+        const ang = rand() * Math.PI * 2, d = 4 + rand() * 6;
+        const at = { x: Math.round((o.x + Math.cos(ang) * d) * 10) / 10, y: Math.round((o.y + Math.sin(ang) * d) * 10) / 10 };
+        if (!core.crystalSpotProblem(at.x, at.y)) return at;
+      }
+    }
+    return false;
+  }
   if (k === 'warp') return m < 14;
   if (k === 'chair') return m < 12;
   return rand() < lv.skillRate;
