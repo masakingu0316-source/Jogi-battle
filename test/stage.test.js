@@ -71,15 +71,31 @@ test('敵は体力0で倒れ、全部倒すと次の盤面へ。体力は持ち�
   assert.equal(c.s.game.bodies.length, 1 + mapOf('kahen', 1).boards[1].foes.length);
 });
 
-test('自分が机から落ちたら、そのマップは失敗', () => {
+test('ライフは3つ。2回までは落ちても盤面に戻り、3回目でそのマップは失敗', () => {
   const c = make(1);
-  const g = c.s.game;
-  // 机の端で、外向きに強くはじく
-  Object.assign(g.bodies[0], { x: -28, y: 0, a: Math.PI / 2 });
-  c.handle(ME, { t: 'flick', lx: 0, ly: 0, dx: -1, dy: 0, power: 1 });
+  const fall = () => {
+    // 机の端で、外向きに強くはじく
+    Object.assign(c.s.game.bodies[0], { x: -28, y: 0, a: Math.PI / 2 });
+    c.handle(ME, { t: 'flick', lx: 0, ly: 0, dx: -1, dy: 0, power: 1 });
+    runEnemies(c, Date.now(), seeded(3));
+  };
+  c.s.game.bodies[0].hp = 20;
+  fall();
+  assert.equal(c.s.phase, 'aim');
+  assert.equal(c.s.stage.lives, 2);
+  const me = c.s.game.bodies[0];
+  assert.equal(me.state, 'desk');
+  assert.deepEqual([me.x, me.y], [-18, 0], '盤面の最初の位置に戻る');
+  assert.equal(me.hp, 50, '体力は最大の半分まで戻る');
+  assert.equal(c.s.game.turn, 0);
+  assert.equal(c.snapshot().stage.lives, 2);
+  assert.equal(c.s.stage.shots, 1, '戻っても打った回数は1回');
+  fall();
+  assert.equal(c.s.stage.lives, 1);
+  fall();
   assert.equal(c.s.phase, 'over');
   assert.equal(c.s.stage.result.cleared, false);
-  assert.match(c.s.stage.result.reason, /自滅/);
+  assert.match(c.s.stage.result.reason, /ライフがなくなった.*自滅/);
   assert.equal(c.handle(ME, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.5 })[0].msg.t, 'error');
 });
 

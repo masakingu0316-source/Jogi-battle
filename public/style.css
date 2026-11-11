@@ -33,6 +33,9 @@
   --xp: #1f4e8c;                  /* 経験値のバー */
   --warn: #c0281e;                /* 机が消える予告 */
   --sumi: #17181d;                /* カットインの墨の帯（明暗共通） */
+  --tray: #262b3b;                /* 定規ケースの箱 */
+  --bar: #1b3a6b;                 /* 定規ケースの見出しの帯 */
+  --bar-fg: #ffffff;
 
   --font-display: "Yuji Syuku", "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
   --font-brush: "Yuji Mai", "Yuji Syuku", "Hiragino Mincho ProN", "Yu Mincho", serif;
@@ -57,6 +60,7 @@
     --seat-0: #ff8a70; --seat-1: #7fb8ff; --seat-2: #86d89c; --seat-3: #f2cd5c;
     --floor: #18203a; --floor-line: rgba(255, 255, 255, 0.06); --floor-ink: #b9c0d4;
     --mat-acrylic: #7fd0ff; --mat-metal: #ffd36b; --mat-rubber: #ff8cc0; --xp: #8fbbe8; --warn: #ff8a70;
+    --tray: #0a0f1e; --bar: #263a70; --bar-fg: #ffffff;
     color-scheme: dark;
   }
 }
@@ -70,6 +74,7 @@
     --seat-0: #ff8a70; --seat-1: #7fb8ff; --seat-2: #86d89c; --seat-3: #f2cd5c;
     --floor: #18203a; --floor-line: rgba(255, 255, 255, 0.06); --floor-ink: #b9c0d4;
     --mat-acrylic: #7fd0ff; --mat-metal: #ffd36b; --mat-rubber: #ff8cc0; --xp: #8fbbe8; --warn: #ff8a70;
+    --tray: #0a0f1e; --bar: #263a70; --bar-fg: #ffffff;
     color-scheme: dark;
 }
 
@@ -299,7 +304,6 @@ canvas.can-aim:active { cursor: grabbing; }
 .tab-panel { display: grid; gap: 16px; min-width: 0; }
 .sub-lead { margin: 0; color: var(--ink-soft); font-size: 14px; max-width: 40em; }
 .sub-lead span { margin-left: 6px; color: var(--ink); font-weight: 700; }
-.case-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
 .ruler-card { display: grid; gap: 6px; text-align: left; padding: 10px 12px; }
 .ruler-card[aria-pressed="true"] { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink), var(--shadow); }
 .ruler-card canvas, .preview { width: 100%; height: 56px; display: block; }
@@ -329,7 +333,7 @@ canvas.can-aim:active { cursor: grabbing; }
 .reward .lvup { display: inline-block; margin-left: 6px; padding: 0 6px; font-family: var(--font-display); color: var(--ink); background-image: linear-gradient(transparent var(--marker-top), var(--marker) var(--marker-top), var(--marker) 92%, transparent 92%); }
 .reward small { display: block; font-weight: 400; color: var(--ink-soft); font-size: 13px; }
 .rar { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 0 6px; color: #1e2230; white-space: nowrap; }
-.editor { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 18px; align-items: start; border-bottom: 1px dashed var(--line-strong); padding-bottom: 18px; }
+.editor { position: relative; display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 18px; align-items: start; }
 .preview-big { width: 100%; height: 190px; background: #d9bb8f; border-radius: 12px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15); }
 .editor-fields { display: grid; gap: 12px; }
 .editor-fields select { width: 100%; }
@@ -774,3 +778,97 @@ body.in-game .site-foot { display: none; }
 /* 対戦中の札：ステージの場所 */
 .tags .stage-tag { border-style: solid; border-color: var(--line-strong); color: var(--ink); }
 .stage-lv { font-size: 11px; color: var(--red-pen); margin-left: 6px; white-space: nowrap; }
+/* ライフ（朱の丸。使ったものは輪だけ） */
+.lives { display: inline-flex; gap: 3px; margin-left: 5px; vertical-align: -1px; }
+.lives i { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--red-pen); display: inline-block; }
+.lives i.on { background: var(--red-pen); }
+
+/* ==== 定規ケース（BOX）：正方形のアイコンを敷きつめ、枠の色でレア度、暗い枠はまだ持っていない定規 ==== */
+.box-bar {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px;
+  padding: 10px 12px 10px 16px; border-radius: 14px; background: var(--bar); color: var(--bar-fg);
+  box-shadow: 0 3px 0 var(--btn-shadow);
+}
+.box-title { display: flex; align-items: center; gap: 10px; }
+.box-title h3 { margin: 0; font-family: var(--font-brush); font-weight: 400; font-size: 26px; line-height: 1.2; letter-spacing: 0.04em; }
+.box-help {
+  width: 28px; height: 28px; padding: 0; border-radius: 6px; font-weight: 700; line-height: 1;
+  background: var(--gold); color: #1b1300; border: 0; box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
+}
+.box-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.box-filter { background: rgba(255, 255, 255, 0.12); border-color: rgba(255, 255, 255, 0.25); }
+.box-filter button { color: var(--bar-fg); padding: 5px 11px; font-size: 13px; }
+.box-filter button[aria-pressed="true"] { background: var(--bar-fg); color: var(--bar); }
+.box-sort { display: inline-flex; align-items: center; gap: 0; border-radius: 10px; overflow: hidden; background: var(--card); box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35); }
+.box-sort span { font-size: 11px; font-weight: 700; padding: 0 8px; align-self: stretch; display: grid; place-items: center; background: #2e8550; color: #fff; }
+.box-sort select { border: 0; border-radius: 0; padding: 7px 10px; font-size: 13px; font-weight: 700; background: var(--card); box-shadow: none; }
+.box-help-text { margin: 0; font-size: 13px; color: var(--ink-soft); max-width: 46em; padding: 10px 14px; border-radius: 10px; background: var(--card); border: 1px dashed var(--line-strong); }
+
+.box-meter { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 13px; }
+.bm-label { font-family: var(--font-display); font-size: 16px; }
+.bm-bar { flex: 1 1 160px; max-width: 320px; height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.bm-bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--red-pen), var(--gold)); border-radius: 4px; }
+.bm-num { font-variant-numeric: tabular-nums; }
+.bm-num b { font-size: 18px; }
+.bm-sub { color: var(--ink-soft); font-size: 12px; }
+
+.box-wrap { position: relative; padding: 12px; border-radius: 16px; background: var(--tray); box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.35); }
+.box-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 10px; }
+@media (max-width: 520px) { .box-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; } .box-wrap { padding: 8px; } }
+.box-chip {
+  position: absolute; right: 12px; bottom: -14px; padding: 2px 12px; border-radius: 999px; font-size: 13px; font-weight: 700;
+  background: rgba(10, 12, 20, 0.82); color: #fff; font-variant-numeric: tabular-nums; border: 1px solid rgba(255, 255, 255, 0.35);
+}
+.box-empty { grid-column: 1 / -1; margin: 18px; text-align: center; color: #fff; opacity: 0.75; font-size: 13px; }
+
+/* 1マス */
+.box-tile {
+  --frame: #c9cbd2; --glow: rgba(255, 255, 255, 0.0);
+  position: relative; aspect-ratio: 1; max-width: 100%; padding: 0; overflow: hidden; border-radius: 10px;
+  border: 3px solid var(--frame); background: radial-gradient(circle at 50% 38%, var(--tile-a), var(--tile-b));
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.4), inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+  transition: transform .08s;
+}
+.box-tile:hover:not(:disabled) { border-color: var(--frame); transform: translateY(-2px); }
+.box-tile:active:not(:disabled) { transform: translateY(1px); box-shadow: 0 1px 0 rgba(0, 0, 0, 0.4); }
+.box-tile canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.box-tile.m-acrylic { --tile-a: #e6f4ff; --tile-b: #9fcbec; }
+.box-tile.m-metal { --tile-a: #fff6de; --tile-b: #d8b66a; }
+.box-tile.m-rubber { --tile-a: #ffe8f1; --tile-b: #e59ab8; }
+.box-tile.r-R { --frame: #4ea8e8; }
+.box-tile.r-SR { --frame: #b07ae8; }
+.box-tile.r-SSR { border-color: transparent; background: radial-gradient(circle at 50% 38%, var(--tile-a), var(--tile-b)) padding-box, linear-gradient(135deg, #fff1a8, #e2a92b 35%, #fff7c8 55%, #c48a16) border-box; }
+.box-tile.r-stage { border-color: transparent; background: radial-gradient(circle at 50% 38%, var(--tile-a), var(--tile-b)) padding-box, linear-gradient(135deg, #b5fff2, #22c3b0 40%, #e8fffb 60%, #138f80) border-box; }
+.box-tile.locked { --tile-a: #4a4f60; --tile-b: #262a36; }
+.box-tile.locked.r-SSR, .box-tile.locked.r-stage { background: radial-gradient(circle at 50% 38%, var(--tile-a), var(--tile-b)) padding-box, linear-gradient(135deg, #8a7a4a, #5a4a20) border-box; }
+.box-tile.locked.r-stage { background: radial-gradient(circle at 50% 38%, var(--tile-a), var(--tile-b)) padding-box, linear-gradient(135deg, #4a8a82, #22514b) border-box; }
+.box-tile.locked { --frame: #5a6072; }
+.box-tile.locked.r-R { --frame: #35617f; } .box-tile.locked.r-SR { --frame: #5b477a; }
+
+/* マスの上の文字：レベルは左下に大きく（ふちどりした筆文字） */
+.bt-lv {
+  position: absolute; left: 4px; bottom: 1px; font-family: var(--font-display); font-size: clamp(15px, 4.4vw, 21px); line-height: 1.1; color: #fff;
+  text-shadow: 0 0 2px #1a1420, 1px 1px 0 #1a1420, -1px -1px 0 #1a1420, 1px -1px 0 #1a1420, -1px 1px 0 #1a1420, 0 2px 4px rgba(0, 0, 0, 0.5);
+  letter-spacing: 0.02em; pointer-events: none;
+}
+.bt-lv.max { color: #ffe27a; }
+.bt-rar { position: absolute; right: 3px; top: 2px; font-size: 10px; font-weight: 700; line-height: 1; padding: 2px 4px; border-radius: 4px; background: rgba(10, 12, 20, 0.6); color: #fff; pointer-events: none; }
+.bt-use {
+  position: absolute; left: 3px; top: 3px; font-size: 10px; font-weight: 700; line-height: 1; padding: 3px 4px; border-radius: 3px;
+  background: var(--red-pen); color: #fff; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.7); transform: rotate(-6deg); pointer-events: none;
+}
+.bt-new { position: absolute; left: 3px; top: 3px; font-size: 10px; font-weight: 800; line-height: 1; padding: 3px 5px; border-radius: 3px; background: #ffd23f; color: #3a2400; pointer-events: none; }
+.bt-q { position: absolute; inset: 0; display: grid; place-items: center; font-family: var(--font-display); font-size: 30px; color: rgba(255, 255, 255, 0.5); pointer-events: none; }
+.box-tile.using { box-shadow: 0 3px 0 rgba(0, 0, 0, 0.4), 0 0 0 2px var(--red-pen); }
+
+/* 定規を選んだときのシート */
+.ruler-sheet {
+  width: min(760px, calc(100vw - 24px)); max-height: calc(100vh - 32px); padding: 20px; border: 0; border-radius: 16px;
+  background: var(--card); color: var(--ink); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+.ruler-sheet::backdrop { background: rgba(10, 12, 24, 0.55); }
+.sheet-close {
+  position: absolute; right: -6px; top: -8px; width: 34px; height: 34px; padding: 0; border-radius: 50%; font-size: 20px; line-height: 1; z-index: 1;
+}
+@media (max-width: 640px) { .ruler-sheet { padding: 14px; } .ruler-sheet .editor { grid-template-columns: 1fr; } .ruler-sheet .preview-big { height: 140px; } .sheet-close { right: 0; top: -4px; } }
+.box-tile.r-SSR:hover:not(:disabled), .box-tile.r-stage:hover:not(:disabled) { border-color: transparent; }

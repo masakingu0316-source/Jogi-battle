@@ -830,3 +830,47 @@ function paintEnemy(ctx, b, s, g, px, active, now) {
   }
   ctx.restore();
 }
+
+// ---- 定規ケースのアイコン（正方形。長い定規は斜めに置いて大きく見せる） ----
+// 席の色ではなく、素材の色で塗る。locked：まだ持っていない定規は影だけ
+const ICON_PL = {
+  acrylic: { name: '', tint: 'rgba(70, 160, 225, 0.45)', edge: 'rgba(20, 80, 130, 0.9)', sticker: '#2f7fc0', ink: '#fff' },
+  metal: { name: '', tint: 'rgba(200, 160, 60, 0.4)', edge: 'rgba(90, 70, 20, 0.9)', sticker: '#8a6510', ink: '#fff' },
+  rubber: { name: '', tint: 'rgba(200, 70, 120, 0.45)', edge: 'rgba(110, 20, 60, 0.9)', sticker: '#c94a7e', ink: '#fff' },
+};
+export function iconRuler(canvas, look, opt = {}) {
+  const ctx = canvas.getContext('2d');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  const css = canvas.clientWidth || 80;
+  canvas.width = Math.round(css * dpr);
+  canvas.height = Math.round(css * dpr);
+  const s = Physics.RULERS[look.specKey] || Physics.RULERS['straight30-acrylic'];
+  const shapeKey = look.shapeKey || (s.forms ? s.forms[1] : s.shape);
+  const g = geometry(shapeKey);
+  const ang = g.sh.kind === 'rect' ? -Math.PI / 4 : g.sh.kind === 'tri' ? 0.15 : 0;
+  // 重心まわりに回したときの外枠
+  const c = Math.cos(ang), sn = Math.sin(ang);
+  let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  for (const p of g.outer) {
+    const vx = p.x - g.off.x, vy = p.y - g.off.y;
+    const rx = vx * c - vy * sn, ry = vx * sn + vy * c;
+    x0 = Math.min(x0, rx); x1 = Math.max(x1, rx); y0 = Math.min(y0, ry); y1 = Math.max(y1, ry);
+  }
+  const fit = (look.level || 1) >= AURA_FROM ? 0.72 : 0.8;
+  const P = Math.min((css * fit) / Math.max(x1 - x0, y1 - y0), 16);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(P * dpr, 0, 0, P * dpr, (css / 2) * dpr, (css / 2) * dpr);
+  paintRuler(ctx, {
+    owner: 0, specKey: look.specKey, shapeKey, level: opt.locked ? 1 : look.level, pattern: opt.locked ? null : look.pattern, sticker: opt.locked ? null : look.sticker,
+    pl: ICON_PL[s.mat] || ICON_PL.acrylic, x: -(x0 + x1) / 2, y: -(y0 + y1) / 2, a: ang,
+  }, P, false, 1200);
+  if (opt.locked) {
+    // 影だけ残す
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalCompositeOperation = 'source-atop';
+    ctx.fillStyle = 'rgba(28, 30, 40, 0.92)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.globalCompositeOperation = 'source-over';
+  }
+}

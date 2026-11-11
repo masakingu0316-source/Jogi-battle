@@ -4,7 +4,7 @@
 import Physics from './physics.js';
 import { RoomCore, encodeFrame, round2, round4, FPS, STEP, MAX_SIM_SECONDS } from './core.js';
 import { DESKS, deskTiles, onTile, GAUGE, SKILLS, skillFor, PLAYERS } from './rules.js';
-import { ENEMIES, scaleOf, aiOf, BOARD_HEAL, enemyLook, mapOf, STAGES, stageMaxHp } from './stage.js';
+import { ENEMIES, scaleOf, aiOf, BOARD_HEAL, enemyLook, mapOf, STAGES, stageMaxHp, LIVES, RESPAWN_HP } from './stage.js';
 
 export const ME = 'P';
 const STAGE_MOD_LIMIT = 0.3; // ステージでは Lv.50 まで効くので、倍率の上限を広げる
@@ -18,7 +18,7 @@ export class StageCore extends RoomCore {
     if (!def) throw new Error('そのマップはありません');
     this.s.mode = 'stage';
     this.s.phase = 'aim';
-    this.s.stage = { id: stageId, map, board: 0, boards: def.boards.length, result: null, shots: 0, startedAt: now };
+    this.s.stage = { id: stageId, map, board: 0, boards: def.boards.length, result: null, shots: 0, startedAt: now, lives: LIVES };
     this.s.members = [{ id: ME, token: '', userId: player.userId || null, name: player.name || 'あなた', loadout: player.loadout, ready: true, connected: true }];
     this.s.hostId = ME;
     this.loadBoard(0, null);
@@ -116,7 +116,7 @@ export class StageCore extends RoomCore {
       code: 'STAGE', hostId: ME, mode: 'stage', phase: s.phase, capacity: 1, minPlayers: 1, startIn: null,
       members: s.members.map((x) => ({ id: x.id, name: x.name, account: !!x.userId, loadout: x.loadout, ready: true, connected: true, enemy: !!x.enemy })),
       wins: {},
-      stage: { id: st.id, name: def.name, map: st.map, mapsTotal: def.maps.length, mapName: def.maps[st.map - 1].name, board: st.board, boards: st.boards, result: st.result, shots: st.shots },
+      stage: { id: st.id, name: def.name, map: st.map, mapsTotal: def.maps.length, mapName: def.maps[st.map - 1].name, board: st.board, boards: st.boards, result: st.result, shots: st.shots, lives: st.lives ?? LIVES, livesMax: LIVES },
       game: g && {
         n: g.n, order: g.order, turn: g.turn, shots: g.shots, id: g.id,
         desk: g.desk, desks: g.desks, vanish: null, vanishIn: null, vanishWait: null,
@@ -130,7 +130,7 @@ export class StageCore extends RoomCore {
   // 番の終わり：倒れた敵・落ちた自分・盤面クリアを決めて、次の番へ
   finishTurn(shooter, now = Date.now(), opt = {}) {
     const s = this.s, g = s.game;
-    if (!opt.keepTurn) s.stage.shots += shooter === 0 ? 1 : 0;
+    if (!opt.keepTurn && !opt.again) s.stage.shots += shooter === 0 ? 1 : 0;
     // 身代わり：落ちた定規が1回だけ机の真ん中に戻る（体力は半分）
     g.bodies.forEach((b, i) => {
       if (!b.sub || b.state === 'desk' || !g.players[i].alive) return;
@@ -153,11 +153,19 @@ export class StageCore extends RoomCore {
         this.pushFx({ kind: 'down', owner: i, how: 'ko', x: b.x, y: b.y });
       }
     });
-    // 自分が落ちたら、このマップは失敗
+    // 自分が落ちたら、ライフを1つ使って盤面に戻る。ライフが残っていなければ、このマップは失敗
     if (g.bodies[0].state !== 'desk') {
+      const how = shooter === 0 ? '自分の定規が机から落ちた（自滅）' : `${this.look(shooter).name}に机から落とされた`;
+      const lives = s.stage.lives ?? LIVES;
+      if (lives > 1) {
+        s.stage.lives = lives - 1;
+        this.respawn();
+        return this.finishTurn(shooter, now, { ...opt, again: true });
+      }
+      s.stage.lives = 0;
       g.players[0].alive = false;
       g.players[0].selfOut = shooter === 0;
-      const reason = shooter === 0 ? '自分の定規が机から落ちた（自滅）' : `${this.look(shooter).name}に机から落とされた`;
+      const reason = `ライフがなくなった（最後は${how}）`;
       g.result = { winners: [], title: 'マップ失敗', reason, outOrder: [] };
       s.stage.result = { cleared: false, reason };
       s.phase = 'over';
@@ -179,6 +187,19 @@ export class StageCore extends RoomCore {
     if (g.icyNext) { g.icy = 1; g.icyNext = false; }
     this.advanceTurn();
     return { saved: false, vanished: null };
+  }
+
+  // 落ちた自分を盤面に戻す：盤面の最初の位置（ほかの定規と重なるなら、空いている所）
+  respawn() {
+    const g = this.s.game, st = this.s.stage;
+    const me = g.bodies[0];
+    const start = mapOf(st.id, st.map).boards[st.board].me;
+    Object.assign(me, { x: start.x, y: start.y, a: start.a ?? 0, state: 'desk', anchor: false });
+    const body = this.makeBody(me);
+    const blocked = g.bodies.some((o, j) => j > 0 && o.state === 'desk' && g.players[j].alive && Physics.collide(body, this.makeBody(o)));
+    if (blocked) Object.assign(me, this.freeSpot(0));
+    me.hp = Math.max(me.hp ?? 0, Math.round(me.maxHp * RESPAWN_HP));
+    this.pushFx({ kind: 'respawn', owner: 0, x: me.x, y: me.y, lives: st.lives });
   }
 
   // 盤面クリアのあと：次の盤面へ。最後の盤面ならマップクリア

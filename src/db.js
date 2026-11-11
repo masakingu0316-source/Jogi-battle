@@ -169,10 +169,13 @@ export async function recentMatches(db, userId, limit = 20) {
 
 export async function profile(db, user) {
   const [owned, setups, stats, exp, stage] = await Promise.all([ownedSet(db, user.id), setupsOf(db, user.id), statsOf(db, user.id), expOf(db, user.id), stageProgress(db, user.id)]);
+  // 定規を手に入れた時刻（定規ケースの「取得順」と NEW の印に使う。はじめからある定規は0）
+  const got = (await db.prepare(`SELECT item_id, acquired_at FROM items WHERE user_id = ? AND item_id LIKE 'ruler:%'`).bind(user.id).all()).results;
+  const acquired = Object.fromEntries(got.map((r) => [r.item_id, r.acquired_at]));
   const selected = owned.has(user.selected_ruler) && ITEMS[user.selected_ruler]?.kind === 'ruler' ? user.selected_ruler : DEFAULT_RULER;
   return {
     id: user.id, name: user.name, coins: user.coins, selectedRuler: selected,
-    owned: [...owned].filter((id) => ITEMS[id]), setups, stats, exp, stage,
+    owned: [...owned].filter((id) => ITEMS[id]), setups, stats, exp, stage, acquired,
   };
 }
 

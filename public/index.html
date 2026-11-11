@@ -106,23 +106,46 @@
     </div>
 
     <section class="tab-panel" id="tab-case">
-      <p class="sub-lead">使う定規を選んで、柄・シール・アクセサリを付けられます。<span id="collection"></span></p>
-      <div class="editor" id="editor" hidden>
-        <canvas class="preview-big" id="previewBig" aria-label="定規のプレビュー"></canvas>
-        <div class="editor-fields">
-          <div class="ed-head"><h3 class="ed-title" id="edTitle"></h3><p class="ed-level" id="edLevel"></p></div>
-          <label class="field-col" for="edPattern"><span>柄（見た目）</span><select id="edPattern"></select></label>
-          <label class="field-col" for="edSticker"><span>シール（見た目）</span><select id="edSticker"></select></label>
-          <label class="field-col" for="edAcc"><span>アクセサリ（性能に効く・最大5%）</span><select id="edAcc"></select></label>
-          <p class="acc-desc" id="accDesc"></p>
-          <div class="editor-actions">
-            <button class="btn-main" id="saveSetup" type="button">この定規を使う</button>
-            <span class="wait" id="saveNote"></span>
-          </div>
+      <div class="box-bar">
+        <div class="box-title">
+          <h3>定規ケース</h3>
+          <button type="button" class="box-help" id="caseHelpBtn" aria-expanded="false" aria-controls="caseHelp" aria-label="定規ケースの説明">?</button>
+        </div>
+        <div class="box-tools">
+          <div class="seg box-filter" id="caseFilter" role="group" aria-label="素材でしぼる"></div>
+          <label class="box-sort"><span>並び順</span><select id="caseSort" aria-label="並び順"></select></label>
         </div>
       </div>
-      <h3 class="case-head">持っている定規 <small>対戦で使うと経験値がたまり、レベルが上がると重さ・はじく力が少し上がってオーラをまといます</small></h3>
-      <div class="case-grid" id="rulerList"></div>
+      <p class="box-help-text" id="caseHelp" hidden>定規をタップすると、柄・シール・アクセサリを付けて「使う定規」にできます。使うほど経験値がたまり、レベルが上がると重さ・はじく力が少し上がってオーラをまといます（対人はLv.10、ステージはLv.50まで）。色の付いた枠はレア度、暗い枠はまだ持っていない定規です。</p>
+      <div class="box-meter" aria-live="polite">
+        <span class="bm-label">コレクション</span>
+        <span class="bm-bar" aria-hidden="true"><i id="caseMeter"></i></span>
+        <span class="bm-num"><b id="caseCount">0</b>／<span id="caseTotal">0</span></span>
+        <span class="bm-sub" id="collection"></span>
+      </div>
+      <div class="box-wrap">
+        <div class="box-grid" id="rulerList"></div>
+        <span class="box-chip" id="caseChip" aria-hidden="true"></span>
+      </div>
+      <dialog class="ruler-sheet" id="rulerSheet" aria-labelledby="edTitle">
+        <div class="editor" id="editor">
+          <button type="button" class="sheet-close" id="sheetClose" aria-label="閉じる">×</button>
+          <canvas class="preview-big" id="previewBig" aria-label="定規のプレビュー"></canvas>
+          <div class="editor-fields">
+            <div class="ed-head"><h3 class="ed-title" id="edTitle"></h3><p class="ed-level" id="edLevel"></p></div>
+            <div class="ed-edit" id="edEdit">
+              <label class="field-col" for="edPattern"><span>柄（見た目）</span><select id="edPattern"></select></label>
+              <label class="field-col" for="edSticker"><span>シール（見た目）</span><select id="edSticker"></select></label>
+              <label class="field-col" for="edAcc"><span>アクセサリ（性能に効く・最大5%）</span><select id="edAcc"></select></label>
+            </div>
+            <p class="acc-desc" id="accDesc"></p>
+            <div class="editor-actions" id="edActions">
+              <button class="btn-main" id="saveSetup" type="button">この定規を使う</button>
+              <span class="wait" id="saveNote"></span>
+            </div>
+          </div>
+        </div>
+      </dialog>
     </section>
 
     <section class="tab-panel" id="tab-gacha" hidden>

@@ -67,7 +67,7 @@ export function createStageUI({ app, $, esc, show, onStart, onResume, onAbandon 
     const rec = p.maps[n];
     $('mdNo').textContent = `マップ ${n}${n === st.maps.length ? '・ラスボス' : ''}`;
     $('mdTitle').textContent = m.name;
-    $('mdNote').textContent = m.note;
+    $('mdNote').textContent = `${m.note}。ライフは3つ（2回までは落ちても盤面に戻れる）`;
     $('mdBoards').innerHTML = m.boards.map((b, i) => {
       const foes = b.foes.map((f) => {
         const lk = enemyLook({ ...f, spec: f.spec || ENEMIES[f.t].spec });

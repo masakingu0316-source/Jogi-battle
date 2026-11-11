@@ -1,7 +1,7 @@
 // ログイン・マイページ（定規ケース・ガチャ・戦績）
 import { ITEMS, RARITIES, ECONOMY, GACHA_POOL, odds, accText as accTextOf, defaultConfig, levelInfo, STAGE_LEVEL_MAX } from './shared/catalog.js';
 import { MODES } from './shared/rules.js';
-import { previewRuler } from './ruler-paint.js';
+import { previewRuler, iconRuler } from './ruler-paint.js';
 import { matChip, levelHtml, levelOfRuler, nextText, specText, skillText } from './ruler-info.js';
 
 const ALL_RULERS = Object.values(ITEMS).filter((it) => it.kind === 'ruler');
@@ -61,14 +61,22 @@ export function createAccount(ctx) {
   }
 
   // ---- 画面の出し入れ ----
-  function open(which = 'case') {
+  // opt.edit：使っている定規の編集をすぐ開く（ホームの「定規を編集する」から）
+  function open(which = 'case', opt = {}) {
     if (!app.me) return;
     app.view = 'mypage';
     ctx.show('mypage');
     $('myBack').textContent = app.state ? '← 部屋に戻る' : '← ホームに戻る';
     select(which);
+    if (which === 'case' && opt.edit) {
+      editing = app.me.selectedRuler;
+      renderEditor();
+      const d = $('rulerSheet');
+      if (!d.open) { if (d.showModal) d.showModal(); else d.setAttribute('open', ''); }
+    }
   }
   function close() {
+    if ($('rulerSheet').open) $('rulerSheet').close?.();
     if (app.state) { app.view = 'room'; ctx.render(); }
     else ctx.showHome();
   }
@@ -87,7 +95,7 @@ export function createAccount(ctx) {
     const b = e.target.closest('[data-tab]');
     if (b) select(b.dataset.tab);
   });
-  $('openCase').addEventListener('click', () => open('case'));
+  $('openCase').addEventListener('click', () => open('case', { edit: true }));
 
   // ---- 定規ケース ----
   const owned = () => new Set(app.me?.owned || []);
@@ -108,38 +116,100 @@ export function createAccount(ctx) {
     return bits.filter(Boolean).join('・');
   }
 
+  // ---- 定規ケース（ゲームの BOX のように、正方形のアイコンで並べる） ----
+  const SORTS = {
+    got: { name: '取得順', note: '新しく手に入れた順' },
+    level: { name: 'レベル順', note: '経験値の多い順' },
+    rarity: { name: 'レア度順', note: 'めずらしい順' },
+    shape: { name: '形順', note: '形・素材の順' },
+  };
+  const MATS = { all: 'すべて', acrylic: 'アクリル', metal: 'メタル', rubber: 'ラバー' };
+  const RANK_FULL = { basic: 0, N: 1, R: 2, SR: 3, SSR: 4, stage: 5 };
+  const NEW_MS = 3 * 24 * 3600 * 1000;
+  const pref = (k, def) => { try { return localStorage.getItem('jogi:case:' + k) || def; } catch { return def; } };
+  const savePref = (k, v) => { try { localStorage.setItem('jogi:case:' + k, v); } catch { /* 保存できなくても動く */ } };
+  let caseSort = SORTS[pref('sort', 'got')] ? pref('sort', 'got') : 'got';
+  let caseMat = MATS[pref('mat', 'all')] ? pref('mat', 'all') : 'all';
+  const orderOf = (id) => ALL_RULERS.findIndex((r) => r.id === id);
+  const howToGet = (r) => (r.rarity === 'stage' ? 'ステージ「可変定規編」をすべてクリアするともらえる' : `ガチャで出る（${RARITIES[r.rarity]?.name || r.rarity}）`);
+
+  function sortedRulers() {
+    const me = app.me, have = owned();
+    const exp = (id) => me.exp?.[id] || 0;
+    const got = (id) => me.acquired?.[id] ?? 0;
+    const list = ALL_RULERS.filter((r) => caseMat === 'all' || r.mat === caseMat);
+    const cmp = {
+      got: (a, b) => got(b.id) - got(a.id) || orderOf(a.id) - orderOf(b.id),
+      level: (a, b) => exp(b.id) - exp(a.id) || orderOf(a.id) - orderOf(b.id),
+      rarity: (a, b) => RANK_FULL[b.rarity] - RANK_FULL[a.rarity] || orderOf(a.id) - orderOf(b.id),
+      shape: (a, b) => orderOf(a.id) - orderOf(b.id),
+    }[caseSort];
+    // 持っている定規を先に、まだ持っていない定規はうしろに（形順だけは図鑑のように元の並び）
+    return list.sort((a, b) => (caseSort === 'shape' ? 0 : (have.has(b.id) ? 1 : 0) - (have.has(a.id) ? 1 : 0)) || cmp(a, b));
+  }
+
   function renderCase() {
     const me = app.me;
     const have = owned();
-    if (!editing || !have.has(editing)) editing = me.selectedRuler;
-    const got = [...have].filter((id) => ITEMS[id] && ITEMS[id].rarity !== 'basic').length;
-    $('collection').textContent = `集めたアイテム ${got} / ${GACHA_POOL.length}`;
-    // 形ごとに並べる。持っていない定規は、どこで手に入るかだけ見せる
-    $('rulerList').innerHTML = ALL_RULERS.map((r) => {
-      if (!have.has(r.id)) {
-        return `<div class="ruler-card locked" aria-label="${esc(r.name)}（まだ持っていません）">
-          <canvas data-preview="${r.id}" aria-hidden="true"></canvas>
-          <span class="rc-name">${esc(r.name)} ${rarityTag(r.rarity)}</span>
-          <span class="rc-sub">${r.rarity === 'stage' ? 'ステージ「可変定規編」の全クリア報酬' : 'ガチャで出ます'}</span></div>`;
-      }
+    const all = ALL_RULERS.length;
+    const mine = ALL_RULERS.filter((r) => have.has(r.id)).length;
+    $('caseCount').textContent = mine;
+    $('caseTotal').textContent = all;
+    $('caseMeter').style.width = `${Math.round((mine / all) * 100)}%`;
+    const got = [...have].filter((id) => ITEMS[id] && ITEMS[id].rarity !== 'basic' && ITEMS[id].rarity !== 'stage').length;
+    $('collection').textContent = `ガチャのアイテム全体 ${got}／${GACHA_POOL.length}`;
+    $('caseFilter').innerHTML = Object.entries(MATS).map(([k, n]) => `<button type="button" data-mat="${k}" aria-pressed="${k === caseMat}">${n}</button>`).join('');
+    const sortOpts = Object.entries(SORTS).map(([k, x]) => `<option value="${k}">${x.name}</option>`).join('');
+    if ($('caseSort').dataset.opts !== sortOpts) { $('caseSort').innerHTML = sortOpts; $('caseSort').dataset.opts = sortOpts; }
+    $('caseSort').value = caseSort;
+    const list = sortedRulers();
+    const now = Date.now();
+    $('rulerList').innerHTML = list.map((r) => {
+      const has = have.has(r.id);
       const lv = levelOfRuler(me, r.id);
-      return `<button type="button" class="ruler-card" data-ruler="${r.id}" aria-pressed="${r.id === editing}">
-        <canvas data-preview="${r.id}" aria-hidden="true"></canvas>
-        <span class="rc-name">${esc(r.name)} ${rarityTag(r.rarity)}${r.id === me.selectedRuler ? '<span class="badge you">使用中</span>' : ''}</span>
-        <span class="rc-lv">${matChip(r.mat)}${levelHtml(lv)}${stageLvText(r.id)}</span>
-        <span class="rc-sub">${esc(setupSummary(me.setups[r.id]) || '飾りなし')}</span>
+      const slv = levelInfo(me.exp?.[r.id] || 0, STAGE_LEVEL_MAX);
+      const fresh = has && (me.acquired?.[r.id] || 0) > now - NEW_MS;
+      const using = r.id === me.selectedRuler;
+      const label = has ? `${r.name} Lv.${lv.level}${slv.level > lv.level ? `（ステージLv.${slv.level}）` : ''}${using ? '・使用中' : ''}` : `${r.name}（まだ持っていません）`;
+      return `<button type="button" class="box-tile r-${r.rarity} m-${r.mat}${has ? '' : ' locked'}${using ? ' using' : ''}" data-ruler="${r.id}" aria-label="${esc(label)}">
+        <canvas data-icon="${r.id}" aria-hidden="true"></canvas>
+        ${r.rarity !== 'basic' ? `<span class="bt-rar">${r.rarity === 'stage' ? '報酬' : r.rarity}</span>` : ''}
+        ${using ? '<span class="bt-use">使用中</span>' : fresh ? '<span class="bt-new">NEW</span>' : ''}
+        ${has ? `<span class="bt-lv${lv.max ? ' max' : ''}">Lv${slv.level > lv.level ? slv.level : lv.level}</span>` : '<span class="bt-q">？</span>'}
       </button>`;
-    }).join('');
-    for (const c of document.querySelectorAll('[data-preview]')) previewRuler(c, lookOf(c.dataset.preview, me.setups[c.dataset.preview]));
-    renderEditor();
+    }).join('') || '<p class="box-empty">この素材の定規はまだありません</p>';
+    $('caseChip').textContent = `${list.filter((r) => have.has(r.id)).length}/${list.length}`;
+    for (const c of document.querySelectorAll('[data-icon]')) {
+      const id = c.dataset.icon;
+      const look = { ...lookOf(id, me.setups[id]), level: levelInfo(me.exp?.[id] || 0, STAGE_LEVEL_MAX).level };
+      iconRuler(c, look, { locked: !have.has(id) });
+    }
+    if ($('rulerSheet').open) renderEditor();
   }
   $('rulerList').addEventListener('click', (e) => {
     const b = e.target.closest('[data-ruler]');
     if (!b) return;
     editing = b.dataset.ruler;
-    for (const x of document.querySelectorAll('[data-ruler]')) x.setAttribute('aria-pressed', String(x.dataset.ruler === editing));
     renderEditor();
+    const d = $('rulerSheet');
+    if (!d.open) { if (d.showModal) d.showModal(); else d.setAttribute('open', ''); }
   });
+  $('caseFilter').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-mat]');
+    if (!b) return;
+    caseMat = b.dataset.mat; savePref('mat', caseMat);
+    renderCase();
+  });
+  $('caseSort').addEventListener('change', () => { caseSort = $('caseSort').value; savePref('sort', caseSort); renderCase(); });
+  $('caseHelpBtn').addEventListener('click', () => {
+    const open = $('caseHelp').hidden;
+    $('caseHelp').hidden = !open;
+    $('caseHelpBtn').setAttribute('aria-expanded', String(open));
+  });
+  const closeSheet = () => { const d = $('rulerSheet'); if (d.open) { if (d.close) d.close(); else d.removeAttribute('open'); } };
+  $('sheetClose').addEventListener('click', closeSheet);
+  // 外側（暗いところ）を押しても閉じる
+  $('rulerSheet').addEventListener('click', (e) => { if (e.target === $('rulerSheet')) closeSheet(); });
 
   function fillSelect(el, kind, value, label) {
     el.innerHTML = '<option value="">なし</option>' + ownedOf(kind).map((it) =>
@@ -148,8 +218,21 @@ export function createAccount(ctx) {
   }
   function renderEditor() {
     const me = app.me;
-    $('editor').hidden = !editing;
     if (!editing) return;
+    const has = owned().has(editing);
+    $('edEdit').hidden = !has;
+    $('edActions').hidden = !has;
+    if (!has) {
+      // まだ持っていない定規：形と手に入れ方だけ見せる
+      const r = ITEMS[editing];
+      previewRuler($('previewBig'), { specKey: r.specKey, level: 1 });
+      $('edTitle').innerHTML = `${esc(r.name)} ${matChip(r.mat)} ${rarityTag(r.rarity)}`;
+      $('edLevel').innerHTML = '<span class="xp-note">まだ持っていません</span>';
+      $('accDesc').textContent = `${howToGet(r)}
+${r.desc}
+${skillText(editing, app.game)}`;
+      return;
+    }
     const s = me.setups[editing] || {};
     fillSelect($('edPattern'), 'pattern', s.pattern);
     fillSelect($('edSticker'), 'sticker', s.sticker);
@@ -165,7 +248,7 @@ export function createAccount(ctx) {
     const e = currentEdit();
     previewRuler($('previewBig'), lookOf(e.ruler, e));
     const r = ITEMS[e.ruler], lv = levelOfRuler(app.me, e.ruler);
-    $('edTitle').innerHTML = `${esc(r.name)} ${matChip(r.mat)}`;
+    $('edTitle').innerHTML = `${esc(r.name)} ${matChip(r.mat)} ${rarityTag(r.rarity)}`;
     const slv = levelInfo(app.me?.exp?.[e.ruler] || 0, STAGE_LEVEL_MAX);
     $('edLevel').innerHTML = `${levelHtml(lv)}<span class="xp-note">${lv.max ? `対人は最大レベル・ステージ Lv.${slv.level}${slv.max ? '（最大）' : `（次まで あと${slv.need - slv.into}点）`}` : nextText(lv)}</span>`;
     const base = specText(e.ruler, lv.level, app.game);

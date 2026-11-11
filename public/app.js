@@ -314,7 +314,7 @@ $('joinForm').addEventListener('submit', (e) => {
   setError('homeError', '');
   connect(code);
 });
-$('editRuler').addEventListener('click', () => account.open('case'));
+$('editRuler').addEventListener('click', () => account.open('case', { edit: true }));
 for (const b of document.querySelectorAll('[data-open]')) b.addEventListener('click', () => account.open(b.dataset.open));
 
 // 今の部屋（オンライン・練習）を閉じる
@@ -467,6 +467,11 @@ function applyState(st) {
       if (f.kind === 'mend') {
         app.fx.push({ x: f.x, y: f.y, t0, ring: f.r, color: '#2fb3a5', inward: true });
         f.healed.forEach((h, n) => app.fx.push({ x: h.x, y: h.y - 4, t0: t0 + 200 + n * 120, text: `+${h.amount}`, color: '#7fe3c8', small: true }));
+        continue;
+      }
+      if (f.kind === 'respawn') {
+        app.fx.push({ x: f.x, y: f.y, t0, ring: 9, color: '#ffffff', inward: true });
+        app.fx.push({ x: f.x, y: f.y - 5, t0: t0 + 150, text: `ライフ -1　のこり${f.lives}`, color: '#ff8a7a', big: true });
         continue;
       }
       if (f.kind === 'nibble') {
@@ -696,7 +701,9 @@ function renderGame() {
       : ev?.type === 'chair' ? `<span class="ev chair">いす：${ev.left <= 1 ? 'この番まで' : `あと${ev.left}回`}、椅子の辺からは落ちない</span>` : '';
     const skTags = (g.icy > 0 ? `<span class="ev ice">吹雪：この番は机がよくすべる</span>` : g.icyNext ? `<span class="ev ice">吹雪：次の番は机が凍る</span>` : '')
       + (g.walls?.length ? `<span class="ev chair">いす召喚：${g.walls[0].left <= 1 ? 'この番まで' : `あと${g.walls[0].left}回`}、椅子の辺から落ちない</span>` : '');
-    const stTag = stage ? `<span class="first stage-tag">マップ${st.stage.map}・盤面 ${st.stage.board + 1}／${st.stage.boards}</span>` : '';
+    const lives = st.stage?.lives ?? 3, livesMax = st.stage?.livesMax ?? 3;
+    const hearts = stage ? `<span class="lives" role="img" aria-label="ライフ ${lives}／${livesMax}">${Array.from({ length: livesMax }, (_, k) => `<i class="${k < lives ? 'on' : ''}"></i>`).join('')}</span>` : '';
+    const stTag = stage ? `<span class="first stage-tag">マップ${st.stage.map}・盤面 ${st.stage.board + 1}／${st.stage.boards}</span><span class="first stage-tag life-tag">ライフ${hearts}</span>` : '';
     tags = stTag + evTag + skTags + extra + first;
   } else msg.textContent = stage ? (st.stage?.result?.cleared ? 'マップクリア' : 'マップ失敗') : '対戦終了';
   $('tags').innerHTML = tags;
@@ -832,7 +839,7 @@ $('readyBtn').addEventListener('click', () => {
   const me = memberById(app.you?.id);
   send({ t: 'ready', on: !me?.ready });
 });
-$('openCase').addEventListener('click', () => account.open('case'));
+$('openCase').addEventListener('click', () => account.open('case', { edit: true }));
 $('copyInvite').addEventListener('click', async () => {
   const input = $('inviteUrl');
   try {
