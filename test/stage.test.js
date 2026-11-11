@@ -278,7 +278,10 @@ test('サーバー：マップは順に開放され、クリアするとえん�
   assert.ok(reward, JSON.stringify(r1.data.messages.map((m) => m.t)));
   assert.equal(reward.first, true);
   assert.equal(reward.coins, REWARD.coins(1));
-  assert.equal(reward.total, before + REWARD.coins(1));
+  assert.equal(reward.total, before, 'えんぴつは受け取り箱に届く');
+  assert.equal(reward.inbox, true);
+  const box = await D.inboxOf(db, u.id);
+  assert.ok(box.some((x) => x.kind === 'stage' && x.coins === REWARD.coins(1)));
   assert.equal(reward.exp.gain, REWARD.exp(1));
   assert.equal((await D.stageProgress(db, u.id)).kahen.cleared, 1);
   // 2回目のクリアは経験値だけ
@@ -293,6 +296,8 @@ test('サーバー：マップは順に開放され、クリアするとえん�
   for (let m = 2; m <= 9; m++) await D.recordStageClear(db, { userId: u.id, stage: 'kahen', map: m, ruler: 'ruler:straight30-acrylic', shots: 10 });
   const last = await D.recordStageClear(db, { userId: u.id, stage: 'kahen', map: 10, ruler: 'ruler:straight30-acrylic', shots: 30 });
   assert.equal(last.item, 'ruler:folding-acrylic');
+  assert.ok(!(await D.ownedSet(db, u.id)).has('ruler:folding-acrylic'), '受け取るまでは持っていない');
+  await D.claimInbox(db, u.id);
   assert.ok((await D.ownedSet(db, u.id)).has('ruler:folding-acrylic'));
   const again = await D.recordStageClear(db, { userId: u.id, stage: 'kahen', map: 10, ruler: 'ruler:straight30-acrylic', shots: 25 });
   assert.equal(again.item, null);

@@ -1,6 +1,10 @@
 // 設定画面（管理者だけ）
-import { ITEMS, RARITIES, ECONOMY, ECONOMY_KEYS, ORDER, GACHA_POOL, STATS, odds, sanitizeConfig, configProblem, RULER_TUNE_KEYS, rulerTune, rulerTuneDefault } from './shared/catalog.js';
-import { SKILLS, RULER_SKILL, skillFor } from './shared/rules.js';
+import {
+  ITEMS, RARITIES, ECONOMY, ECONOMY_KEYS, ORDER, GACHA_POOL, STATS, odds, sanitizeConfig, configProblem, RULER_TUNE_KEYS, rulerTune, rulerTuneDefault,
+  applyConfig, defaultBrands, RULER_RARITY, RARITY_ORDER, ARTS, SHAPE_INFO, MATERIAL_INFO, MAT_ORDER, rulerOdds, RARITY_BONUS,
+} from './shared/catalog.js';
+import { SKILLS, TRAITS, SKILL_TUNE_KEYS, traitDesc, skillDesc } from './shared/rules.js';
+import Physics from './shared/physics.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -58,28 +62,120 @@ async function start() {
 
 // ---- 表示 ----
 function renderAll() {
+  applyConfig(saved);
   renderEconomy();
   renderRarities();
   renderItems();
   renderSkills();
+  renderBrands();
+  renderRulerGacha();
+  renderTraits();
   markChanges();
 }
 
-// 定規の性能と必殺技（定規15本それぞれ）
+// 定規の性能（形×素材ごと。銘柄はこの性能にレア度の上乗せが掛かる）
+function physKeys() {
+  return Object.keys(Physics.RULERS).filter((k) => !Physics.RULERS[k].enemy);
+}
 function renderSkills() {
-  const rulers = Object.values(ITEMS).filter((it) => it.kind === 'ruler');
-  const opts = (sel) => Object.entries(SKILLS).map(([k, v]) => `<option value="${k}"${k === sel ? ' selected' : ''}>${v.name}（${v.mode === 'now' ? 'その場で' : '構えて'}）</option>`).join('');
   const head = Object.values(RULER_TUNE_KEYS).map((r) => `<th title="${esc(r.desc)}">${r.name}${r.unit ? `（${r.unit}）` : ''}</th>`).join('');
-  $('skills').innerHTML = `<thead><tr><th>定規</th>${head}<th>必殺技</th></tr></thead><tbody>${
-    rulers.map((it) => {
-      const cur = rulerTune(it.specKey, draft), d = rulerTuneDefault(it.specKey);
-      const cells = Object.entries(RULER_TUNE_KEYS).map(([k, r]) => `<td><input type="number" id="t-${it.specKey}-${k}" data-tune="${it.specKey}" data-key="${k}"
-          min="${r.min}" max="${r.max}" step="${r.step}" value="${cur[k]}" aria-label="${esc(it.name)}の${r.name}"><small>初期 ${d[k]}</small></td>`).join('');
-      return `<tr><td><span class="rar" style="background:${RARITIES[it.rarity]?.color || '#888'}">${it.rarity === 'basic' ? '基本' : it.rarity}</span> ${esc(it.name)}</td>${cells}
-        <td><select id="s-${it.specKey}" data-skill="${it.specKey}" aria-label="${esc(it.name)}の必殺技">${opts(skillFor(it.specKey, draft.skills))}</select><small>初期 ${SKILLS[RULER_SKILL[it.specKey]].name}</small></td></tr>`;
+  $('skills').innerHTML = `<thead><tr><th>形・素材</th>${head}</tr></thead><tbody>${
+    physKeys().map((key) => {
+      const cur = rulerTune(key, draft), d = rulerTuneDefault(key);
+      const name = Physics.RULERS[key].name;
+      const cells = Object.entries(RULER_TUNE_KEYS).map(([k, r]) => `<td><input type="number" id="t-${key}-${k}" data-tune="${key}" data-key="${k}"
+          min="${r.min}" max="${r.max}" step="${r.step}" value="${cur[k]}" aria-label="${esc(name)}の${r.name}"><small>初期 ${d[k]}</small></td>`).join('');
+      return `<tr><td>${esc(name)}</td>${cells}</tr>`;
     }).join('')}</tbody>`;
   $('tuneHelp').innerHTML = Object.values(RULER_TUNE_KEYS).map((r) => `<li><b>${r.name}</b>：${esc(r.desc)}（${r.min}〜${r.max}${r.unit}）</li>`).join('');
-  $('skillList').innerHTML = Object.values(SKILLS).map((v) => `<li><b>${v.name}</b>（${v.mode === 'now' ? 'ボタンを押した時点で使う' : '構えてからはじく'}）：${esc(v.desc)}</li>`).join('');
+  $('skillList').innerHTML = Object.entries(SKILLS).map(([k, v]) => `<li><b>${v.name}</b>${v.ssr ? '（SSR専用）' : ''}（${v.mode === 'now' ? 'ボタンを押した時点で使う' : '構えてからはじく'}）：${esc(skillDesc(k, draft.skillTune))}</li>`).join('');
+}
+
+// ---- 銘柄 ----
+// 元からある銘柄は、変えた所だけ draft.brands に入れる（保存のときに、初期値と同じ所は消える）
+const DEF = Object.fromEntries(defaultBrands().map((b) => [b.id, b]));
+const brandOf = (cfg, id) => ({ ...(DEF[id] || {}), ...(cfg.brands?.[id] || {}) });
+function brandIds() {
+  return [...Object.keys(DEF), ...Object.keys(draft.brands || {}).filter((id) => !DEF[id])];
+}
+function renderBrands() {
+  const sel = (path, opts, cur, label) => `<select data-path='${JSON.stringify(path)}' aria-label="${esc(label)}">${opts.map(([k, n]) => `<option value="${esc(k)}"${k === cur ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
+  const skillOpts = Object.entries(SKILLS).map(([k, v]) => [k, `${v.name}${v.ssr ? '（SSR）' : ''}`]);
+  const traitOpts = [['', 'なし'], ...Object.entries(TRAITS).map(([k, v]) => [k, v.name])];
+  const artOpts = Object.entries(ARTS).map(([k, v]) => [k, `${v.name}（${v.rarity}）`]);
+  const rarOpts = RARITY_ORDER.map((k) => [k, k]);
+  const shapeOpts = Object.entries(SHAPE_INFO).filter(([k]) => k !== 'folding').map(([k, v]) => [k, v.name]);
+  const matOpts = MAT_ORDER.map((k) => [k, MATERIAL_INFO[k].name]);
+  $('brands').innerHTML = `<thead><tr><th>ガチャ</th><th>レア度</th><th>名前</th><th>形・素材</th><th>絵柄</th><th>特性</th><th>必殺技</th></tr></thead><tbody>${
+    brandIds().map((id) => {
+      const b = brandOf(draft, id);
+      const custom = !DEF[id];
+      const base = ['brands', id];
+      const form = custom
+        ? `${sel([...base, 'shape'], shapeOpts, b.shape, '形')}${sel([...base, 'mat'], matOpts, b.mat, '素材')}`
+        : `${esc(SHAPE_INFO[b.shape]?.name || '')}・${esc(MATERIAL_INFO[b.mat]?.name || '')}${b.starter ? '<small>はじめから全員が持っている</small>' : ''}`;
+      return `<tr data-brand="${esc(id)}">
+        <td>${b.stage ? '<small>ステージ報酬</small>' : `<input type="checkbox" data-path='${JSON.stringify([...base, 'gacha'])}' ${b.gacha ? 'checked' : ''} aria-label="${esc(b.name)}をガチャに出す">`}</td>
+        <td>${sel([...base, 'rarity'], rarOpts, b.rarity, 'レア度')}</td>
+        <td><input data-path='${JSON.stringify([...base, 'name'])}' maxlength="20" value="${esc(b.name)}" aria-label="名前">${custom ? '<small>追加した銘柄</small>' : ''}</td>
+        <td>${form}</td>
+        <td>${sel([...base, 'art'], artOpts, b.art, '絵柄')}</td>
+        <td>${sel([...base, 'trait'], traitOpts, b.trait || '', '特性')}</td>
+        <td>${sel([...base, 'skill'], skillOpts, b.skill, '必殺技')}</td></tr>`;
+    }).join('')}</tbody>`;
+}
+$('addBrand').addEventListener('click', () => {
+  const a = new Uint8Array(4); crypto.getRandomValues(a);
+  const id = 'ruler:x-' + Array.from(a, (x) => x.toString(36).padStart(2, '0')).join('').slice(0, 8);
+  draft.brands = { ...(draft.brands || {}), [id]: { custom: true, name: '新しい定規', rarity: 'R', shape: 'straight30', mat: 'acrylic', art: 'plain', trait: null, skill: 'power', gacha: true } };
+  renderBrands(); renderRulerGacha(); markChanges();
+  document.querySelector(`[data-brand="${CSS.escape(id)}"] input:not([type=checkbox])`)?.focus();
+});
+
+// ---- 定規ガチャ ----
+function renderRulerGacha() {
+  const g = draft.rulerGacha;
+  const clean = sanitizeConfig(draft);
+  applyConfig(clean);
+  const o = rulerOdds(clean);
+  applyConfig(saved);
+  const num = (path, v, min, max, step, label) => `<input type="number" data-path='${JSON.stringify(path)}' min="${min}" max="${max}" step="${step}" value="${v}" aria-label="${esc(label)}">`;
+  $('rulerGacha').innerHTML = `
+    <div class="num-grid">
+      <label>1回の値段（本）${num(['rulerGacha', 'pull1'], g.pull1, 1, 10000, 1, '1回の値段')}</label>
+      <label>10回の値段（本・SR以上1本確定）${num(['rulerGacha', 'pull10'], g.pull10, 1, 100000, 1, '10回の値段')}</label>
+      <label>天井（この回数でSSR交換券。0でなし）${num(['rulerGacha', 'pity'], g.pity, 0, 1000, 1, '天井の回数')}</label>
+    </div>
+    <div class="table-wrap"><table class="tbl"><thead><tr><th>レア度</th><th>重み</th><th>確率</th><th>持っている定規が出たら返す本数</th><th>出る定規</th></tr></thead><tbody>${
+      RARITY_ORDER.map((k) => {
+        const x = o.find((v) => v.rarity === k);
+        return `<tr><td><span class="rar" style="background:${RULER_RARITY[k].color}">${k}</span> ${RULER_RARITY[k].name}</td>
+          <td>${num(['rulerGacha', 'weights', k], g.weights[k], 0, 10000, 0.1, `${k}の重み`)}</td>
+          <td class="pct">${x.percent.toFixed(1)}%</td>
+          <td>${num(['rulerGacha', 'refund', k], g.refund[k], 0, 100000, 1, `${k}の返還`)}</td>
+          <td>${x.items.length}本</td></tr>`;
+      }).join('')}</tbody></table></div>`;
+}
+
+// ---- レア度の上乗せ・特性・SSRの技 ----
+function renderTraits() {
+  const num = (path, v, min, max, step, label) => `<input type="number" data-path='${JSON.stringify(path)}' min="${min}" max="${max}" step="${step}" value="${v}" aria-label="${esc(label)}">`;
+  $('rarityBonus').innerHTML = RARITY_ORDER.map((k) => `<label><span class="rar" style="background:${RULER_RARITY[k].color}">${k}</span> 重さ・はじく力（%）${num(['rarityBonus', k], draft.rarityBonus[k], 0, 15, 0.5, `${k}の上乗せ`)}<small>初期値 ${RARITY_BONUS[k]}</small></label>`).join('');
+  $('traits').innerHTML = Object.entries(TRAITS).map(([k, t]) => `<label>${t.name}（%）${num(['traits', k], draft.traits[k], 0, k === 'aim' ? 100 : 30, 0.5, t.name)}<small>${esc(traitDesc(k, draft.traits[k]))}</small></label>`).join('');
+  $('skillTune').innerHTML = Object.entries(SKILL_TUNE_KEYS).map(([k, r]) => `<label>${SKILLS[r.skill].name}：${r.name}（${r.unit}）${num(['skillTune', k], draft.skillTune[k], r.min, r.max, 1, r.name)}<small>${r.min}〜${r.max}</small></label>`).join('');
+}
+
+// data-path の入力（銘柄・定規ガチャ・特性など）
+const getPath = (cfg, path) => (path[0] === 'brands' ? brandOf(cfg, path[1])[path[2]] : path.reduce((o, k) => o?.[k], cfg));
+function setPath(path, value) {
+  if (path[0] === 'brands') {
+    const [, id, key] = path;
+    draft.brands = { ...(draft.brands || {}), [id]: { ...(draft.brands?.[id] || {}), [key]: value } };
+    return;
+  }
+  let o = draft;
+  for (const k of path.slice(0, -1)) o = o[k] = { ...(o[k] || {}) };
+  o[path.at(-1)] = value;
 }
 
 function renderEconomy() {
@@ -133,10 +229,14 @@ function markChanges() {
   for (const el of document.querySelectorAll('[data-weight]')) el.classList.toggle('changed', draft.rarities[el.dataset.weight].weight !== saved.rarities[el.dataset.weight].weight);
   for (const el of document.querySelectorAll('[data-refund]')) el.classList.toggle('changed', draft.rarities[el.dataset.refund].refund !== saved.rarities[el.dataset.refund].refund);
   for (const el of document.querySelectorAll('[data-acc]')) el.classList.toggle('changed', draft.acc[el.dataset.acc] !== saved.acc[el.dataset.acc]);
-  for (const el of document.querySelectorAll('[data-skill]')) el.classList.toggle('changed', skillFor(el.dataset.skill, draft.skills) !== skillFor(el.dataset.skill, saved.skills));
+  for (const el of document.querySelectorAll('[data-path]')) {
+    const p = JSON.parse(el.dataset.path);
+    el.classList.toggle('changed', JSON.stringify(getPath(sanitizeConfig(draft), p) ?? null) !== JSON.stringify(getPath(saved, p) ?? null));
+  }
   for (const el of document.querySelectorAll('[data-tune]')) el.classList.toggle('changed', rulerTune(el.dataset.tune, sanitizeConfig(draft))[el.dataset.key] !== rulerTune(el.dataset.tune, saved)[el.dataset.key]);
   const dirty = !same(sanitizeConfig(draft), saved);
   const problem = configProblem(sanitizeConfig(draft));
+  applyConfig(saved);
   $('status').className = 'status' + (problem ? ' err' : '');
   $('status').textContent = problem || (dirty ? '変更はまだ保存されていません' : '保存されている設定です');
   $('save').disabled = !dirty || !!problem;
@@ -152,7 +252,17 @@ document.addEventListener('input', (e) => {
   else if (el.dataset.weight) draft.rarities[el.dataset.weight].weight = Number.isFinite(v) ? v : 0;
   else if (el.dataset.refund) draft.rarities[el.dataset.refund].refund = Number.isFinite(v) ? v : 0;
   else if (el.dataset.acc) draft.acc[el.dataset.acc] = Number.isFinite(v) ? v : 0;
-  else if (el.dataset.skill) draft.skills = { ...(draft.skills || {}), [el.dataset.skill]: el.value };
+  else if (el.dataset.path) {
+    const p = JSON.parse(el.dataset.path);
+    const val = el.type === 'checkbox' ? el.checked : el.type === 'number' ? (Number.isFinite(v) ? v : getPath(saved, p)) : el.tagName === 'SELECT' && p.at(-1) === 'trait' ? (el.value || null) : el.value;
+    setPath(p, val);
+    if (p[0] === 'rulerGacha' || (p[0] === 'brands' && ['rarity', 'gacha'].includes(p[2]))) { renderRulerGacha(); }
+    if (p[0] === 'traits' || p[0] === 'skillTune') {
+      const small = el.parentElement.querySelector('small');
+      if (small && p[0] === 'traits') small.textContent = traitDesc(p[1], val);
+    }
+    if (p[0] === 'skillTune') renderSkills();
+  }
   else if (el.dataset.tune) {
     const k = el.dataset.tune;
     draft.rulers = { ...(draft.rulers || {}), [k]: { ...(draft.rulers?.[k] || {}), [el.dataset.key]: Number.isFinite(v) ? v : rulerTuneDefault(k)[el.dataset.key] } };
@@ -226,9 +336,9 @@ $('users').addEventListener('click', async (e) => {
   const amount = Number($('g-' + id).value);
   b.disabled = true;
   try {
-    const r = await api('/api/admin/gift', { userId: id, amount });
+    const r = await api('/api/admin/gift', { userId: id, amount, title: $('giftTitle').value.trim() });
     document.querySelector(`[data-coins="${id}"]`).textContent = r.coins;
-    toast(`${amount > 0 ? '配りました' : '減らしました'}（いま${r.coins}${ECONOMY.unit}）`);
+    toast(r.inbox ? `受け取り箱に${amount}${ECONOMY.unit}届けました（受け取ると増えます）` : `減らしました（いま${r.coins}${ECONOMY.unit}）`);
   } catch (err) { toast(err.message); }
   finally { b.disabled = false; }
 });

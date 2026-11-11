@@ -24,10 +24,12 @@ export function cleanName(raw) {
 export const START_WAIT_MS = 60 * 1000;
 
 export class RoomCore {
-  constructor(code, mode = 'standard', now = Date.now()) {
+  // opt.fair：レア度・レベル・アクセサリの上乗せをなくす（特性と必殺技は残す）
+  constructor(code, mode = 'standard', now = Date.now(), opt = {}) {
     this.s = {
       code, createdAt: now, lastActive: now,
       mode: MODES[mode] ? mode : 'standard', // 部屋を作るときに決め、あとから変えない
+      fair: !!opt.fair,
       members: [],         // 入室順＝席順。{ id, token, userId, name, loadout, ready, connected }
       hostId: null,        // いちばん古くからいる人（切れた人の番を飛ばせる）
       phase: 'lobby',      // lobby（部屋で準備中）| aim（対戦中）
@@ -136,6 +138,7 @@ export class RoomCore {
       phase: s.phase,
       capacity: m.max,
       minPlayers: m.min,
+      fair: !!s.fair,
       startIn: s.phase === 'lobby' && s.startAt !== null ? Math.max(0, s.startAt - now) : null,
       members: s.members.map((x) => ({ id: x.id, name: x.name, account: !!x.userId, loadout: x.loadout, ready: !!x.ready, connected: x.connected })),
       wins: s.wins,
@@ -219,7 +222,7 @@ export class RoomCore {
         if (g.order[g.turn] !== id) return err('あなたの番ではありません');
         const shot = this.shoot(msg, now);
         if (shot.error) return err(shot.error);
-        return [{ to: 'all', msg: { t: 'shot', by: shot.by, frames: shot.frames, falls: shot.falls, saved: shot.saved, crit: shot.crit, vanished: shot.vanished, skill: shot.skill, blast: shot.blast, hits: shot.hits, state: this.snapshot(now) } }];
+        return [{ to: 'all', msg: { t: 'shot', by: shot.by, frames: shot.frames, falls: shot.falls, saved: shot.saved, crit: shot.crit, vanished: shot.vanished, skill: shot.skill, blast: shot.blast, hits: shot.hits, marks: shot.marks, state: this.snapshot(now) } }];
       }
       default:
         return [];
@@ -241,7 +244,12 @@ export class RoomCore {
       id: (prev?.id || 0) + 1, mode: s.mode, n, order, starter, turn: starter, shots: 0, outOrder: [], result: null,
       bodies: order.map((mid, i) => {
         const lo = this.member(mid).loadout;
-        return { owner: i, hp: Physics.HP.max, tune: lo.tune || null, skill: SKILLS[lo.skill] ? lo.skill : skillFor(lo.specKey), ruler: lo.ruler, specKey: lo.specKey, level: lo.level || 1, mods: lo.mods, pattern: lo.pattern, sticker: lo.sticker, x: st[i].x, y: st[i].y, a: st[i].a, state: 'desk' };
+        return {
+          owner: i, hp: Physics.HP.max, tune: lo.tune || null, skill: SKILLS[lo.skill] ? lo.skill : skillFor(lo.specKey), ruler: lo.ruler, specKey: lo.specKey,
+          level: lo.level || 1, mods: s.fair ? { mass: 1, mu: 1, power: 1 } : lo.mods, pattern: lo.pattern, sticker: lo.sticker,
+          rarity: lo.rarity || 'N', art: lo.art || 'plain', trait: lo.trait || null, traitPct: lo.traitPct || 0, st: lo.skillTune || null,
+          x: st[i].x, y: st[i].y, a: st[i].a, state: 'desk',
+        };
       }),
       kos: order.map(() => 0),
       players: order.map(() => ({ alive: true, selfOut: false })),
@@ -277,6 +285,11 @@ export class RoomCore {
       body.m *= k; body.invM /= k; body.I *= k; body.invI /= k;
     }
     if (b.dmgMul) body.dmgMul = b.dmgMul;
+    // 特性：鋭い縁（当てたときのダメージ）・ふんばり（すべりにくさ）・重心（当てられたときの飛び方）
+    const tp = (b.traitPct || 0) / 100;
+    if (b.trait === 'edge') body.dmgMul = (body.dmgMul ?? 1) * (1 + tp);
+    if (b.trait === 'grip') body.mu *= 1 + tp;
+    if (b.trait === 'center') body.kbMul = 1 - tp;
     Physics.setHp(body, b.hp ?? body.maxHp);
     return body;
   }
@@ -330,11 +343,25 @@ export class RoomCore {
       if (SKILLS[skill].mode !== 'shot') return { error: `「${SKILLS[skill].name}」は、ボタンを押した時点で使う必殺技です` };
       g.gauge[by] = 0;
     }
+    const tune = { ...SKILL_TUNE, ...(g.bodies[by].st || {}) };
     if (skill === 'power') power *= SKILL_TUNE.powerMul;
+    // SSR の専用技
+    if (skill === 'niji') power *= tune.nijiPower / 100;
+    if (skill === 'ichimonji') { body.noSpin = true; body.crit = CRIT.mul; }
+    if (skill === 'gomu') body.edgeBounce = { left: 1, speed: tune.gomuSpeed / 100 };
+    if (skill === 'ikkaku') {
+      const c = Physics.sharpestCorner(body.shapeKey);
+      body.tip = { x: c.x, y: c.y, r: c.span * tune.ikkakuTip / 100, push: tune.ikkakuPush / 100, dmg: tune.ikkakuDmg / 100 };
+    }
+    if (skill === 'hyaku') {
+      const deg = Math.max(-tune.hyakuMax, Math.min(tune.hyakuMax, Number.isFinite(input.curve) ? input.curve : 0));
+      body.curve = { at: tune.hyakuDelay / 1000, ang: (deg * Math.PI) / 180 };
+    }
     if (skill === 'heavy') body.dmgMul = (body.dmgMul ?? 1) * SKILL_TUNE.heavyDmg;
     if (skill === 'fullopen') body.dmgMul = (body.dmgMul ?? 1) * SKILL_TUNE.fullopenDmg;
     // クリティカルの抽選（当たっても、相手に当たらなければ何も起きない）
     if (this.rand() < CRIT.rate) body.crit = CRIT.mul;
+    const marks = []; // 技の印（一角・ゴム跳び・百八十度）
     Physics.flick(world, body, lx, ly, dx, dy, power);
     let crit = null;
 
@@ -361,6 +388,9 @@ export class RoomCore {
         if (!crit && world.events?.length) {
           const e = world.events.find((ev) => ev.type === 'crit');
           if (e) crit = { f: frames.length - 1, x: round2(e.x), y: round2(e.y), target: e.target };
+        }
+        for (const e of world.events || []) {
+          if (['tip', 'bounce', 'curve'].includes(e.type) && !e.marked) { e.marked = true; marks.push({ kind: e.type, f: frames.length - 1, x: round2(e.x), y: round2(e.y) }); }
         }
       }
     };
@@ -395,7 +425,9 @@ export class RoomCore {
         if (i === by || before[i].state !== 'desk') return;
         if (b.state !== 'desk' || Math.hypot(b.x - before[i].x, b.y - before[i].y) > 1) { moved++; add(i, GAUGE.beHit); }
       });
-      if (!skill) add(by, GAUGE.shot + moved * GAUGE.hit);
+      // 特性「方眼」：はじいたときのたまりが増える
+      const grid = g.bodies[by].trait === 'grid' ? 1 + (g.bodies[by].traitPct || 0) / 100 : 1;
+      if (!skill) add(by, Math.round((GAUGE.shot + moved * GAUGE.hit) * grid * 10) / 10);
     }
     if (skill === 'anchor') g.bodies[by].anchor = true;
     // インク漏れ：この1打で当てた相手に、毎番のダメージ
@@ -415,7 +447,7 @@ export class RoomCore {
     const keepTurn = skill === 'double' && world.bodies[by].state === 'desk';
     if (!keepTurn) { g.shots++; g.extra = false; }
     const { saved, vanished } = this.finishTurn(by, now, { keepTurn });
-    return { by, frames, falls, saved, crit, vanished, skill, blast, wind: blast?.kind === 'wind' ? blast : null, hits };
+    return { by, frames, falls, saved, crit, vanished, skill, blast, wind: blast?.kind === 'wind' ? blast : null, hits, marks };
   }
 
   // はじいた後の判定。{ saved: 1周目に落ちた定規を戻したか, vanished: 消えた机 { desk, drops } }

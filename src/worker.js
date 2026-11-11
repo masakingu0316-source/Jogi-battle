@@ -34,7 +34,8 @@ export default {
       for (let i = 0; i < 5; i++) {
         const code = newCode();
         const stub = env.ROOMS.get(env.ROOMS.idFromName(code));
-        const res = await stub.fetch(`https://room/create?code=${code}&mode=${mode}`, { method: 'POST' });
+        const fair = body.fair ? '1' : '0'; // レア度補正なし（公平）
+        const res = await stub.fetch(`https://room/create?code=${code}&mode=${mode}&fair=${fair}`, { method: 'POST' });
         if (res.ok) return Response.json({ code });
       }
       return Response.json({ error: '部屋を作れませんでした。もう一度お試しください。' }, { status: 503 });

@@ -1,12 +1,15 @@
 // ログイン・マイページ（定規ケース・ガチャ・戦績）
-import { ITEMS, RARITIES, ECONOMY, GACHA_POOL, odds, accText as accTextOf, defaultConfig, levelInfo, STAGE_LEVEL_MAX } from './shared/catalog.js';
-import { MODES } from './shared/rules.js';
+import {
+  ITEMS, RARITIES, ECONOMY, GACHA_POOL, odds, accText as accTextOf, defaultConfig, levelInfo, STAGE_LEVEL_MAX,
+  rulerList, rulerOdds, RULER_RARITY, RARITY_ORDER, applyConfig,
+} from './shared/catalog.js';
+import { MODES, TRAITS, traitDesc } from './shared/rules.js';
 import { previewRuler, iconRuler } from './ruler-paint.js';
 import { matChip, levelHtml, levelOfRuler, nextText, specText, skillText } from './ruler-info.js';
 
-const ALL_RULERS = Object.values(ITEMS).filter((it) => it.kind === 'ruler');
-
-const RANK = { basic: 0, N: 1, R: 2, SR: 3, SSR: 4, stage: 5 };
+// 定規の一覧は設定（追加した銘柄）で変わるので、そのつど読む
+const allRulers = () => rulerList();
+const RANK = { N: 1, R: 2, SR: 3, SSR: 4 };
 
 export function createAccount(ctx) {
   const { app, $, esc, toast } = ctx;
@@ -25,13 +28,14 @@ export function createAccount(ctx) {
   }
 
   async function reloadGame() {
-    try { const c = await api('/api/config'); if (c.game) app.game = c.game; } catch { /* 前の値のまま */ }
+    try { const c = await api('/api/config'); if (c.game) { app.game = c.game; applyConfig(app.game); } } catch { /* 前の値のまま */ }
   }
 
   // ---- ログイン状態 ----
   async function load() {
     try { app.config = await api('/api/config'); } catch { app.config = { login: false }; }
     app.game = app.config.game || defaultConfig();
+    applyConfig(app.game); // 設定で変えた銘柄・追加した銘柄を一覧に入れる
     if (app.config.login) await refresh(true);
     updateHeader();
   }
@@ -40,7 +44,7 @@ export function createAccount(ctx) {
     try {
       const data = await api('/api/me');
       app.me = data.user;
-      if (showBonus && data.dailyBonus) toast(`ログインボーナス：${ECONOMY.currency}${data.dailyBonus}${ECONOMY.unit}`);
+      if (showBonus && data.dailyBonus) toast(`毎日ボーナス（${ECONOMY.currency}${data.dailyBonus}${ECONOMY.unit}）が受け取り箱に届きました`);
     } catch { /* 読めなければログインしていない扱い */ }
     updateHeader();
   }
@@ -57,17 +61,21 @@ export function createAccount(ctx) {
     if (!app.me) return;
     app.me.coins = n;
     $('meCoins').textContent = n;
-    if (!$('mypage').hidden && tab === 'gacha') renderGachaButtons();
+    if (!$('mypage').hidden && tab === 'gacha') { renderGachaButtons(); renderRulerGacha(); }
+    if (!$('resCoins').closest('[hidden]')) $('resCoins').textContent = n;
   }
 
   // ---- 画面の出し入れ ----
-  // opt.edit：使っている定規の編集をすぐ開く（ホームの「定規を編集する」から）
+  // opt.edit：相棒の定規の編集をすぐ開く（ホームの相棒を押したとき・部屋から）
   function open(which = 'case', opt = {}) {
     if (!app.me) return;
     app.view = 'mypage';
     ctx.show('mypage');
-    $('myBack').textContent = app.state ? '← 部屋に戻る' : '← ホームに戻る';
+    // 部屋にいるときは、下のタブの代わりに「部屋に戻る」を出す
+    $('myHead').hidden = !app.state;
+    window.scrollTo(0, 0);
     select(which);
+    ctx.onTab?.(which);
     if (which === 'case' && opt.edit) {
       editing = app.me.selectedRuler;
       renderEditor();
@@ -83,26 +91,23 @@ export function createAccount(ctx) {
   function select(which) {
     tab = which;
     for (const b of document.querySelectorAll('[data-tab]')) b.setAttribute('aria-selected', String(b.dataset.tab === which));
-    for (const t of ['case', 'gacha', 'record']) $('tab-' + t).hidden = t !== which;
+    for (const t of ['case', 'gacha', 'record', 'other']) $('tab-' + t).hidden = t !== which;
     if (which === 'case') renderCase();
     if (which === 'gacha') { reloadGame().then(renderGacha); renderGacha(); }
     if (which === 'record') renderRecord();
+    if (which === 'other') renderOther();
   }
 
   $('meChip').addEventListener('click', () => open('case'));
   $('myBack').addEventListener('click', close);
-  document.querySelector('.tabs').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-tab]');
-    if (b) select(b.dataset.tab);
-  });
   $('openCase').addEventListener('click', () => open('case', { edit: true }));
 
   // ---- 定規ケース ----
   const owned = () => new Set(app.me?.owned || []);
   const ownedOf = (kind) => [...owned()].map((id) => ITEMS[id]).filter((it) => it && it.kind === kind)
     .sort((a, b) => RANK[b.rarity] - RANK[a.rarity] || a.name.localeCompare(b.name, 'ja'));
-  const rarityTag = (r) => (r === 'basic' ? '' : `<span class="rar" style="background:${RARITIES[r]?.color || '#ccc'}">${r === 'stage' ? 'ステージ' : r}</span>`);
-  const lookOf = (rulerId, setup) => ({ specKey: ITEMS[rulerId].specKey, level: levelOfRuler(app.me, rulerId).level, pattern: setup?.pattern || null, sticker: setup?.sticker || null });
+  const rarityTag = (r) => `<span class="rar" style="background:${RULER_RARITY[r]?.color || RARITIES[r]?.color || '#ccc'}">${r}</span>`;
+  const lookOf = (rulerId, setup) => ({ specKey: ITEMS[rulerId].specKey, art: ITEMS[rulerId].art, level: levelOfRuler(app.me, rulerId).level, pattern: setup?.pattern || null, sticker: setup?.sticker || null });
   // 対人の上限（Lv.10）を超えたら、ステージでのレベルも見せる
   const stageLvText = (id) => {
     const x = levelInfo(app.me?.exp?.[id] || 0, STAGE_LEVEL_MAX);
@@ -130,14 +135,14 @@ export function createAccount(ctx) {
   const savePref = (k, v) => { try { localStorage.setItem('jogi:case:' + k, v); } catch { /* 保存できなくても動く */ } };
   let caseSort = SORTS[pref('sort', 'got')] ? pref('sort', 'got') : 'got';
   let caseMat = MATS[pref('mat', 'all')] ? pref('mat', 'all') : 'all';
-  const orderOf = (id) => ALL_RULERS.findIndex((r) => r.id === id);
-  const howToGet = (r) => (r.rarity === 'stage' ? 'ステージ「可変定規編」をすべてクリアするともらえる' : `ガチャで出る（${RARITIES[r.rarity]?.name || r.rarity}）`);
+  const orderOf = (id) => allRulers().findIndex((r) => r.id === id);
+  const howToGet = (r) => (r.stage ? 'ステージ「可変定規編」をすべてクリアするともらえる' : r.gacha ? `定規ガチャで出る（${RULER_RARITY[r.rarity]?.name || r.rarity}）` : '今は手に入りません');
 
   function sortedRulers() {
     const me = app.me, have = owned();
     const exp = (id) => me.exp?.[id] || 0;
     const got = (id) => me.acquired?.[id] ?? 0;
-    const list = ALL_RULERS.filter((r) => caseMat === 'all' || r.mat === caseMat);
+    const list = allRulers().filter((r) => caseMat === 'all' || r.mat === caseMat);
     const cmp = {
       got: (a, b) => got(b.id) - got(a.id) || orderOf(a.id) - orderOf(b.id),
       level: (a, b) => exp(b.id) - exp(a.id) || orderOf(a.id) - orderOf(b.id),
@@ -151,13 +156,14 @@ export function createAccount(ctx) {
   function renderCase() {
     const me = app.me;
     const have = owned();
-    const all = ALL_RULERS.length;
-    const mine = ALL_RULERS.filter((r) => have.has(r.id)).length;
+    const all = allRulers().length;
+    const mine = allRulers().filter((r) => have.has(r.id)).length;
     $('caseCount').textContent = mine;
     $('caseTotal').textContent = all;
     $('caseMeter').style.width = `${Math.round((mine / all) * 100)}%`;
-    const got = [...have].filter((id) => ITEMS[id] && ITEMS[id].rarity !== 'basic' && ITEMS[id].rarity !== 'stage').length;
-    $('collection').textContent = `ガチャのアイテム全体 ${got}／${GACHA_POOL.length}`;
+    const got = [...have].filter((id) => ITEMS[id] && ITEMS[id].kind !== 'ruler').length;
+    const byRar = RARITY_ORDER.map((k) => `${k} ${allRulers().filter((r) => r.rarity === k && have.has(r.id)).length}/${allRulers().filter((r) => r.rarity === k).length}`).join('・');
+    $('collection').textContent = `${byRar}　飾り ${got}／${GACHA_POOL.length}`;
     $('caseFilter').innerHTML = Object.entries(MATS).map(([k, n]) => `<button type="button" data-mat="${k}" aria-pressed="${k === caseMat}">${n}</button>`).join('');
     const sortOpts = Object.entries(SORTS).map(([k, x]) => `<option value="${k}">${x.name}</option>`).join('');
     if ($('caseSort').dataset.opts !== sortOpts) { $('caseSort').innerHTML = sortOpts; $('caseSort').dataset.opts = sortOpts; }
@@ -173,7 +179,7 @@ export function createAccount(ctx) {
       const label = has ? `${r.name} Lv.${lv.level}${slv.level > lv.level ? `（ステージLv.${slv.level}）` : ''}${using ? '・使用中' : ''}` : `${r.name}（まだ持っていません）`;
       return `<button type="button" class="box-tile r-${r.rarity} m-${r.mat}${has ? '' : ' locked'}${using ? ' using' : ''}" data-ruler="${r.id}" aria-label="${esc(label)}">
         <canvas data-icon="${r.id}" aria-hidden="true"></canvas>
-        ${r.rarity !== 'basic' ? `<span class="bt-rar">${r.rarity === 'stage' ? '報酬' : r.rarity}</span>` : ''}
+        <span class="bt-rar">${r.rarity}</span>
         ${using ? '<span class="bt-use">使用中</span>' : fresh ? '<span class="bt-new">NEW</span>' : ''}
         ${has ? `<span class="bt-lv${lv.max ? ' max' : ''}">Lv${slv.level > lv.level ? slv.level : lv.level}</span>` : '<span class="bt-q">？</span>'}
       </button>`;
@@ -181,7 +187,7 @@ export function createAccount(ctx) {
     $('caseChip').textContent = `${list.filter((r) => have.has(r.id)).length}/${list.length}`;
     for (const c of document.querySelectorAll('[data-icon]')) {
       const id = c.dataset.icon;
-      const look = { ...lookOf(id, me.setups[id]), level: levelInfo(me.exp?.[id] || 0, STAGE_LEVEL_MAX).level };
+      const look = { ...lookOf(id, me.setups[id]), art: ITEMS[id].art, level: levelInfo(me.exp?.[id] || 0, STAGE_LEVEL_MAX).level };
       iconRuler(c, look, { locked: !have.has(id) });
     }
     if ($('rulerSheet').open) renderEditor();
@@ -225,19 +231,17 @@ export function createAccount(ctx) {
     if (!has) {
       // まだ持っていない定規：形と手に入れ方だけ見せる
       const r = ITEMS[editing];
-      previewRuler($('previewBig'), { specKey: r.specKey, level: 1 });
+      previewRuler($('previewBig'), { specKey: r.specKey, art: r.art, level: 1 });
       $('edTitle').innerHTML = `${esc(r.name)} ${matChip(r.mat)} ${rarityTag(r.rarity)}`;
       $('edLevel').innerHTML = '<span class="xp-note">まだ持っていません</span>';
-      $('accDesc').textContent = `${howToGet(r)}
-${r.desc}
-${skillText(editing, app.game)}`;
+      $('accDesc').textContent = `${howToGet(r)}\n${r.desc}\n${traitLine(editing)}${skillText(editing, app.game)}`;
       return;
     }
     const s = me.setups[editing] || {};
     fillSelect($('edPattern'), 'pattern', s.pattern);
     fillSelect($('edSticker'), 'sticker', s.sticker);
     fillSelect($('edAcc'), 'acc', s.acc, (it) => accText(it.id));
-    $('saveSetup').textContent = editing === me.selectedRuler ? '保存する' : 'この定規を使う';
+    $('saveSetup').textContent = editing === me.selectedRuler ? '保存する（相棒）' : '相棒にする';
     $('saveNote').textContent = '';
     updatePreview();
   }
@@ -252,7 +256,7 @@ ${skillText(editing, app.game)}`;
     const slv = levelInfo(app.me?.exp?.[e.ruler] || 0, STAGE_LEVEL_MAX);
     $('edLevel').innerHTML = `${levelHtml(lv)}<span class="xp-note">${lv.max ? `対人は最大レベル・ステージ Lv.${slv.level}${slv.max ? '（最大）' : `（次まで あと${slv.need - slv.into}点）`}` : nextText(lv)}</span>`;
     const base = specText(e.ruler, lv.level, app.game);
-    $('accDesc').textContent = (e.acc ? `${base}　アクセサリ：${accText(e.acc)}` : base) + `\n${skillText(e.ruler, app.game)}`;
+    $('accDesc').textContent = (e.acc ? `${base}　アクセサリ：${accText(e.acc)}` : base) + `\n${traitLine(e.ruler)}${skillText(e.ruler, app.game)}`;
   }
   for (const id of ['edPattern', 'edSticker', 'edAcc']) $(id).addEventListener('change', updatePreview);
 
@@ -275,7 +279,81 @@ ${skillText(editing, app.game)}`;
     }
   });
 
-  // ---- ガチャ ----
+  // 特性の説明（SR以上）
+  function traitLine(id) {
+    const it = ITEMS[id];
+    if (!it?.trait) return '';
+    const pct = game().traits?.[it.trait] ?? TRAITS[it.trait].pct;
+    return `特性「${TRAITS[it.trait].name}」：${traitDesc(it.trait, pct)}\n`;
+  }
+
+  // ---- その他 ----
+  function renderOther() {
+    $('myNameInput').value = app.me.name;
+    $('myId').textContent = app.me.id;
+    $('adminLink').hidden = !app.me.admin;
+  }
+
+  // ---- ガチャ（定規ガチャ／飾りガチャ） ----
+  let gachaKind = 'ruler';
+  document.querySelector('.gacha-switch').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-gacha]');
+    if (!b) return;
+    gachaKind = b.dataset.gacha;
+    renderGacha();
+  });
+  function renderRulerGacha() {
+    const c = app.me?.coins ?? 0;
+    const g = game().rulerGacha;
+    $('rpull1').textContent = `1回引く（${g.pull1}${ECONOMY.unit}）`;
+    $('rpull10').textContent = `10回引く（${g.pull10}${ECONOMY.unit}）`;
+    $('rpull1').disabled = c < g.pull1;
+    $('rpull10').disabled = c < g.pull10;
+    const pity = app.me?.pity ?? 0;
+    $('pity').hidden = !g.pity;
+    if (g.pity) {
+      $('pityBar').style.width = `${Math.min(100, (pity / g.pity) * 100)}%`;
+      $('pityText').textContent = `あと${g.pity - pity}回（${pity}／${g.pity}）`;
+    }
+    const e = game().economy;
+    $('rgachaNote').textContent = c < g.pull1
+      ? `${ECONOMY.currency}が足りません（いま${c}本、1回に${g.pull1}本必要）。対戦に参加すると${e.play}本（勝つと${e.play + e.win}本）、毎日ボーナスで${e.daily}本もらえます。`
+      : c < g.pull10 ? `いまは${c}本。10回引くにはあと${g.pull10 - c}本必要です。` : '';
+    $('roddsTable').innerHTML = `<table><thead><tr><th>レア度</th><th>確率</th><th>1本あたり</th><th>中身</th></tr></thead><tbody>${
+      rulerOdds(game()).filter((o) => o.items.length).map((o) => `<tr><td>${rarityTag(o.rarity)} ${o.name}</td><td>${o.percent.toFixed(1)}%</td><td>${o.each.toFixed(2)}%</td>
+        <td>${o.items.map((id) => esc(ITEMS[id].name)).join('、')}</td></tr>`).join('')
+    }</tbody></table><p class="wait">10回引くときの最後の1本は、SR以上のなかから上の比率で選ばれます。${g.pity ? `${g.pity}回引くごとに、受け取り箱に「SSR交換券」が届き、ガチャに出るSSRから好きな1本を選べます。` : ''}持っている定規が出たら、えんぴつに変えて返します（${RARITY_ORDER.map((k) => `${k} ${g.refund[k]}本`).join('・')}）。</p>`;
+  }
+  async function pullRuler(count) {
+    $('rpull1').disabled = $('rpull10').disabled = true;
+    const dome = document.querySelector('#gachaRuler .dome');
+    dome.classList.remove('spin'); void dome.offsetWidth; dome.classList.add('spin');
+    try {
+      const r = await api('/api/ruler-gacha', { count });
+      for (const x of r.results) if (!x.dup && !app.me.owned.includes(x.id)) { app.me.owned.push(x.id); (app.me.acquired ||= {})[x.id] = Date.now(); }
+      app.me.pity = r.pity;
+      setCoins(r.coins);
+      if (r.tickets) { app.me.inbox = (app.me.inbox || 0) + r.tickets; toast('天井に届きました！ 受け取り箱に「SSR交換券」が届いています'); }
+      $('rgachaResults').innerHTML = r.results.map((x, i) => {
+        const it = ITEMS[x.id];
+        return `<div class="rprize r-${it.rarity}${x.dup ? '' : ' new'}" style="animation-delay:${i * 70}ms">
+          <span class="box-tile r-${it.rarity} m-${it.mat}"><canvas data-rprize="${x.id}" aria-hidden="true"></canvas><span class="bt-rar">${it.rarity}</span>${x.dup ? '' : '<span class="bt-new">NEW</span>'}</span>
+          <span class="p-name">${esc(it.name)}</span>
+          <span class="p-sub">${x.dup ? `持っている → ${ECONOMY.currency}+${x.refund}` : esc(it.trait ? `特性 ${TRAITS[it.trait].name}` : RULER_RARITY[it.rarity].theme)}</span></div>`;
+      }).join('');
+      for (const c of document.querySelectorAll('[data-rprize]')) { const it = ITEMS[c.dataset.rprize]; iconRuler(c, { specKey: it.specKey, art: it.art, level: 1 }); }
+      ctx.onProfile?.();
+    } catch (err) {
+      toast(err.message);
+    } finally {
+      renderRulerGacha();
+    }
+  }
+  $('rpull1').addEventListener('click', () => pullRuler(1));
+  $('rpull10').addEventListener('click', () => pullRuler(10));
+
+  // ---- 飾りガチャ ----
+
   function renderGachaButtons() {
     const c = app.me?.coins ?? 0;
     const e = game().economy;
@@ -290,6 +368,10 @@ ${skillText(editing, app.game)}`;
       : c < e.pull10 ? `いまは${c}本。10回引くにはあと${e.pull10 - c}本必要です。` : '';
   }
   function renderGacha() {
+    for (const b of document.querySelectorAll('[data-gacha]')) b.setAttribute('aria-selected', String(b.dataset.gacha === gachaKind));
+    $('gachaRuler').hidden = gachaKind !== 'ruler';
+    $('gachaDecor').hidden = gachaKind !== 'decor';
+    renderRulerGacha();
     renderGachaButtons();
     $('oddsTable').innerHTML = `<table><thead><tr><th>レア度</th><th>確率</th><th>1つあたり</th><th>中身</th></tr></thead><tbody>${
       odds(game()).filter((o) => o.items.length).map((o) => `<tr><td>${rarityTag(o.rarity)} ${o.name}</td><td>${o.percent.toFixed(1)}%</td><td>${o.each.toFixed(2)}%</td>
@@ -298,7 +380,7 @@ ${skillText(editing, app.game)}`;
   }
   async function pull(count) {
     $('pull1').disabled = $('pull10').disabled = true;
-    const dome = document.querySelector('.dome');
+    const dome = document.querySelector('#gachaDecor .dome');
     dome.classList.remove('spin'); void dome.offsetWidth; dome.classList.add('spin');
     try {
       const r = await api('/api/gacha', { count });
@@ -307,7 +389,7 @@ ${skillText(editing, app.game)}`;
       $('gachaResults').innerHTML = r.results.map((x, i) => {
         const it = ITEMS[x.id];
         const kind = { ruler: '定規', pattern: '柄', sticker: 'シール', acc: 'アクセサリ' }[it.kind];
-        const extra = it.kind === 'acc' ? `・${accText(it.id)}` : it.kind === 'ruler' ? `・${ITEMS[it.id].desc.split('。')[1]}` : '';
+        const extra = it.kind === 'acc' ? `・${accText(it.id)}` : '';
         return `<div class="prize${x.dup ? '' : ' new'}" style="animation-delay:${i * 60}ms; border-color:${RARITIES[it.rarity].color}">
           <span class="p-name">${rarityTag(it.rarity)} ${esc(it.name)}</span>
           <span class="p-sub">${kind}${extra}　${x.dup ? `かぶり → ${ECONOMY.currency}+${x.refund}` : 'NEW'}</span></div>`;
@@ -323,10 +405,7 @@ ${skillText(editing, app.game)}`;
 
   // ---- 戦績 ----
   async function renderRecord() {
-    $('myNameInput').value = app.me.name;
     await refresh();
-    $('myId').textContent = app.me.id;
-    $('adminLink').hidden = !app.me.admin;
     const st = app.me.stats;
     const rate = st.games ? Math.round(st.wins / st.games * 100) + '%' : '—';
     const tiles = [['対戦', st.games], ['勝ち', st.wins], ['勝率', rate], ['落とした数', st.kos], ['自滅', st.selfOuts]];

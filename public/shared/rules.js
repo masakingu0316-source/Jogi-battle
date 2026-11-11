@@ -118,7 +118,19 @@ export const SKILLS = {
   chair: { name: 'いす召喚', mode: 'now', color: '#d39a1c', desc: '自分にいちばん近い辺に椅子を並べ、1周のあいだそこから落ちない' },
   blizzard: { name: '吹雪', mode: 'now', color: '#74b9ff', desc: '次の人の番のあいだ、机が凍ってよくすべる' },
   fullopen: { name: '全開', mode: 'shot', color: '#22c3b0', desc: 'この1打だけいちばん長い形に伸び、当てた相手へのダメージが1.8倍' },
+  // SSR の専用技（数値は SKILL_TUNE。設定画面で変えられる）
+  ichimonji: { name: '一文字', mode: 'shot', color: '#d4a72c', ssr: true, desc: 'この1打は回らずにまっすぐすべり、最初に当てた相手には必ずクリティカル' },
+  gomu: { name: 'ゴム跳び', mode: 'shot', color: '#e0567a', ssr: true, desc: 'この1打のあいだ、机の端で1回だけ跳ね返る（速さ{gomuSpeed}%で戻る）' },
+  niji: { name: '虹の道', mode: 'shot', color: '#7b6cff', ssr: true, desc: '照準線に1回目の跳ね返りの先まで見え、はじく力{nijiPower}%' },
+  ikkaku: { name: '一角', mode: 'shot', color: '#e2402b', ssr: true, desc: 'いちばん鋭い角の先で当てたときだけ、弾く力{ikkakuPush}%・ダメージ{ikkakuDmg}%' },
+  hyaku: { name: '百八十度', mode: 'shot', color: '#f0b429', ssr: true, desc: '曲がる角度（±{hyakuMax}°）も決めてはじくと、{hyakuDelay}ミリ秒後に1回だけ曲がる' },
 };
+// 技の説明（数値の入った技は、設定画面の値で書きかえる）
+export function skillDesc(key, tune) {
+  const sk = SKILLS[key];
+  if (!sk) return '';
+  return sk.desc.replace(/\{(\w+)\}/g, (_, k) => String(tune?.[k] ?? SKILL_TUNE[k]));
+}
 // 初期の割り当て（形×素材）。アクリルは攻め、メタルは守り、ラバーはトリックが多め
 export const RULER_SKILL = {
   'straight30-acrylic': 'power', 'straight30-metal': 'anchor', 'straight30-rubber': 'wind',
@@ -145,7 +157,36 @@ export const SKILL_TUNE = {
   magnetRadius: 30, magnetSpeed: -150,         // 磁石：届く距離・引き寄せる速さ（マイナスは内向き）
   heal: 35,                 // 保健室：回復する量
   fullopenDmg: 1.8,         // 全開：ダメージの倍率
+  // SSR の専用技（設定画面で変えられる。％・ミリ秒・度）
+  gomuSpeed: 70,            // ゴム跳び：跳ね返ったあとの速さ（％）
+  nijiPower: 130,           // 虹の道：はじく力（％）
+  ikkakuPush: 200,          // 一角：角の先で当てたときの弾く力（％）
+  ikkakuDmg: 150,           // 一角：そのときのダメージ（％）
+  ikkakuTip: 10,            // 一角：角の先とみなす範囲（定規のいちばん長い所に対する％）
+  hyakuDelay: 150,          // 百八十度：はじいてから曲がるまで（ミリ秒）。定規がすべるのは0.2〜0.4秒ほどなので短め
+  hyakuMax: 90,             // 百八十度：曲がる角度の最大（度）
 };
+// 設定画面で変えられる技の数値
+export const SKILL_TUNE_KEYS = {
+  gomuSpeed: { skill: 'gomu', name: '跳ね返ったあとの速さ', unit: '%', min: 20, max: 100 },
+  nijiPower: { skill: 'niji', name: 'はじく力', unit: '%', min: 100, max: 160 },
+  ikkakuPush: { skill: 'ikkaku', name: '角の先で当てたときの弾く力', unit: '%', min: 100, max: 300 },
+  ikkakuDmg: { skill: 'ikkaku', name: '角の先で当てたときのダメージ', unit: '%', min: 100, max: 250 },
+  ikkakuTip: { skill: 'ikkaku', name: '角の先とみなす範囲（定規の長さに対して）', unit: '%', min: 3, max: 25 },
+  hyakuDelay: { skill: 'hyaku', name: 'はじいてから曲がるまで', unit: 'ミリ秒', min: 50, max: 600 },
+  hyakuMax: { skill: 'hyaku', name: '曲がる角度の最大', unit: '°', min: 15, max: 120 },
+};
+
+// ---- 特性（SR以上の定規が持つ、いつも効く性質。ゲージは使わない） ----
+// pct は設定画面で変えられる（値は％）
+export const TRAITS = {
+  aim: { name: '目盛り読み', pct: 20, desc: '狙うときの矢印が{pct}%長く見える（表示だけ）' },
+  edge: { name: '鋭い縁', pct: 5, desc: '当てたときのダメージ+{pct}%' },
+  grip: { name: 'ふんばり', pct: 8, desc: '机とのすべりにくさ+{pct}%' },
+  grid: { name: '方眼', pct: 5, desc: 'はじいたときの必殺ゲージのたまり+{pct}%' },
+  center: { name: '重心', pct: 3, desc: '当てられたときの飛び方−{pct}%' },
+};
+export const traitDesc = (key, pct) => (TRAITS[key] ? TRAITS[key].desc.replace('{pct}', String(pct ?? TRAITS[key].pct)) : '');
 // ゲージのたまり方
 export const GAUGE = { max: 100, shot: 20, hit: 10, beHit: 30 };
 

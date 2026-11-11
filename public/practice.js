@@ -5,7 +5,8 @@ import { RoomCore } from './shared/core.js';
 import { planShot, decideNow, CPU_LEVELS } from './shared/cpu.js';
 import { ITEMS, resolveLoadout } from './shared/catalog.js';
 
-const RULER_IDS = Object.values(ITEMS).filter((it) => it.kind === 'ruler').map((it) => it.id);
+// コンピュータの定規：N と R から（SR以上の特性・SSRの技は、練習の相手には使わせない）
+const rulerIds = () => Object.values(ITEMS).filter((it) => it.kind === 'ruler' && (it.rarity === 'N' || it.rarity === 'R')).map((it) => it.id);
 
 // mode: 遊び方、cpus: コンピュータの人数、level: 強さ
 // loadout: 自分の定規、loadoutFor(rulerId): 部屋で定規を替えたとき、onMessage: 画面へ、busy(): 動きの再生中か
@@ -17,7 +18,8 @@ export function createPractice({ mode, cpus, level, name, loadout, loadoutFor, o
   const cpuIds = [];
   for (let i = 0; i < cpus; i++) {
     const m = core.join(`CPU${i + 1}`, null, null).member;
-    const ruler = RULER_IDS[Math.floor(Math.random() * RULER_IDS.length)];
+    const ids = rulerIds();
+    const ruler = ids[Math.floor(Math.random() * ids.length)];
     core.setLoadout(m.id, resolveLoadout({ ruler }, cfg, CPU_LEVELS[lv].level));
     cpuIds.push(m.id);
   }
@@ -63,6 +65,8 @@ export function createPractice({ mode, cpus, level, name, loadout, loadoutFor, o
   deliver({ t: 'welcome', you: { id: me.id, token: me.token, account: true }, state: core.snapshot() });
 
   return {
+    get core() { return core; }, // 確認用
+    pushState: () => state(),
     send(msg) {
       if (closed) return true;
       if (msg.t === 'leave') { closed = true; onMessage({ t: 'left' }); return true; }

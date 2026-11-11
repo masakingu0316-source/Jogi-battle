@@ -127,9 +127,15 @@ test('設定の範囲チェック：上限を超える値は丸められ、出�
   for (let i = 0; i < 200; i++) assert.notEqual(rollOnce(Math.random, null, off).rarity, 'N');
 });
 
-test('えんぴつを配る・減らす（0本より下にはならない）。ユーザーを名前で探せる', { skip }, async () => {
+test('えんぴつを配る（受け取り箱へ）・減らす（すぐ。0本より下にはならない）。ユーザーを名前で探せる', { skip }, async () => {
   const { user } = await D.upsertGoogleUser(db, 'gift-user', 'プレゼント');
-  assert.equal((await D.giftCoins(db, user.id, 50)).coins, ECONOMY.welcome + 50);
+  const g = await D.giftCoins(db, user.id, 50, 'おわび');
+  assert.equal(g.inbox, true);
+  assert.equal(g.coins, ECONOMY.welcome, '受け取るまでは増えない');
+  const box = await D.inboxOf(db, user.id);
+  assert.equal(box[0].title, 'おわび');
+  assert.equal((await D.claimInbox(db, user.id, { id: box[0].id })).total, ECONOMY.welcome + 50);
+  assert.match((await D.claimInbox(db, user.id, { id: box[0].id })).error, /もう受け取った/);
   assert.equal((await D.giftCoins(db, user.id, -99999)).coins, 0);
   assert.match((await D.giftCoins(db, user.id, 0)).error, /0以外/);
   assert.match((await D.giftCoins(db, 'nobody', 5)).error, /見つかりません/);

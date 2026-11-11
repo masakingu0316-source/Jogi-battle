@@ -488,7 +488,7 @@ export function createBoard(canvas, wrap, opt = {}) {
     if (len < 0.8) return;
     const power = Math.min(len, MAX_DRAG) / MAX_DRAG;
     const ux = -dx / len, uy = -dy / len;
-    const al = 3 + power * 14;
+    const al = (3 + power * 14) * (a.reach || 1);
     const ex = a.cx + ux * al, ey = a.cy + uy * al;
     const col = a.skill ? a.skill.color : `hsl(${50 - power * 45}, 95%, 62%)`;
     ctx.strokeStyle = col; ctx.fillStyle = col;
@@ -501,6 +501,30 @@ export function createBoard(canvas, wrap, opt = {}) {
     ctx.lineTo(ex - ux * hw * 1.5 - uy * hw, ey - uy * hw * 1.5 + ux * hw);
     ctx.lineTo(ex - ux * hw * 1.5 + uy * hw, ey - uy * hw * 1.5 - ux * hw);
     ctx.closePath(); ctx.fill();
+    // 百八十度：矢印の先から、曲がったあとの向きを点線で
+    if (a.curve !== undefined) {
+      const c = Math.cos(a.curve), s = Math.sin(a.curve);
+      const vx = ux * c - uy * s, vy = ux * s + uy * c;
+      ctx.setLineDash([0.9, 0.6]);
+      ctx.beginPath(); ctx.moveTo(ex, ey); ctx.lineTo(ex + vx * al * 0.8, ey + vy * al * 0.8); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // 虹の道：ぶつかる所と、跳ね返った先まで虹色の点線で
+    if (a.path?.length > 1) {
+      const p0 = a.path[0], p1 = a.path.at(-1);
+      const gr = ctx.createLinearGradient(p0.x, p0.y, p1.x, p1.y);
+      ['#ff6b6b', '#ffb84d', '#ffe66d', '#7bd389', '#5ab8ff', '#a78bfa'].forEach((cl, i, arr) => gr.addColorStop(i / (arr.length - 1), cl));
+      ctx.save();
+      ctx.strokeStyle = gr;
+      ctx.lineWidth = Math.max(0.25, 3 / px);
+      ctx.setLineDash([1.2, 0.7]);
+      ctx.beginPath(); ctx.moveTo(p0.x, p0.y);
+      for (const q of a.path.slice(1)) ctx.lineTo(q.x, q.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      if (a.path.length > 2) { ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(a.path[1].x, a.path[1].y, Math.max(0.4, 4 / px), 0, Math.PI * 2); ctx.fill(); }
+      ctx.restore();
+    }
     ctx.lineCap = 'butt';
     const sp = toScreen(a.px, a.py);
     ctx.save();

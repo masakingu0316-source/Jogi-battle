@@ -124,9 +124,7 @@ export function createStageUI({ app, $, esc, show, onStart, onResume, onAbandon 
   function homeNote() {
     if (!app.me) return;
     const st = stage(), p = progress();
-    $('stageHomeNote').textContent = p.cleared >= st.maps.length
-      ? `${st.name}：全${st.maps.length}マップ クリア！`
-      : `${st.name}：${p.cleared}／${st.maps.length} クリア。文房具の敵を倒しながら、マップを順に進みます。`;
+    $('stageHomeNote').textContent = p.cleared >= st.maps.length ? '全クリア' : `${p.cleared}／${st.maps.length}`;
   }
 
   return { open, render, homeNote, setError, get selection() { return { stage: ui.stage, map: ui.map, ruler: ui.ruler }; }, set map(v) { ui.map = v; } };

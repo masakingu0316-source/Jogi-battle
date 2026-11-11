@@ -85,9 +85,12 @@ function candidate(core, me, rand, useSkill) {
   const len = Math.hypot(tx - mine.x, ty - mine.y) || 1;
   const dx = (tx - mine.x) / len, dy = (ty - mine.y) / len;
   // はじく点：定規の真ん中あたりを、少しずらして押さえる
-  const off = (rand() - 0.5) * Physics.SHAPES[spec.shape].radius * 0.8;
-  const near = Physics.nearestOnShape(spec.shape, off, (rand() - 0.5) * 1.5);
-  return { lx: near.x, ly: near.y, dx, dy, power: 0.25 + rand() * 0.75, skill: useSkill };
+  const shapeKey = Physics.shapeOf(mine.specKey, mine.hp, mine.maxHp);
+  const off = (rand() - 0.5) * Physics.SHAPES[shapeKey].radius * 0.8;
+  const near = Physics.nearestOnShape(shapeKey, off, (rand() - 0.5) * 1.5);
+  // 百八十度：曲がる角度も試す
+  const curve = useSkill && core.skillOf(me) === 'hyaku' ? Math.round((rand() - 0.5) * 2 * (mine.st?.hyakuMax ?? 90)) : undefined;
+  return { lx: near.x, ly: near.y, dx, dy, power: 0.25 + rand() * 0.75, skill: useSkill, curve };
 }
 
 // 盤面を写して1回はじいてみる

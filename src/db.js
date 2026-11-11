@@ -1,5 +1,5 @@
 // アカウントまわりのデータベース操作（Cloudflare D1）
-import { ITEMS, BASIC_RULERS, DEFAULT_RULER, ECONOMY, rollOnce, resolveLoadout, sanitizeConfig, levelInfo, LEVEL_MAX, STAGE_LEVEL_MAX } from '../public/shared/catalog.js';
+import { ITEMS, BASIC_RULERS, DEFAULT_RULER, ECONOMY, rollOnce, resolveLoadout, sanitizeConfig, levelInfo, LEVEL_MAX, STAGE_LEVEL_MAX, applyConfig, rollRuler, rulerPool, DEFAULT_BRAND_IDS, RULER_RARITY } from '../public/shared/catalog.js';
 import { STAGES, REWARD } from '../public/shared/stage.js';
 import { cleanName } from '../public/shared/core.js';
 
@@ -31,14 +31,23 @@ const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS stage_clears (
     user_id TEXT NOT NULL, stage_id TEXT NOT NULL, map INTEGER NOT NULL, clears INTEGER NOT NULL DEFAULT 0,
     first_at INTEGER NOT NULL, best_shots INTEGER, PRIMARY KEY (user_id, stage_id, map))`,
+  // 受け取り箱：毎日ボーナス・ステージ初クリアの報酬・天井の交換券・管理者からの配布。押して受け取る（期限なし）
+  // kind：daily / stage / ticket（SSR交換券）/ gift。item_id は受け取ると手に入る定規
+  `CREATE TABLE IF NOT EXISTS inbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, kind TEXT NOT NULL, title TEXT NOT NULL,
+    coins INTEGER NOT NULL DEFAULT 0, item_id TEXT, created_at INTEGER NOT NULL, claimed_at INTEGER)`,
+  `CREATE INDEX IF NOT EXISTS inbox_user ON inbox(user_id, claimed_at)`,
+  // 定規ガチャの天井までの回数
+  `CREATE TABLE IF NOT EXISTS ruler_pity (user_id TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0)`,
 ];
 
 // 定規を「形×素材」に作り直したので、前の定規（今の一覧にないもの）は片付ける。柄・シール・アクセサリはそのまま
-const RULER_IDS = Object.values(ITEMS).filter((it) => it.kind === 'ruler').map((it) => `'${it.id}'`).join(', ');
+// 設定画面で追加した銘柄（ruler:x-…）は消さない
+const RULER_IDS = DEFAULT_BRAND_IDS.map((id) => `'${id}'`).join(', ');
 const CLEANUP = [
-  `DELETE FROM items WHERE item_id LIKE 'ruler:%' AND item_id NOT IN (${RULER_IDS})`,
-  `DELETE FROM setups WHERE ruler_id NOT IN (${RULER_IDS})`,
-  `UPDATE users SET selected_ruler = '${DEFAULT_RULER}' WHERE selected_ruler NOT IN (${RULER_IDS})`,
+  `DELETE FROM items WHERE item_id LIKE 'ruler:%' AND item_id NOT LIKE 'ruler:x-%' AND item_id NOT IN (${RULER_IDS})`,
+  `DELETE FROM setups WHERE ruler_id NOT LIKE 'ruler:x-%' AND ruler_id NOT IN (${RULER_IDS})`,
+  `UPDATE users SET selected_ruler = '${DEFAULT_RULER}' WHERE selected_ruler NOT LIKE 'ruler:x-%' AND selected_ruler NOT IN (${RULER_IDS})`,
 ];
 
 let schemaReady = null;
@@ -73,6 +82,7 @@ export async function getConfig(db, now = Date.now()) {
   let raw = null;
   try { raw = row ? JSON.parse(row.value) : null; } catch { raw = null; }
   const cfg = sanitizeConfig(raw);
+  applyConfig(cfg); // 変えた銘柄・追加した銘柄を、定規の一覧に反映する
   configCache = { cfg, at: now };
   return cfg;
 }
@@ -80,12 +90,14 @@ export async function saveConfig(db, cfg, now = Date.now()) {
   const clean = sanitizeConfig(cfg);
   await db.prepare(`INSERT INTO settings (key, value, updated_at) VALUES ('game', ?, ?)
     ON CONFLICT (key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`).bind(JSON.stringify(clean), now).run();
+  applyConfig(clean);
   configCache = { cfg: clean, at: now };
   return clean;
 }
 export async function resetConfig(db, now = Date.now()) {
   await db.prepare(`DELETE FROM settings WHERE key = 'game'`).run();
   configCache = { cfg: sanitizeConfig(null), at: now };
+  applyConfig(configCache.cfg);
   return configCache.cfg;
 }
 export function clearConfigCache() { configCache = null; }
@@ -119,12 +131,73 @@ export async function upsertGoogleUser(db, sub, name, now = Date.now()) {
   return { user: await db.prepare('SELECT * FROM users WHERE id = ?').bind(id).first(), created: true };
 }
 
+// 毎日ボーナス：その日はじめて開いたとき、受け取り箱に届ける（日本時間で日付が変わると再び）
 export async function claimDaily(db, userId, now = Date.now()) {
   const day = jstDay(now);
   const { daily } = (await getConfig(db, now)).economy;
-  const r = await db.prepare(`UPDATE users SET coins = coins + ?, last_daily = ? WHERE id = ? AND (last_daily IS NULL OR last_daily <> ?)`)
-    .bind(daily, day, userId, day).run();
-  return r.meta.changes > 0 ? daily : 0;
+  const r = await db.prepare(`UPDATE users SET last_daily = ? WHERE id = ? AND (last_daily IS NULL OR last_daily <> ?)`)
+    .bind(day, userId, day).run();
+  if (!r.meta.changes) return 0;
+  if (daily > 0) await sendInbox(db, userId, { kind: 'daily', title: `毎日ボーナス（${day.slice(5).replace('-', '/')}）`, coins: daily }, now);
+  return daily;
+}
+// 次の毎日ボーナスまでのミリ秒（日本時間の0時）
+export function msToNextDay(now = Date.now()) {
+  const jst = now + 9 * 3600 * 1000;
+  return 86400 * 1000 - (jst % (86400 * 1000));
+}
+
+// ---- 受け取り箱 ----
+export async function sendInbox(db, userId, { kind, title, coins = 0, item = null }, now = Date.now()) {
+  await db.prepare('INSERT INTO inbox (user_id, kind, title, coins, item_id, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .bind(userId, kind, title, Math.max(0, Math.trunc(coins)), item, now).run();
+}
+const inboxStmt = (db, userId, { kind, title, coins = 0, item = null }, now) =>
+  db.prepare('INSERT INTO inbox (user_id, kind, title, coins, item_id, created_at) VALUES (?, ?, ?, ?, ?, ?)').bind(userId, kind, title, Math.max(0, Math.trunc(coins)), item, now);
+export async function inboxOf(db, userId) {
+  const rows = (await db.prepare('SELECT id, kind, title, coins, item_id, created_at FROM inbox WHERE user_id = ? AND claimed_at IS NULL ORDER BY id DESC LIMIT 100').bind(userId).all()).results;
+  return rows.map((r) => ({ id: r.id, kind: r.kind, title: r.title, coins: r.coins, item: r.item_id, at: r.created_at }));
+}
+// 受け取る。id を省くと、選ぶ必要のないもの（交換券以外）を全部。交換券は pick（SSRの定規）を選んで1枚ずつ
+export async function claimInbox(db, userId, { id = null, pick = null } = {}, now = Date.now()) {
+  await getConfig(db, now);
+  const list = await inboxOf(db, userId);
+  const targets = id === null ? list.filter((x) => x.kind !== 'ticket') : list.filter((x) => x.id === Number(id));
+  if (!targets.length) return { error: id === null ? '受け取れるものはありません' : 'もう受け取ったか、見つかりません' };
+  const owned = await ownedSet(db, userId);
+  const stmts = [];
+  const got = { coins: 0, items: [], refund: 0, claimed: [] };
+  for (const x of targets) {
+    let item = x.item;
+    if (x.kind === 'ticket') {
+      const ssr = rulerPool('SSR').filter((it) => !owned.has(it.id));
+      if (!ssr.length) {
+        // 全部持っていれば、えんぴつに変える
+        item = null;
+        got.refund += (await getConfig(db, now)).rulerGacha.refund.SSR;
+      } else if (!ssr.some((it) => it.id === pick)) {
+        return { error: 'SSR交換券で受け取る定規を選んでください', choices: ssr.map((it) => it.id) };
+      } else item = pick;
+    }
+    // 同じ定規をもう持っていれば、えんぴつに変える
+    if (item && owned.has(item)) {
+      got.refund += (await getConfig(db, now)).rulerGacha.refund[ITEMS[item]?.rarity] ?? 0;
+      item = null;
+    }
+    if (item && ITEMS[item]) {
+      owned.add(item);
+      got.items.push(item);
+      stmts.push(db.prepare('INSERT OR IGNORE INTO items (user_id, item_id, acquired_at) VALUES (?, ?, ?)').bind(userId, item, now));
+    }
+    got.coins += x.coins;
+    got.claimed.push(x.id);
+    stmts.push(db.prepare('UPDATE inbox SET claimed_at = ? WHERE id = ? AND user_id = ? AND claimed_at IS NULL').bind(now, x.id, userId));
+  }
+  const add = got.coins + got.refund;
+  if (add) stmts.push(db.prepare('UPDATE users SET coins = coins + ? WHERE id = ?').bind(add, userId));
+  await db.batch(stmts);
+  got.total = (await db.prepare('SELECT coins FROM users WHERE id = ?').bind(userId).first())?.coins ?? 0;
+  return got;
 }
 
 export async function rename(db, userId, name) {
@@ -167,8 +240,11 @@ export async function recentMatches(db, userId, limit = 20) {
   }));
 }
 
-export async function profile(db, user) {
-  const [owned, setups, stats, exp, stage] = await Promise.all([ownedSet(db, user.id), setupsOf(db, user.id), statsOf(db, user.id), expOf(db, user.id), stageProgress(db, user.id)]);
+export async function profile(db, user, now = Date.now()) {
+  await getConfig(db, now); // 設定で追加した銘柄を一覧に入れてから読む
+  const [owned, setups, stats, exp, stage, inbox, pity] = await Promise.all([ownedSet(db, user.id), setupsOf(db, user.id), statsOf(db, user.id), expOf(db, user.id), stageProgress(db, user.id),
+    db.prepare('SELECT COUNT(*) AS n FROM inbox WHERE user_id = ? AND claimed_at IS NULL').bind(user.id).first(),
+    db.prepare('SELECT count FROM ruler_pity WHERE user_id = ?').bind(user.id).first()]);
   // 定規を手に入れた時刻（定規ケースの「取得順」と NEW の印に使う。はじめからある定規は0）
   const got = (await db.prepare(`SELECT item_id, acquired_at FROM items WHERE user_id = ? AND item_id LIKE 'ruler:%'`).bind(user.id).all()).results;
   const acquired = Object.fromEntries(got.map((r) => [r.item_id, r.acquired_at]));
@@ -176,7 +252,16 @@ export async function profile(db, user) {
   return {
     id: user.id, name: user.name, coins: user.coins, selectedRuler: selected,
     owned: [...owned].filter((id) => ITEMS[id]), setups, stats, exp, stage, acquired,
+    inbox: inbox?.n ?? 0, pity: pity?.count ?? 0, nextDaily: msToNextDay(now), dailyDone: user.last_daily === jstDay(now),
   };
+}
+
+// 相棒（使う定規）を持ち替える（ホームのスワイプ）
+export async function setPartner(db, userId, rulerId) {
+  const owned = await ownedSet(db, userId);
+  if (ITEMS[rulerId]?.kind !== 'ruler' || !owned.has(rulerId)) return { error: 'その定規は持っていません' };
+  await db.prepare('UPDATE users SET selected_ruler = ? WHERE id = ?').bind(rulerId, userId).run();
+  return { ok: true, ruler: rulerId };
 }
 
 // 定規1本の装飾とアクセサリを保存し、その定規を「使う定規」にする
@@ -253,6 +338,42 @@ export async function pullGacha(db, userId, count, rand = Math.random, now = Dat
   return { results, refund, coins, cost };
 }
 
+// ---- 定規ガチャ ----
+// 10回はSR以上を1本確定。持っている定規は、えんぴつに変えて返す。決めた回数を引くたびに、受け取り箱へ「SSR交換券」
+export async function pullRulerGacha(db, userId, count, rand = Math.random, now = Date.now()) {
+  if (count !== 1 && count !== 10) return { error: '1回か10回で引いてください' };
+  const cfg = await getConfig(db, now);
+  const g = cfg.rulerGacha;
+  const cost = count === 10 ? g.pull10 : g.pull1;
+  const paid = await db.prepare('UPDATE users SET coins = coins - ? WHERE id = ? AND coins >= ?').bind(cost, userId, cost).run();
+  if (!paid.meta.changes) return { error: `${ECONOMY.currency}が足りません（${cost}${ECONOMY.unit}必要です）` };
+  const owned = await ownedSet(db, userId);
+  const results = [];
+  let refund = 0;
+  for (let i = 0; i < count; i++) {
+    const item = rollRuler(rand, count === 10 && i === count - 1 ? 'SR' : null, cfg);
+    const dup = owned.has(item.id);
+    const back = dup ? g.refund[item.rarity] ?? 0 : 0;
+    refund += back;
+    if (!dup) owned.add(item.id);
+    results.push({ id: item.id, dup, refund: back });
+  }
+  const before = (await db.prepare('SELECT count FROM ruler_pity WHERE user_id = ?').bind(userId).first())?.count ?? 0;
+  let pity = before + count, tickets = 0;
+  if (g.pity > 0) while (pity >= g.pity) { pity -= g.pity; tickets++; }
+  const stmts = [];
+  for (const r of results) {
+    if (!r.dup) stmts.push(db.prepare('INSERT OR IGNORE INTO items (user_id, item_id, acquired_at) VALUES (?, ?, ?)').bind(userId, r.id, now));
+    stmts.push(db.prepare('INSERT INTO gacha_log (user_id, item_id, dup, pulled_at) VALUES (?, ?, ?, ?)').bind(userId, r.id, r.dup ? 1 : 0, now));
+  }
+  if (refund) stmts.push(db.prepare('UPDATE users SET coins = coins + ? WHERE id = ?').bind(refund, userId));
+  stmts.push(db.prepare(`INSERT INTO ruler_pity (user_id, count) VALUES (?, ?) ON CONFLICT (user_id) DO UPDATE SET count = excluded.count`).bind(userId, pity));
+  for (let k = 0; k < tickets; k++) stmts.push(inboxStmt(db, userId, { kind: 'ticket', title: `SSR交換券（定規ガチャ${g.pity}回）` }, now));
+  await db.batch(stmts);
+  const coins = (await db.prepare('SELECT coins FROM users WHERE id = ?').bind(userId).first()).coins;
+  return { results, refund, coins, cost, pity, pityMax: g.pity, tickets };
+}
+
 // ---- 対戦の記録と報酬 ----
 // rec: { room, mode, n, shots, names: [席順の名前], players: [{ userId, seat, won, kos, selfOut, ruler }] }
 export async function recordMatch(db, rec, now = Date.now()) {
@@ -306,11 +427,17 @@ export async function findUsers(db, q, limit = 30) {
 }
 
 // えんぴつを配る（マイナスで減らす。0本より下にはしない）
-export async function giftCoins(db, userId, amount) {
+// 配るとき（プラス）は受け取り箱に届ける。減らすとき（マイナス）はすぐに減らす
+export async function giftCoins(db, userId, amount, title = '運営からのおくりもの', now = Date.now()) {
   const n = Math.trunc(Number(amount));
   if (!Number.isFinite(n) || n === 0 || Math.abs(n) > 100000) return { error: '本数は -100000〜100000 の整数で入れてください（0以外）' };
-  const r = await db.prepare('UPDATE users SET coins = MAX(0, coins + ?) WHERE id = ?').bind(n, userId).run();
-  if (!r.meta.changes) return { error: 'そのユーザーが見つかりません' };
+  const u = await db.prepare('SELECT coins FROM users WHERE id = ?').bind(userId).first();
+  if (!u) return { error: 'そのユーザーが見つかりません' };
+  if (n > 0) {
+    await sendInbox(db, userId, { kind: 'gift', title: String(title || '').slice(0, 40) || '運営からのおくりもの', coins: n }, now);
+    return { coins: u.coins, inbox: true };
+  }
+  await db.prepare('UPDATE users SET coins = MAX(0, coins + ?) WHERE id = ?').bind(n, userId).run();
   return { coins: (await db.prepare('SELECT coins FROM users WHERE id = ?').bind(userId).first()).coins };
 }
 
@@ -347,7 +474,8 @@ export async function recordStageClear(db, rec, now = Date.now()) {
   const stmts = [db.prepare(`INSERT INTO stage_clears (user_id, stage_id, map, clears, first_at, best_shots) VALUES (?, ?, ?, 1, ?, ?)
     ON CONFLICT (user_id, stage_id, map) DO UPDATE SET clears = clears + 1, best_shots = MIN(COALESCE(best_shots, excluded.best_shots), excluded.best_shots)`)
     .bind(rec.userId, rec.stage, rec.map, now, rec.shots ?? null)];
-  if (coins) stmts.push(db.prepare('UPDATE users SET coins = coins + ? WHERE id = ?').bind(coins, rec.userId));
+  const mapName = st.maps[rec.map - 1]?.name || '';
+  if (coins) stmts.push(inboxStmt(db, rec.userId, { kind: 'stage', title: `${st.name} マップ${rec.map}「${mapName}」初クリア`, coins }, now));
   let exp = null;
   if (ITEMS[rec.ruler]?.kind === 'ruler') {
     const before = (await db.prepare('SELECT exp FROM ruler_exp WHERE user_id = ? AND ruler_id = ?').bind(rec.userId, rec.ruler).first())?.exp ?? 0;
@@ -362,10 +490,10 @@ export async function recordStageClear(db, rec, now = Date.now()) {
     const has = await db.prepare('SELECT 1 FROM items WHERE user_id = ? AND item_id = ?').bind(rec.userId, st.reward).first();
     if (!has) {
       item = st.reward;
-      stmts.push(db.prepare('INSERT OR IGNORE INTO items (user_id, item_id, acquired_at) VALUES (?, ?, ?)').bind(rec.userId, st.reward, now));
+      stmts.push(inboxStmt(db, rec.userId, { kind: 'stage', title: `${st.name} 全クリア報酬`, item: st.reward }, now));
     }
   }
   await db.batch(stmts);
   const total = (await db.prepare('SELECT coins FROM users WHERE id = ?').bind(rec.userId).first())?.coins ?? 0;
-  return { first, coins, total, exp, item, map: rec.map, stage: rec.stage };
+  return { first, coins, total, exp, item, map: rec.map, stage: rec.stage, inbox: !!(coins || item) };
 }

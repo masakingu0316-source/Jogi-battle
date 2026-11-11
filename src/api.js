@@ -3,6 +3,7 @@ import { loginEnabled, sessionUser, sameOrigin } from './auth.js';
 import {
   ensureSchema, profile, claimDaily, rename, saveSetup, pullGacha, recentMatches,
   getConfig, saveConfig, resetConfig, clearConfigCache, findUsers, giftCoins,
+  inboxOf, claimInbox, pullRulerGacha, setPartner,
 } from './db.js';
 import { defaultConfig, sanitizeConfig, configProblem } from '../public/shared/catalog.js';
 import { VERSION } from '../public/shared/version.js';
@@ -52,6 +53,22 @@ export async function handleApi(request, env, url) {
   if (path === '/api/me/matches' && request.method === 'GET') {
     return json({ matches: await recentMatches(env.DB, user.id) });
   }
+  if (path === '/api/me/partner' && request.method === 'POST') {
+    const r = await setPartner(env.DB, user.id, String(body.ruler || ''));
+    return r.error ? json(r, 400) : json(r);
+  }
+  if (path === '/api/inbox' && request.method === 'GET') {
+    await getConfig(env.DB);
+    return json({ inbox: await inboxOf(env.DB, user.id) });
+  }
+  if (path === '/api/inbox/claim' && request.method === 'POST') {
+    const r = await claimInbox(env.DB, user.id, { id: body.id ?? null, pick: body.pick ?? null });
+    return r.error ? json(r, 400) : json(r);
+  }
+  if (path === '/api/ruler-gacha' && request.method === 'POST') {
+    const r = await pullRulerGacha(env.DB, user.id, Number(body.count));
+    return r.error ? json(r, 400) : json(r);
+  }
   if (path === '/api/gacha' && request.method === 'POST') {
     const r = await pullGacha(env.DB, user.id, Number(body.count));
     return r.error ? json(r, 400) : json(r);
@@ -78,7 +95,7 @@ export async function handleApi(request, env, url) {
       return json({ users: await findUsers(env.DB, url.searchParams.get('q') || '') });
     }
     if (path === '/api/admin/gift' && request.method === 'POST') {
-      const r = await giftCoins(env.DB, String(body.userId || ''), body.amount);
+      const r = await giftCoins(env.DB, String(body.userId || ''), body.amount, body.title);
       return r.error ? json(r, 400) : json(r);
     }
   }

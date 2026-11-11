@@ -40,69 +40,56 @@
     </div>
   </main>
 
-  <!-- ホーム -->
-  <main id="home" class="screen" hidden>
-    <p class="hello" id="hello"></p>
-    <div class="home-grid">
-      <section class="panel create-panel">
-        <h2>部屋を作る</h2>
-        <div class="mode-pick" id="modePick" role="radiogroup" aria-label="モード"></div>
-        <div class="create-row">
-          <button class="btn-main" id="create" type="button">この遊び方で部屋を作る</button>
-        </div>
-        <div class="practice" id="practiceBox">
-          <h3>コンピュータと練習</h3>
-          <p class="note">上で選んだ遊び方で、コンピュータと対戦します。練習なので、えんぴつ・経験値・戦績は増えません。</p>
-          <div class="practice-row">
-            <div class="seg" id="cpuLevel" role="group" aria-label="コンピュータの強さ"></div>
-            <label class="cpu-count" id="cpuCountWrap">コンピュータ
-              <select id="cpuCount"><option value="2">2人</option><option value="3">3人</option></select>
-            </label>
-            <button type="button" id="practiceBtn">練習を始める</button>
-          </div>
-          <p class="note" id="practiceNote"></p>
-        </div>
-      </section>
-      <div class="home-side">
-        <section class="panel stage-panel">
-          <h2>ステージ <small>1人で攻略</small></h2>
-          <p class="stage-home-note" id="stageHomeNote">文房具の敵を倒しながら、マップを順に進みます。</p>
-          <button class="btn-main" id="openStage" type="button">ステージに挑む</button>
-        </section>
-        <section class="panel">
-          <h2>部屋に入る</h2>
-          <form class="join" id="joinForm">
-            <label class="field-col" for="code">
-              <span>友だちから届いた部屋コード（5文字）</span>
-              <input id="code" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCDE">
-            </label>
-            <button id="join" type="submit">入る</button>
-          </form>
-        </section>
-        <section class="panel">
-          <h2>使う定規</h2>
-          <canvas class="preview home-preview" id="homePreview" aria-hidden="true"></canvas>
-          <p class="ruler-line" id="homeRuler"></p>
-          <div class="home-links">
-            <button type="button" id="editRuler">定規を編集する</button>
-            <button type="button" class="link" data-open="gacha">ガチャ</button>
-            <button type="button" class="link" data-open="record">戦績</button>
-          </div>
-        </section>
-      </div>
+  <!-- ホーム：資源の帯／相棒の定規／大ボタン3つ（下にタブ） -->
+  <main id="home" class="screen home-screen" hidden>
+    <div class="res-bar" id="resBar">
+      <span class="res-coins" aria-label="えんぴつ"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20l2-6L16 4l4 4-10 10z" fill="#f4d35e"/><path d="M4 20l2-6 4 4z" fill="#e9c9a0"/><path d="M4 20l1-3 2 2z" fill="#333"/><path d="M16 4l4 4-1.6 1.6-4-4z" fill="#f08aa0"/></svg><b id="resCoins">0</b><small>本</small></span>
+      <span class="res-name" id="resName"></span>
+      <span class="res-daily" id="resDaily" aria-live="off"><small>毎日ボーナスまで</small><b id="resDailyTime">--:--</b></span>
     </div>
-    <p class="error" id="homeError" hidden></p>
+
+    <section class="partner" aria-label="相棒の定規">
+      <div class="partner-top">
+        <span class="partner-label">相棒の定規</span>
+        <button type="button" class="inbox-btn" id="inboxBtn" aria-label="受け取り箱">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 12h22v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2z" fill="var(--box-a)"/><path d="M3 8h26v5H3z" fill="var(--box-b)"/><path d="M14 8h4v20h-4z" fill="var(--red-pen)"/><path d="M16 8c-2-5-8-5-7-1s7 1 7 1zm0 0c2-5 8-5 7-1s-7 1-7 1z" fill="none" stroke="var(--red-pen)" stroke-width="2"/></svg>
+          <span class="inbox-badge" id="inboxBadge" hidden>0</span>
+        </button>
+      </div>
+      <div class="partner-stage" id="partnerStage">
+        <canvas id="partnerCanvas" aria-hidden="true"></canvas>
+        <button type="button" class="p-arrow left" id="partnerPrev" aria-label="前の定規に持ち替える">‹</button>
+        <button type="button" class="p-arrow right" id="partnerNext" aria-label="次の定規に持ち替える">›</button>
+        <span class="p-count" id="partnerCount"></span>
+      </div>
+      <div class="partner-info" id="partnerInfo" aria-live="polite">
+        <div class="pi-line"><span class="rar-tag" id="piRar">N</span><b class="pi-name" id="piName"></b><span class="pi-lv" id="piLv"></span></div>
+        <div class="pi-bars">
+          <span class="pbar mass"><em>重さ</em><i><b id="piMass"></b></i></span>
+          <span class="pbar power"><em>はじく力</em><i><b id="piPower"></b></i></span>
+        </div>
+        <div class="pi-skill"><span id="piSkill"></span><span id="piTrait"></span></div>
+      </div>
+    </section>
+
+    <div class="big-btns">
+      <button type="button" class="bb side" id="openStage">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 26V6h3v20zM9 7h15l-3 5 3 5H9z" fill="currentColor"/></svg>
+        <span>ステージ</span><small id="stageHomeNote"></small>
+      </button>
+      <button type="button" class="bb main" id="openBattle" aria-label="対戦"><span class="seal"><span>対戦</span></span></button>
+      <button type="button" class="bb side" id="openJoin">
+        <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8 4h14a2 2 0 0 1 2 2v20a2 2 0 0 1-2 2H8z" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M4 16h11m-4-4 4 4-4 4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        <span>部屋に入る</span><small>部屋コード</small>
+      </button>
+    </div>
+    <p class="error home-error" id="homeError" hidden></p>
   </main>
 
   <!-- マイページ：定規ケース・ガチャ・戦績 -->
   <main id="mypage" class="screen" hidden>
-    <div class="my-head">
-      <button class="link" id="myBack" type="button">← 戻る</button>
-      <div class="tabs" role="tablist">
-        <button type="button" role="tab" data-tab="case" aria-selected="true">定規ケース</button>
-        <button type="button" role="tab" data-tab="gacha" aria-selected="false">ガチャ</button>
-        <button type="button" role="tab" data-tab="record" aria-selected="false">戦績</button>
-      </div>
+    <div class="my-head" id="myHead" hidden>
+      <button class="link" id="myBack" type="button">← 部屋に戻る</button>
     </div>
 
     <section class="tab-panel" id="tab-case">
@@ -149,26 +136,56 @@
     </section>
 
     <section class="tab-panel" id="tab-gacha" hidden>
-      <div class="gacha">
-        <div class="gacha-machine" aria-hidden="true">
-          <div class="dome"><span></span><span></span><span></span><span></span><span></span></div>
-          <div class="base">文具ガチャ</div>
-        </div>
-        <div class="gacha-side">
-          <p class="sub-lead">定規・柄・シール・アクセサリが出ます。持っているものが出たら、えんぴつが少し戻ってきます。</p>
-          <div class="gacha-buttons">
-            <button class="btn-main" id="pull1" type="button">1回引く（10本）</button>
-            <button class="btn-main" id="pull10" type="button">10回引く（100本）</button>
-          </div>
-          <p class="gacha-note" id="gachaNote" role="status"></p>
-          <p class="wait">10回引くと、Rレア以上が1つ必ず出ます。えんぴつは対戦とログインボーナスでたまります。</p>
-        </div>
+      <div class="gacha-switch seg" role="tablist" aria-label="ガチャの種類">
+        <button type="button" role="tab" data-gacha="ruler" aria-selected="true">定規ガチャ</button>
+        <button type="button" role="tab" data-gacha="decor" aria-selected="false">飾りガチャ</button>
       </div>
-      <div class="gacha-results" id="gachaResults"></div>
-      <details class="odds">
-        <summary>出る確率</summary>
-        <div id="oddsTable"></div>
-      </details>
+
+      <div class="gacha-pane" id="gachaRuler">
+        <div class="gacha">
+          <div class="gacha-machine ruler-machine" aria-hidden="true">
+            <div class="dome"><span></span><span></span><span></span><span></span><span></span></div>
+            <div class="base">定規ガチャ</div>
+          </div>
+          <div class="gacha-side">
+            <p class="sub-lead">定規だけが出ます。N（学習定規）・R（教室の持ち物）・SR（製図用・特性つき）・SSR（工芸品・専用の必殺技つき）。持っている定規が出たら、えんぴつが戻ってきます。</p>
+            <div class="gacha-buttons">
+              <button class="btn-main" id="rpull1" type="button">1回引く</button>
+              <button class="btn-main" id="rpull10" type="button">10回引く</button>
+            </div>
+            <div class="pity" id="pity"><span class="pity-label">天井まで</span><span class="pity-bar"><i id="pityBar"></i></span><b id="pityText"></b></div>
+            <p class="gacha-note" id="rgachaNote" role="status"></p>
+          </div>
+        </div>
+        <div class="gacha-results ruler-results" id="rgachaResults"></div>
+        <details class="odds">
+          <summary>出る確率</summary>
+          <div id="roddsTable"></div>
+        </details>
+      </div>
+
+      <div class="gacha-pane" id="gachaDecor" hidden>
+        <div class="gacha">
+          <div class="gacha-machine" aria-hidden="true">
+            <div class="dome"><span></span><span></span><span></span><span></span><span></span></div>
+            <div class="base">飾りガチャ</div>
+          </div>
+          <div class="gacha-side">
+            <p class="sub-lead">柄・シール（見た目）とアクセサリ（性能に効く）が出ます。持っているものが出たら、えんぴつが少し戻ってきます。</p>
+            <div class="gacha-buttons">
+              <button class="btn-main" id="pull1" type="button">1回引く（10本）</button>
+              <button class="btn-main" id="pull10" type="button">10回引く（100本）</button>
+            </div>
+            <p class="gacha-note" id="gachaNote" role="status"></p>
+            <p class="wait">10回引くと、Rレア以上が1つ必ず出ます。えんぴつは対戦とログインボーナスでたまります。</p>
+          </div>
+        </div>
+        <div class="gacha-results" id="gachaResults"></div>
+        <details class="odds">
+          <summary>出る確率</summary>
+          <div id="oddsTable"></div>
+        </details>
+      </div>
     </section>
 
     <section class="tab-panel" id="tab-record" hidden>
@@ -176,13 +193,24 @@
       <div class="table-wrap"><table class="mode-table" id="modeTable"></table></div>
       <h2 class="mt">最近の対戦</h2>
       <ol class="history" id="history"></ol>
-      <h2 class="mt">アカウント</h2>
+    </section>
+    <section class="tab-panel" id="tab-other" hidden>
+      <h2>その他</h2>
+      <h3 class="mt">アカウント</h3>
       <form class="rename" id="renameForm">
         <label class="field-col" for="myNameInput"><span>表示名（対戦で表示されます）</span><input id="myNameInput" maxlength="10"></label>
         <button type="submit">変更する</button>
       </form>
       <p class="note">アカウントID：<code id="myId"></code>（設定画面を使う管理者を登録するときに使います）</p>
       <a class="btn-admin" id="adminLink" href="/admin.html" hidden>設定画面を開く（管理者）</a>
+      <h3 class="mt">遊び方</h3>
+      <ul class="howto">
+        <li>自分の番に、自分の定規を押さえて引っぱり、離すとはじけます。相手を机から落とすと勝ち</li>
+        <li>必殺技は、左下の円いゲージが満タンのときに押して使います</li>
+        <li>定規はレア度が高いほど少し重く、強くはじけます。SR以上は特性、SSRは専用の必殺技を持っています</li>
+        <li>部屋を作るときに「公平」を選ぶと、レア度・レベル・アクセサリの上乗せがなくなります</li>
+      </ul>
+      <p class="note"><a href="/privacy.html">プライバシーポリシー</a></p>
       <button class="link" id="logout" type="button">ログアウト</button>
     </section>
   </main>
@@ -276,6 +304,10 @@
     <div class="board-wrap" id="boardWrap">
       <canvas id="board" aria-label="机の上の定規バトル盤面。自分の番に、自分の定規を押さえて引っぱり、離すとはじけます。"></canvas>
       <div class="hint" id="hint" hidden></div>
+      <div class="curve-box" id="curveBox" hidden>
+        <label for="curveDeg">百八十度：曲がる角度 <b id="curveVal">0°</b></label>
+        <div class="curve-row"><span aria-hidden="true">左</span><input type="range" id="curveDeg" min="-90" max="90" step="5" value="0"><span aria-hidden="true">右</span></div>
+      </div>
       <div class="cutin" id="cutin" hidden role="status">
         <div class="cutin-band" id="cutinBand">
           <canvas class="cutin-ruler" id="cutinRuler" aria-hidden="true"></canvas>
@@ -313,6 +345,65 @@
   </main>
   <footer class="site-foot"><a href="/privacy.html">プライバシーポリシー</a></footer>
 </div>
+<nav class="tabbar" id="tabbar" aria-label="メニュー" hidden>
+  <button type="button" data-nav="home" aria-current="page"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11 12 4l9 7v9h-6v-6H9v6H3z"/></svg><span>ホーム</span></button>
+  <button type="button" data-nav="case"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="15" rx="2"/><path d="M6 9h12M6 13h12M6 17h7" fill="none" stroke="var(--tab-bg)" stroke-width="1.6"/></svg><span>定規ケース</span><em class="tab-new" id="caseNew" hidden>NEW</em></button>
+  <button type="button" data-nav="gacha"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="10" r="7"/><path d="M5 10h14" stroke="var(--tab-bg)" stroke-width="1.6"/><rect x="7" y="17" width="10" height="4" rx="1"/></svg><span>ガチャ</span></button>
+  <button type="button" data-nav="record"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h11l3 3v15H5z"/><path d="M8 9h8M8 13h8M8 17h5" fill="none" stroke="var(--tab-bg)" stroke-width="1.6"/></svg><span>戦績</span></button>
+  <button type="button" data-nav="other"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="12" r="2.2"/><circle cx="12" cy="12" r="2.2"/><circle cx="19" cy="12" r="2.2"/></svg><span>その他</span></button>
+</nav>
+
+<!-- 対戦：モードを選ぶ -->
+<dialog class="sheet" id="battleSheet" aria-labelledby="battleTitle">
+  <button type="button" class="sheet-close" data-close aria-label="閉じる">×</button>
+  <h2 id="battleTitle">対戦</h2>
+  <h3>友だちと（部屋を作る）</h3>
+  <div class="mode-pick" id="modePick" role="radiogroup" aria-label="モード"></div>
+  <label class="fair-opt"><input type="checkbox" id="fairOpt"> <span>公平（レア度・レベル・アクセサリの上乗せなし）</span></label>
+  <div class="create-row">
+    <button class="btn-main" id="create" type="button">この遊び方で部屋を作る</button>
+  </div>
+  <div class="practice" id="practiceBox">
+    <h3>コンピュータ・練習</h3>
+    <p class="note">上で選んだ遊び方で、コンピュータと対戦します。練習なので、えんぴつ・経験値・戦績は増えません。</p>
+    <div class="practice-row">
+      <div class="seg" id="cpuLevel" role="group" aria-label="コンピュータの強さ"></div>
+      <label class="cpu-count" id="cpuCountWrap">コンピュータ
+        <select id="cpuCount"><option value="2">2人</option><option value="3">3人</option></select>
+      </label>
+      <button type="button" id="practiceBtn">練習を始める</button>
+    </div>
+    <p class="note" id="practiceNote"></p>
+  </div>
+</dialog>
+
+<!-- 部屋に入る -->
+<dialog class="sheet small" id="joinSheet" aria-labelledby="joinTitle">
+  <button type="button" class="sheet-close" data-close aria-label="閉じる">×</button>
+  <h2 id="joinTitle">部屋に入る</h2>
+  <form class="join" id="joinForm">
+    <label class="field-col" for="code">
+      <span>友だちから届いた部屋コード（5文字）</span>
+      <input id="code" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCDE">
+    </label>
+    <button id="join" class="btn-main" type="submit">入る</button>
+  </form>
+  <p class="error" id="joinError" hidden></p>
+</dialog>
+
+<!-- 受け取り箱 -->
+<dialog class="sheet" id="inboxSheet" aria-labelledby="inboxTitle">
+  <button type="button" class="sheet-close" data-close aria-label="閉じる">×</button>
+  <h2 id="inboxTitle">受け取り箱</h2>
+  <ul class="inbox-list" id="inboxList"></ul>
+  <div class="inbox-pick" id="inboxPick" hidden>
+    <p class="note" id="inboxPickNote">SSR交換券で受け取る定規を選んでください</p>
+    <div class="box-grid pick-grid" id="inboxPickGrid"></div>
+    <button type="button" class="link" id="inboxPickCancel">やめる</button>
+  </div>
+  <div class="inbox-actions"><button type="button" class="btn-main" id="inboxAll">まとめて受け取る</button></div>
+</dialog>
+
 <div class="toast" id="toast" role="status" hidden></div>
   <div class="update-bar" id="updateBar" role="alert" hidden>
     <span>新しい版が公開されました。再読み込みしてください（対戦中でも同じ席に戻れます）</span>

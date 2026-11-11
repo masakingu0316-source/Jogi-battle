@@ -39,7 +39,7 @@ export class Room extends DurableObject {
 
     if (url.pathname === '/create') {
       if (this.core) return new Response('exists', { status: 409 });
-      this.core = new RoomCore(url.searchParams.get('code') || '', url.searchParams.get('mode') || 'standard');
+      this.core = new RoomCore(url.searchParams.get('code') || '', url.searchParams.get('mode') || 'standard', Date.now(), { fair: url.searchParams.get('fair') === '1' });
       await this.save();
       return Response.json({ ok: true });
     }
@@ -142,7 +142,7 @@ export class Room extends DurableObject {
         return err('定規を読み込めませんでした。もう一度お試しください');
       }
     }
-    if (ITEMS[rulerId].rarity !== 'basic') return err('この定規を使うにはログインが必要です');
+    if (!ITEMS[rulerId].starter) return err('この定規を使うにはログインが必要です');
     return this.core.setLoadout(memberId, resolveLoadout({ ruler: rulerId }));
   }
 

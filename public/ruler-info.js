@@ -1,6 +1,7 @@
 // 定規のレベル・属性の表示（ホーム・定規ケース・部屋・対戦で共用）
 import { ITEMS, MATERIAL_INFO, matInfo, levelInfo, levelBonus, rulerTune } from './shared/catalog.js';
-import { SKILLS, skillFor } from './shared/rules.js';
+import { SKILLS, skillFor, skillDesc } from './shared/rules.js';
+import { brandSkill } from './shared/catalog.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -32,13 +33,16 @@ export function specText(id, level, cfg) {
   const spec = rulerTune(r.specKey, cfg);
   const bonus = levelBonus(level);
   const lv = bonus ? `　レベルで 重さ・はじく力 +${(bonus * 100).toFixed(1)}%` : '';
-  return `重さ${spec.mass}g・${MATERIAL_INFO[r.mat].desc}（${affinityText(r.mat)}）${lv}`;
+  const rare = cfg?.rarityBonus?.[r.rarity] ?? 0;
+  const rr = rare ? `　${r.rarity}で 重さ・はじく力 +${rare}%` : '';
+  return `重さ${spec.mass}g・${MATERIAL_INFO[r.mat].desc}（${affinityText(r.mat)}）${rr}${lv}`;
 }
 // 必殺技（定規ごとに決まる。cfg は設定画面の値）
 export function skillText(id, cfg) {
   const r = rulerOf(id);
-  const sk = r && SKILLS[skillFor(r.specKey, cfg?.skills)];
-  return sk ? `必殺技「${sk.name}」：${sk.desc}` : '';
+  const key = r && brandSkill(r, cfg);
+  const sk = key && SKILLS[key];
+  return sk ? `必殺技「${sk.name}」${sk.ssr ? '（SSR専用）' : ''}：${skillDesc(key, cfg?.skillTune)}` : '';
 }
 export function rulerTitle(id) {
   const r = rulerOf(id);

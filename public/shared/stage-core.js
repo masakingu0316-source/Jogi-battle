@@ -46,6 +46,7 @@ export class StageCore extends RoomCore {
     const bodies = [{
       owner: 0, hp: carry ? Math.min(maxHp, carry.hp + BOARD_HEAL) : maxHp, maxHp,
       tune: lo.tune || null, skill: SKILLS[lo.skill] ? lo.skill : skillFor(lo.specKey), ruler: lo.ruler, specKey: lo.specKey,
+      rarity: lo.rarity || 'N', art: lo.art || 'plain', trait: lo.trait || null, traitPct: lo.traitPct || 0, st: lo.skillTune || null,
       level: lo.level || 1, mods: lo.mods, pattern: lo.pattern, sticker: lo.sticker,
       x: def.me.x, y: def.me.y, a: def.me.a ?? 0, state: 'desk', sub: !!carry?.sub,
     }];
@@ -395,7 +396,8 @@ export function planEnemy(core, i, rand = Math.random) {
     const len = Math.hypot(tx - mine.x, ty - mine.y) || 1;
     const off = (rand() - 0.5) * sh.radius * 0.5;
     const near = Physics.nearestOnShape(shapeKey, off, 0);
-    const c = { lx: near.x, ly: near.y, dx: (tx - mine.x) / len, dy: (ty - mine.y) / len, power: 0.35 + rand() * 0.65, skill: useSkill };
+    const curve = useSkill && sk === 'hyaku' ? Math.round((rand() - 0.5) * 2 * (mine.st?.hyakuMax ?? 90)) : undefined;
+    const c = { lx: near.x, ly: near.y, dx: (tx - mine.x) / len, dy: (ty - mine.y) / len, power: 0.35 + rand() * 0.65, skill: useSkill, curve };
     const score = trial(core, i, c) + rand() * 2;
     if (score > bestScore) { bestScore = score; best = c; }
   }

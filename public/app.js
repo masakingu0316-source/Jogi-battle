@@ -1,17 +1,18 @@
 // 画面の切り替え・サーバーとの通信・はじく操作・動きの再生
 // 流れ：ログイン → ホーム（部屋を作る／入る／定規の編集） → 部屋（全員が準備OKか1分で開始） → 対戦 → 部屋に戻る
 import Physics from './shared/physics.js';
-import { DESKS, MODES, PLAYERS, TEAMS, teamOf, deskTiles, SKILLS, skillFor, GAUGE } from './shared/rules.js';
+import { DESKS, MODES, PLAYERS, TEAMS, teamOf, deskTiles, SKILLS, skillFor, GAUGE, skillDesc, SKILL_TUNE } from './shared/rules.js';
 import { VERSION } from './shared/version.js';
 import { CPU_LEVELS } from './shared/cpu.js';
 import { createPractice } from './practice.js';
 import { createBoard, MAX_DRAG } from './board.js';
-import { ITEMS, BASIC_RULERS, ECONOMY, MATERIAL_INFO, DEFAULT_RULER, accText as accTextOf, defaultConfig, resolveLoadout } from './shared/catalog.js';
+import { ITEMS, BASIC_RULERS, ECONOMY, MATERIAL_INFO, DEFAULT_RULER, accText as accTextOf, defaultConfig, resolveLoadout, rulerList, applyConfig } from './shared/catalog.js';
 import { matChip, levelHtml, levelOfRuler, affinityText, skillText } from './ruler-info.js';
 import { previewRuler, paintRuler } from './ruler-paint.js';
 import { createAccount } from './account.js';
 import { createStageRun } from './stage-client.js';
 import { createStageUI } from './stage-ui.js';
+import { createHome } from './home.js';
 import { ENEMIES, deskText } from './shared/stage.js';
 
 const $ = (id) => document.getElementById(id);
@@ -70,15 +71,20 @@ $('skillBtn').addEventListener('click', () => {
     if (app.skillArmed) { app.skillArmed = false; send({ t: 'skill' }); }
     else {
       app.skillArmed = true;
-      hint(`必殺技「${SKILLS[sk].name}」：${SKILLS[sk].desc}。もう一度押すと使います`);
+      hint(`必殺技「${SKILLS[sk].name}」：${skillDesc(sk, app.state.game.bodies[app.state.game.turn]?.st)}。もう一度押すと使います`);
       clearTimeout(app.skillTimer);
       app.skillTimer = setTimeout(() => { app.skillArmed = false; renderGame(); }, 3000);
     }
   } else {
     app.skillArmed = !app.skillArmed;
-    if (app.skillArmed) hint(`必殺技「${SKILLS[sk].name}」：${SKILLS[sk].desc}`);
+    if (app.skillArmed) hint(`必殺技「${SKILLS[sk].name}」：${skillDesc(sk, app.state.game.bodies[app.state.game.turn]?.st)}`);
   }
   renderGame();
+});
+// 百八十度：曲がる角度（右がプラス）
+$('curveDeg').addEventListener('input', () => {
+  const v = +$('curveDeg').value;
+  $('curveVal').textContent = v === 0 ? 'まっすぐ' : `${v < 0 ? '左' : '右'}に${Math.abs(v)}°`;
 });
 
 // ---------------- 新しい版のお知らせ ----------------
@@ -119,6 +125,12 @@ function show(screen) {
   for (const id of ['login', 'home', 'lobby', 'game', 'mypage', 'stagePick']) $(id).hidden = id !== screen;
   // 対戦中は見出しや足もとを畳んで、盤面とゲージを1画面に収める
   document.body.classList.toggle('in-game', screen === 'game');
+  // ホームとマイページ（部屋の外）では、下にタブを出す。ホームは見出しも畳んで1画面に収める
+  const tabs = (screen === 'home' || screen === 'mypage') && !app.state && !!app.me;
+  $('tabbar').hidden = !tabs;
+  document.body.classList.toggle('with-tabs', tabs);
+  document.body.classList.toggle('on-home', screen === 'home');
+  for (const d of document.querySelectorAll('dialog.sheet[open]')) if (screen !== 'home') d.close();
 }
 const memberById = (id) => app.state?.members.find((m) => m.id === id) || null;
 // ---- ステージ（1人で攻略）でも同じ画面を使うための小道具 ----
@@ -213,7 +225,12 @@ function showHome(errorText) {
 
 function renderHome() {
   if (!app.me) return;
-  $('hello').innerHTML = `<b>${esc(app.me.name)}</b> さん、どの遊び方にしますか？`;
+  home.render();
+  home.setTab('home');
+  stageUI?.homeNote();
+}
+// 対戦：モードを選ぶシート
+function renderBattle() {
   const sizes = { single: 'd1', pair: 'd2', group: 'd4' };
   $('modePick').innerHTML = Object.entries(MODES).map(([k, m]) => {
     const d = DESKS[m.desk];
@@ -225,16 +242,15 @@ function renderHome() {
       <span class="mo-sub">${n}・${d.name}（${d.w}×${d.h}cm）<br>${m.note.split('。')[1] || ''}</span>
     </button>`;
   }).join('');
+  $('fairOpt').checked = store.get('jogi:fair') === '1';
   renderPractice();
-  stageUI?.homeNote();
-  const sel = app.me.selectedRuler;
-  const setup = app.me.setups?.[sel] || {};
-  const item = ITEMS[sel] || ITEMS[DEFAULT_RULER];
-  const lv = levelOfRuler(app.me, item.id);
-  previewRuler($('homePreview'), { specKey: item.specKey, level: lv.level, pattern: setup.pattern, sticker: setup.sticker });
-  const extras = [setup.pattern && ITEMS[setup.pattern]?.name, setup.sticker && ITEMS[setup.sticker]?.name,
-    setup.acc && `${ITEMS[setup.acc]?.name}（${accText(setup.acc)}）`].filter(Boolean).join('・');
-  $('homeRuler').innerHTML = `${esc(item.name)}<span class="ruler-meta">${matChip(item.mat)}${levelHtml(lv)}</span><small>${esc(extras || '飾り・アクセサリなし')}</small>`;
+}
+$('openBattle').addEventListener('click', () => { setError('homeError', ''); renderBattle(); $('battleSheet').showModal(); });
+$('openJoin').addEventListener('click', () => { setError('joinError', ''); $('joinSheet').showModal(); setTimeout(() => $('code').focus(), 50); });
+$('fairOpt').addEventListener('change', () => store.set('jogi:fair', $('fairOpt').checked ? '1' : '0'));
+// シートは、×か外側（暗いところ）を押すと閉じる
+for (const d of document.querySelectorAll('dialog.sheet')) {
+  d.addEventListener('click', (e) => { if (e.target === d || e.target.closest('[data-close]')) d.close(); });
 }
 
 $('modePick').addEventListener('click', (e) => {
@@ -274,6 +290,7 @@ function myLoadout(rulerId) {
 }
 $('practiceBtn').addEventListener('click', () => {
   setError('homeError', '');
+  $('battleSheet').close();
   const mode = app.pickedMode;
   stopRoom();
   app.view = 'room';
@@ -296,10 +313,11 @@ $('create').addEventListener('click', async () => {
   setError('homeError', '');
   $('create').disabled = true;
   try {
-    const res = await fetch('/api/rooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: app.pickedMode }) });
+    const res = await fetch('/api/rooms', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ mode: app.pickedMode, fair: $('fairOpt').checked }) });
     const data = await res.json().catch(() => ({}));
     if (res.status === 401) { app.me = null; showLogin('ログインの有効期限が切れました。もう一度ログインしてください。'); return; }
     if (!res.ok || !data.code) throw new Error(data.error || '部屋を作れませんでした。時間をおいてもう一度お試しください。');
+    $('battleSheet').close();
     connect(data.code);
   } catch (e) {
     setError('homeError', e.message || '部屋を作れませんでした。');
@@ -310,12 +328,11 @@ $('create').addEventListener('click', async () => {
 $('joinForm').addEventListener('submit', (e) => {
   e.preventDefault();
   const code = $('code').value.trim().toUpperCase();
-  if (!CODE_RE.test(code)) { setError('homeError', '部屋コードは5文字の英数字です。'); $('code').focus(); return; }
-  setError('homeError', '');
+  if (!CODE_RE.test(code)) { setError('joinError', '部屋コードは5文字の英数字です。'); $('code').focus(); return; }
+  setError('joinError', '');
+  $('joinSheet').close();
   connect(code);
 });
-$('editRuler').addEventListener('click', () => account.open('case', { edit: true }));
-for (const b of document.querySelectorAll('[data-open]')) b.addEventListener('click', () => account.open(b.dataset.open));
 
 // 今の部屋（オンライン・練習）を閉じる
 function stopRoom() {
@@ -534,7 +551,7 @@ function renderLobby() {
   const practice = !!app.practice;
   $('roomMode').textContent = practice
     ? `コンピュータと練習（${app.practice.level.name}）・${mode.name}・${desk.name}`
-    : `${mode.name}・${mode.min === mode.max ? mode.max + '人' : mode.min + '〜' + mode.max + '人'}・${desk.name}　部屋コード`;
+    : `${mode.name}・${mode.min === mode.max ? mode.max + '人' : mode.min + '〜' + mode.max + '人'}・${desk.name}${st.fair ? '・公平（上乗せなし）' : ''}　部屋コード`;
   document.querySelector('.room-head').classList.toggle('practice-head', practice);
   $('seatNote').hidden = practice;
   $('leave').textContent = practice ? '練習をやめてホームへ' : '部屋を出てホームへ';
@@ -604,8 +621,8 @@ function renderMyRuler(me) {
   // ログインしている人（練習ではいつも）は、持っている定規から選べる
   const acct = !!((me.account || app.practice) && app.me);
   const ids = acct ? app.me.owned.filter((id) => ITEMS[id]?.kind === 'ruler') : BASIC_RULERS;
-  const ids2 = Object.keys(ITEMS).filter((id) => ids.includes(id)); // 定規ケースと同じ並び
-  const opts = ids2.map((id) => `<option value="${id}">${esc(ITEMS[id].name)} Lv.${acct ? levelOfRuler(app.me, id).level : 1}${ITEMS[id].rarity !== 'basic' ? ` [${ITEMS[id].rarity}]` : ''}</option>`).join('');
+  const ids2 = rulerList().map((it) => it.id).filter((id) => ids.includes(id)); // 定規ケースと同じ並び
+  const opts = ids2.map((id) => `<option value="${id}">[${ITEMS[id].rarity}] ${esc(ITEMS[id].name)} Lv.${acct ? levelOfRuler(app.me, id).level : 1}</option>`).join('');
   if ($('myRuler').dataset.opts !== opts) { $('myRuler').innerHTML = opts; $('myRuler').dataset.opts = opts; }
   $('myRuler').value = lo.ruler;
   previewRuler($('lobbyPreview'), lo, Math.max(0, app.state.members.findIndex((m) => m.id === me.id)));
@@ -712,6 +729,14 @@ function renderGame() {
   sb.disabled = !canSkill;
   sb.setAttribute('aria-pressed', String(!!app.skillArmed));
   sb.classList.toggle('ready', canSkill);
+  // 百八十度を構えているときだけ、曲がる角度のつまみを出す
+  const showCurve = !!(canSkill && app.skillArmed && skillOf(g.bodies[meIdx]) === 'hyaku');
+  if (showCurve && $('curveBox').hidden) {
+    const max = g.bodies[meIdx]?.st?.hyakuMax ?? SKILL_TUNE.hyakuMax;
+    $('curveDeg').min = -max; $('curveDeg').max = max;
+    $('curveDeg').dispatchEvent(new Event('input'));
+  }
+  $('curveBox').hidden = !showCurve;
   const skName = SKILLS[skillOf(g.bodies[meIdx])]?.name || '';
   const skNow = SKILLS[skillOf(g.bodies[meIdx])]?.mode === 'now';
   $('skillCap').textContent = canSkill ? (app.skillArmed ? (skNow ? 'もう一度で発動' : '構え中') : 'タップ') : '';
@@ -913,7 +938,8 @@ canvas.addEventListener('pointerup', () => {
   const len = Math.hypot(dx, dy);
   if (len < 0.8) { hint('定規を押さえたまま、はじきたい方向と逆に引っぱって離します'); return; }
   const power = Math.min(len, MAX_DRAG) / MAX_DRAG;
-  if (!send({ t: 'flick', lx: a.lx, ly: a.ly, dx: -dx / len, dy: -dy / len, power, skill: !!app.skillArmed })) return;
+  const curve = app.skillArmed && skillOf(a.b) === 'hyaku' ? +$('curveDeg').value : undefined;
+  if (!send({ t: 'flick', lx: a.lx, ly: a.ly, dx: -dx / len, dy: -dy / len, power, skill: !!app.skillArmed, curve })) return;
   app.skillArmed = false;
   app.waitingShot = true;
   renderGame();
@@ -935,7 +961,7 @@ function showCutin(owner, skill) {
   el.style.setProperty('--sk', sk.color);
   $('cutinWho').textContent = isStage() ? `${m?.name || ''} の必殺技` : `${lk.name}　${m?.name || ''} の必殺技`;
   $('cutinName').textContent = sk.name;
-  $('cutinDesc').textContent = sk.desc;
+  $('cutinDesc').textContent = skillDesc(skill, body?.st);
   el.hidden = false;
   el.classList.remove('play');
   void el.offsetWidth; // アニメーションを最初から
@@ -960,14 +986,14 @@ function startPlayback(m) {
   if (m.skill) showCutin(m.by, m.skill);
   app.playing = {
     frames: m.frames, falls: m.falls, by: m.by, saved: m.saved, next: m.state, crit: m.crit, critDone: false,
-    skill: m.skill || null, skillDone: false, blast: m.blast || null, blastDone: false, hits: m.hits || [], hitDone: 0,
+    skill: m.skill || null, skillDone: false, blast: m.blast || null, blastDone: false, hits: m.hits || [], hitDone: 0, marks: m.marks || [], markDone: 0,
     hpNow: (app.state?.game?.bodies || m.state.game.bodies).map((b) => b.hp ?? 100),
     vanished: m.vanished, vanishFx: false, desks: app.state?.game?.desks || null,
     looks: m.state.game.bodies.map((b, k) => {
       const prev = app.state?.game?.bodies[k] || b;
       // 形の変わる定規は、はじく前の体力の形のまま動く（全開は、その1打だけいちばん長い形）
       const shapeKey = k === m.by && m.skill === 'fullopen' && Physics.RULERS[b.specKey]?.forms ? 'folding3' : Physics.shapeOf(b.specKey, prev.hp, b.maxHp);
-      return { specKey: b.specKey, shapeKey, enemy: b.enemy, level: b.level, pattern: b.pattern, sticker: b.sticker, anchor: b.anchor, counter: b.counter, sub: b.sub, ink: b.ink, hp: prev.hp ?? b.hp, ...bodyLook(b) };
+      return { specKey: b.specKey, shapeKey, enemy: b.enemy, level: b.level, art: b.art, pattern: b.pattern, sticker: b.sticker, anchor: b.anchor, counter: b.counter, sub: b.sub, ink: b.ink, hp: prev.hp ?? b.hp, ...bodyLook(b) };
     }),
     start: performance.now() + delay, fallStart: {}, fxDone: 0,
   };
@@ -1043,6 +1069,15 @@ function playbackBodies(now) {
     }
   }
   // クリティカル：当たった瞬間に文字と光
+  // SSRの技の印：一角（角の先で当てた）・ゴム跳び（端で跳ね返った）・百八十度（曲がった）
+  while (p.markDone < p.marks.length && t >= p.marks[p.markDone].f) {
+    const mk = p.marks[p.markDone++];
+    const look = { tip: ['一角！', SKILLS.ikkaku.color], bounce: ['ゴム跳び！', SKILLS.gomu.color], curve: ['曲がる！', SKILLS.hyaku.color] }[mk.kind];
+    if (!look) continue;
+    app.fx.push({ x: mk.x, y: mk.y - 4, t0: now, text: look[0], color: look[1], big: mk.kind === 'tip' });
+    if (mk.kind === 'tip') { app.fx.push({ x: mk.x, y: mk.y, t0: now, burst: true }); if (!reducedMotion()) app.shakeUntil = now + 220; }
+    else app.fx.push({ x: mk.x, y: mk.y, t0: now, ring: 6, color: look[1] });
+  }
   if (p.crit && !p.critDone && t >= p.crit.f) {
     p.critDone = true;
     app.fx.push({ x: p.crit.x, y: p.crit.y, t0: now, text: 'クリティカル！', color: '#ffd84a', big: true });
@@ -1062,6 +1097,57 @@ function playbackBodies(now) {
   return bodies;
 }
 const reducedMotion = () => window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+
+// 虹の道：まっすぐ進んだときに、最初にぶつかる所（ほかの定規か机の端）と、跳ね返った先
+function predictPath(g, i, ux, uy) {
+  const me = g.bodies[i];
+  const desk = DESKS[deskKeyOf(app.state)];
+  const tiles = deskTiles(desk).filter((t) => !g.desks || g.desks.includes(t.i));
+  const onDesk = (x, y) => tiles.some((t) => x >= t.x0 && x <= t.x1 && y >= t.y0 && y <= t.y1);
+  const myShape = Physics.SHAPES[Physics.shapeOf(me.specKey, me.hp, me.maxHp)];
+  const half = Math.min(2, (myShape.W || 3) / 2 + 0.3);
+  const others = g.bodies.filter((b, k) => k !== i && b.state === 'desk').map((b) => {
+    const body = Physics.createBody('t', b.owner, b.specKey, b.x, b.y, b.a, null, null, { shape: Physics.shapeOf(b.specKey, b.hp, b.maxHp) });
+    return { v: Physics.worldVerts(body) };
+  });
+  // 点から多角形までの距離と、いちばん近い辺の外向きの向き
+  const near = (poly, x, y) => {
+    let best = Infinity, nx = 0, ny = 0, inside = true;
+    for (let k = 0; k < poly.length; k++) {
+      const a = poly[k], b = poly[(k + 1) % poly.length];
+      const ex = b.x - a.x, ey = b.y - a.y, L = Math.hypot(ex, ey) || 1;
+      const t = Math.max(0, Math.min(1, ((x - a.x) * ex + (y - a.y) * ey) / (L * L)));
+      const d = Math.hypot(x - (a.x + ex * t), y - (a.y + ey * t));
+      const cr = ex * (y - a.y) - ey * (x - a.x);
+      if (cr < 0) inside = false;
+      if (d < best) { best = d; nx = ey / L; ny = -ex / L; }
+    }
+    return { d: inside ? 0 : best, nx, ny };
+  };
+  const march = (x, y, dx, dy, maxLen, skip) => {
+    for (let s = 0.4; s <= maxLen; s += 0.4) {
+      const px = x + dx * s, py = y + dy * s;
+      if (!onDesk(px, py)) {
+        const nx = onDesk(px - dx * 0.4, py) ? 0 : 1, ny = nx ? 0 : 1;
+        return { x: px - dx * 0.4, y: py - dy * 0.4, nx, ny };
+      }
+      if (s > skip) for (const o of others) {
+        const r = near(o.v, px, py);
+        if (r.d < half) return { x: px, y: py, nx: r.nx, ny: r.ny };
+      }
+    }
+    return { x: x + dx * maxLen, y: y + dy * maxLen, end: true };
+  };
+  const hit = march(me.x, me.y, ux, uy, 140, 0);
+  const pts = [{ x: me.x, y: me.y }, { x: hit.x, y: hit.y }];
+  if (!hit.end) {
+    const dot = ux * hit.nx + uy * hit.ny;
+    const rx = ux - 2 * dot * hit.nx, ry = uy - 2 * dot * hit.ny;
+    const next = march(hit.x, hit.y, rx, ry, 22, 1.5);
+    pts.push({ x: next.x, y: next.y });
+  }
+  return pts;
+}
 
 function finishPlayback() {
   const p = app.playing;
@@ -1083,6 +1169,16 @@ function frame(now) {
       const cp = contactWorld(app.aim.b, app.aim.lx, app.aim.ly);
       const sk = app.skillArmed ? skillOf(app.aim.b) : null;
       aim = { cx: cp.x, cy: cp.y, px: app.aim.px, py: app.aim.py, skill: sk && SKILLS[sk], owner: app.aim.b.owner };
+      const ab = app.aim.b;
+      // 特性「目盛り読み」：矢印が長く見える
+      if (ab.trait === 'aim') aim.reach = 1 + (ab.traitPct || 0) / 100;
+      // 百八十度：曲がる向きも見せる
+      if (sk === 'hyaku') aim.curve = (+$('curveDeg').value * Math.PI) / 180;
+      // 虹の道：1回目の跳ね返りの先まで見せる
+      if (sk === 'niji') {
+        const ddx = app.aim.px - cp.x, ddy = app.aim.py - cp.y, dl = Math.hypot(ddx, ddy);
+        if (dl > 0.8) aim.path = predictPath(g, ab.owner, -ddx / dl, -ddy / dl);
+      }
     }
     app.fx = app.fx.filter((f) => now - f.t0 < 1600);
     const active = !app.playing && app.state.phase === 'aim' && !app.waitingShot ? g.turn : -1;
@@ -1108,10 +1204,15 @@ account = createAccount({
   render: () => render(),
   showHome: () => showHome(),
   onLogout: () => { if (app.state) { send({ t: 'leave' }); } app.me = null; leaveRoom(''); },
-  onProfile: () => { if (!$('home').hidden) renderHome(); },
+  onProfile: () => { if (!$('home').hidden) renderHome(); else home.renderNew(); },
+  onTab: (name) => home.setTab(name),
+});
+const home = createHome({
+  app, $, esc, toast, account,
+  onNav: (name, opt) => { if (name === 'home') showHome(); else account.open(name, opt); },
 });
 // 確認用：?debug を付けて開いたときだけ、今の状態を読めるようにする
-if (new URLSearchParams(location.search).has('debug')) { window.__jogiApp = app; window.__jogiState = () => structuredClone(app.state); window.__jogiSend = (m) => { const ok = send(m); if (ok && m.t === 'flick') { app.waitingShot = true; renderGame(); } return ok; }; }
+if (new URLSearchParams(location.search).has('debug')) { window.__jogiApp = app; window.__toWorld = (x, y) => board.toWorld(x, y); window.__jogiState = () => structuredClone(app.state); window.__jogiSend = (m) => { const ok = send(m); if (ok && m.t === 'flick') { app.waitingShot = true; renderGame(); } return ok; }; }
 await account.load();
 if (app.config?.version && app.config.version !== VERSION) showUpdate();
 if (!app.me) {
@@ -1127,7 +1228,7 @@ window.addEventListener('resize', () => { if (!$('login').hidden) drawLoginArt()
 document.fonts?.ready?.then(() => { if (!$('game').hidden) board.layout(); });
 // 盤面に筆で書く字（クリティカル・必殺技の名前など）は、先に読み込んでおく（その字の分だけ）
 try {
-  const brush = ['クリティカル！机が消えた落ちた自滅セーフ', ...Object.values(SKILLS).map((s) => s.name), ...PLAYERS.map((p) => p.name)].join('');
+  const brush = ['クリティカル！机が消えた落ちた自滅セーフ一角曲がるゴム跳び対戦相棒の定規', ...Object.values(SKILLS).map((s) => s.name), ...PLAYERS.map((p) => p.name)].join('');
   document.fonts?.load?.('30px "Yuji Mai"', brush).catch(() => {});
 } catch { /* 読み込めなくても、ほかの字で書く */ }
 // 名前の札などの高さが変わったら、盤面の大きさを合わせ直す

@@ -34,6 +34,13 @@
   .tbl tr.off td { opacity: 0.45; }
   .tbl tr.off td:first-child, .tbl tr.off td:last-child { opacity: 1; }
   .pct { color: var(--chalk-yellow); }
+  .admin h3 { margin: 6px 0 0; font-size: 15px; }
+  .tbl.brands { min-width: 880px; }
+  .tbl.brands input:not([type]) { width: 11em; padding: 5px 8px; }
+  .tbl.brands td small { display: block; font-size: 11px; color: var(--ink-soft); }
+  .tbl.brands select + select { margin-left: 4px; }
+  #addBrand { justify-self: start; }
+  #giftTitle { max-width: 24em; }
   .savebar {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
     background: var(--card); border-top: 1px solid var(--line-strong); box-shadow: 0 -6px 18px -12px rgba(28, 39, 71, 0.35);
@@ -74,28 +81,53 @@
       </section>
 
       <section>
-        <h2>ガチャの確率</h2>
-        <p class="lead">「重み」の割合で確率が決まります（合計が100でなくても、自動で%に直します）。重みを0にしたレア度は出なくなります。</p>
+        <h2>定規ガチャ</h2>
+        <p class="lead">定規だけが出るガチャです。「重み」の割合で確率が決まります。天井の回数を引くと、受け取り箱に「SSR交換券」が届き、ガチャに出るSSRから1本選べます。</p>
+        <div id="rulerGacha"></div>
+      </section>
+
+      <section>
+        <h2>定規の銘柄</h2>
+        <p class="lead">1本ずつの名前・レア度・絵柄・特性・必殺技です。同じ形・素材の銘柄は、重さやすべり方が同じで、レア度の上乗せと特性・必殺技が違います。「ガチャ」のチェックを外すと定規ガチャに出なくなります（持っている人はそのまま使えます）。銘柄は消せないので、使わなくなったらガチャから外してください。</p>
+        <div class="table-wrap"><table class="tbl brands" id="brands"></table></div>
+        <button type="button" id="addBrand">銘柄を追加する</button>
+      </section>
+
+      <section>
+        <h2>レア度の上乗せ・特性・SSRの技</h2>
+        <p class="lead">レア度の上乗せは、レベルとアクセサリの効果に掛け算で重なります（合わせて最大±16%）。部屋の「公平」設定では、レア度・レベル・アクセサリの分が消えます（特性と必殺技は残ります）。</p>
+        <h3>レア度の上乗せ</h3>
+        <div class="num-grid" id="rarityBonus"></div>
+        <h3>特性</h3>
+        <div class="num-grid" id="traits"></div>
+        <h3>SSRの技の数値</h3>
+        <div class="num-grid" id="skillTune"></div>
+      </section>
+
+      <section>
+        <h2>飾りガチャの確率</h2>
+        <p class="lead">柄・シール・アクセサリが出るガチャです。「重み」の割合で確率が決まります（合計が100でなくても、自動で%に直します）。重みを0にしたレア度は出なくなります。</p>
         <div class="table-wrap"><table class="tbl" id="rarities"></table></div>
       </section>
 
       <section>
-        <h2>定規の性能と必殺技</h2>
-        <p class="lead">定規ごとに、重さ・すべりにくさ・跳ね返り・はじく力と、必殺技を変えられます。初期値は素材と形から決まった値です。保存すると、次に始まる対戦から使われます（レベルやアクセサリの効果は、この値にさらに掛かります）。</p>
+        <h2>定規の性能（形・素材ごと）</h2>
+        <p class="lead">形と素材ごとに、重さ・すべりにくさ・跳ね返り・はじく力を変えられます。同じ形・素材の銘柄すべてに効きます。保存すると、次に始まる対戦から使われます（レア度・レベル・アクセサリの効果は、この値にさらに掛かります）。必殺技は「定規の銘柄」で変えます。</p>
         <div class="table-wrap"><table class="tbl tune" id="skills"></table></div>
         <details class="skill-help"><summary>性能の説明</summary><ul id="tuneHelp"></ul></details>
         <details class="skill-help"><summary>必殺技の一覧</summary><ul id="skillList"></ul></details>
       </section>
 
       <section>
-        <h2>アイテム</h2>
+        <h2>飾りガチャのアイテム</h2>
         <p class="lead">チェックを外したアイテムはガチャに出なくなります（すでに持っている人はそのまま使えます）。アクセサリの効き目は −5〜5%（0.5刻み）です。</p>
         <div class="table-wrap"><table class="tbl" id="items"></table></div>
       </section>
 
       <section>
         <h2>ユーザーとえんぴつ</h2>
-        <p class="lead">表示名かアカウントIDで探して、えんぴつを配れます。マイナスの数を入れると減らせます（0本より下にはなりません）。</p>
+        <p class="lead">表示名かアカウントIDで探して、えんぴつを配れます。配ったえんぴつは、その人の受け取り箱に届きます。マイナスの数を入れると、すぐに減らせます（0本より下にはなりません）。</p>
+        <label class="field-col" for="giftTitle"><span>受け取り箱に出す見出し</span><input id="giftTitle" maxlength="40" placeholder="運営からのおくりもの"></label>
         <form class="search" id="searchForm">
           <input id="q" placeholder="表示名かアカウントID（空欄で最近の30人）" aria-label="ユーザーを探す">
           <button type="submit">探す</button>

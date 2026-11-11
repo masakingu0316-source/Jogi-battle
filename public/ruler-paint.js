@@ -204,7 +204,7 @@ function paintMaterial(ctx, g, mat, pl, P) {
   ctx.restore();
 }
 
-const inkOf = (mat) => (mat === 'rubber' ? 'rgba(40, 20, 25, 0.82)' : mat === 'metal' ? 'rgba(25, 28, 34, 0.88)' : 'rgba(20, 20, 30, 0.85)');
+const inkOf = (mat) => (mat === 'gold' ? 'rgba(255, 222, 140, 0.95)' : mat === 'rubber' ? 'rgba(40, 20, 25, 0.82)' : mat === 'metal' ? 'rgba(25, 28, 34, 0.88)' : 'rgba(20, 20, 30, 0.85)');
 const fontOf = (size) => `600 ${size.toFixed(1)}px "BIZ UDPGothic", system-ui, sans-serif`;
 
 // ---- 目盛り ----
@@ -251,11 +251,13 @@ function paintScale(ctx, g, mat, P) {
   }
   // まっすぐな定規は上の辺、三角定規は下の辺（直角をはさむ長い辺）に目盛り
   let x0, edgeY, dir, room;
-  if (sh.kind === 'rect') { x0 = -sh.nominal / 2; edgeY = -sh.W / 2; dir = 1; room = sh.W; }
+  // 折りたたみ定規はたたんだ長さの分だけ（目盛りが形からはみ出さないように）
+  const nom = sh.kind === 'rect' ? Math.min(sh.nominal, Math.floor(sh.L - 1.2)) : sh.nominal;
+  if (sh.kind === 'rect') { x0 = -nom / 2; edgeY = -sh.W / 2; dir = 1; room = sh.W; }
   else { x0 = 0.8; edgeY = 0; dir = -1; room = sh.hole; }
   const showMm = P >= 7, showHalf = P >= 3.5;
   ctx.beginPath();
-  for (let i = 0; i <= sh.nominal * 10; i++) {
+  for (let i = 0; i <= nom * 10; i++) {
     const cm = i % 10 === 0, half = i % 5 === 0;
     if (!cm && !(half && showHalf) && !showMm) continue;
     const x = x0 + i * 0.1;
@@ -271,7 +273,7 @@ function paintScale(ctx, g, mat, P) {
     ctx.font = fontOf(fs);
     ctx.textAlign = 'center'; ctx.textBaseline = dir > 0 ? 'top' : 'bottom';
     const ty = edgeY + dir * Math.min(room * 0.34, 1.2);
-    for (let c = 0; c <= sh.nominal; c += every) ctx.fillText(String(c), (x0 + c) * P, ty * P);
+    for (let c = 0; c <= nom; c += every) ctx.fillText(String(c), (x0 + c) * P, ty * P);
     ctx.restore();
   }
 }
@@ -361,8 +363,16 @@ export function paintRuler(ctx, b, px, active = false, now = 0) {
   ctx.fillStyle = 'rgba(40, 22, 8, 0.28)';
   ctx.fill('evenodd');
   ctx.restore();
-  // 本体
+  // 本体（SSR・一部のSRは、絵柄で地の色から塗りかえる）
   paintMaterial(ctx, g, s.mat, pl, P);
+  const art = ART_PAINT[b.art] ? b.art : 'plain';
+  if (art !== 'plain') {
+    ctx.save();
+    bodyPath(ctx, g);
+    ctx.clip('evenodd');
+    ART_PAINT[art](ctx, g, P, now, pl);
+    ctx.restore();
+  }
   // 柄
   if (b.pattern) {
     ctx.save();
@@ -377,8 +387,9 @@ export function paintRuler(ctx, b, px, active = false, now = 0) {
   bodyPath(ctx, g);
   ctx.lineWidth = Math.max(0.06, 1.3 / P);
   ctx.strokeStyle = s.mat === 'acrylic' ? pl.edge : s.mat === 'metal' ? 'rgba(70, 78, 88, 0.85)' : 'rgba(60, 25, 30, 0.6)';
+  if (ART_BASE.has(art)) ctx.strokeStyle = art === 'steel' ? 'rgba(60, 66, 76, 0.9)' : 'rgba(20, 12, 8, 0.85)';
   ctx.stroke();
-  if (s.mat !== 'acrylic') {
+  if (s.mat !== 'acrylic' || ART_BASE.has(art)) {
     // 席の色がわかるよう、外のふちを席の色でなぞる
     ctx.beginPath(); addPoly(ctx, g.outer);
     ctx.lineWidth = Math.max(0.1, 2.2 / P);
@@ -386,7 +397,7 @@ export function paintRuler(ctx, b, px, active = false, now = 0) {
     ctx.stroke();
   }
 
-  paintScale(ctx, g, s.mat, P);
+  paintScale(ctx, g, ART_INK[art] || s.mat, P);
   if (g.sh.folds) paintHinges(ctx, g, P);
   const hpPct = ((b.hp ?? 100) / (b.maxHp || 100)) * 100;
   if (hpPct < 70) paintCracks(ctx, g, hpPct, P, b.owner || 0);
@@ -651,7 +662,7 @@ function drawPreview(canvas, p, now) {
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.setTransform(p.px * p.dpr, 0, 0, p.px * p.dpr, p.cssW / 2 * p.dpr, p.cssH / 2 * p.dpr);
-  paintRuler(ctx, { owner: p.owner, specKey: p.look.specKey, shapeKey: p.look.shapeKey, maxHp: p.look.maxHp, hp: p.look.hp, enemy: p.look.enemy, pl: p.look.pl, level: p.look.level, x: p.x, y: p.y, a: 0, pattern: p.look.pattern, sticker: p.look.sticker }, p.px, false, now);
+  paintRuler(ctx, { owner: p.owner, specKey: p.look.specKey, shapeKey: p.look.shapeKey, maxHp: p.look.maxHp, hp: p.look.hp, enemy: p.look.enemy, pl: p.look.pl, level: p.look.level, art: p.look.art, x: p.x, y: p.y, a: 0, pattern: p.look.pattern, sticker: p.look.sticker }, p.px, false, now);
 }
 let loopOn = false, lastLoop = 0;
 function loop(now) {
@@ -833,7 +844,7 @@ function paintEnemy(ctx, b, s, g, px, active, now) {
 
 // ---- 定規ケースのアイコン（正方形。長い定規は斜めに置いて大きく見せる） ----
 // 席の色ではなく、素材の色で塗る。locked：まだ持っていない定規は影だけ
-const ICON_PL = {
+export const ICON_PL = {
   acrylic: { name: '', tint: 'rgba(70, 160, 225, 0.45)', edge: 'rgba(20, 80, 130, 0.9)', sticker: '#2f7fc0', ink: '#fff' },
   metal: { name: '', tint: 'rgba(200, 160, 60, 0.4)', edge: 'rgba(90, 70, 20, 0.9)', sticker: '#8a6510', ink: '#fff' },
   rubber: { name: '', tint: 'rgba(200, 70, 120, 0.45)', edge: 'rgba(110, 20, 60, 0.9)', sticker: '#c94a7e', ink: '#fff' },
@@ -862,7 +873,7 @@ export function iconRuler(canvas, look, opt = {}) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.setTransform(P * dpr, 0, 0, P * dpr, (css / 2) * dpr, (css / 2) * dpr);
   paintRuler(ctx, {
-    owner: 0, specKey: look.specKey, shapeKey, level: opt.locked ? 1 : look.level, pattern: opt.locked ? null : look.pattern, sticker: opt.locked ? null : look.sticker,
+    owner: 0, specKey: look.specKey, shapeKey, level: opt.locked ? 1 : look.level, art: look.art, pattern: opt.locked ? null : look.pattern, sticker: opt.locked ? null : look.sticker,
     pl: ICON_PL[s.mat] || ICON_PL.acrylic, x: -(x0 + x1) / 2, y: -(y0 + y1) / 2, a: ang,
   }, P, false, 1200);
   if (opt.locked) {
@@ -874,3 +885,216 @@ export function iconRuler(canvas, look, opt = {}) {
     ctx.globalCompositeOperation = 'source-over';
   }
 }
+
+// ---- 絵柄（銘柄ごとの見た目） ----
+// R＝教室の持ち物、SR＝製図用、SSR＝漆・蒔絵・金箔の工芸品。本体の形で切り抜いた中に描く（形を定義したときの座標）
+// ART_BASE：地の色から塗りかえる絵柄（席の色は外のふちで見せる）。ART_INK：目盛りの色
+export const matLook = (mat) => ICON_PL[mat] || ICON_PL.acrylic;
+const ART_BASE = new Set(['steel', 'makie', 'karakawa', 'raden', 'urushi', 'kinpaku']);
+const ART_INK = { makie: 'gold', karakawa: 'gold', raden: 'gold', urushi: 'gold', steel: 'metal', kinpaku: 'metal' };
+function rng(seed) { let r = seed; return () => (r = (r * 16807) % 2147483647) / 2147483647; }
+function fillBox(ctx, g, style) { const { box } = g; ctx.fillStyle = style; ctx.fillRect(box.x0 - 1, box.y0 - 1, box.x1 - box.x0 + 2, box.y1 - box.y0 + 2); }
+// SSR のつや：ゆっくり流れる光の帯
+function glint(ctx, g, now, alpha = 0.45) {
+  const { box } = g;
+  const w = box.x1 - box.x0, h = box.y1 - box.y0;
+  const t = ((now / 2600) % 1) * 1.6 - 0.3;
+  const x = box.x0 + w * t;
+  const gr = ctx.createLinearGradient(x - h, box.y0, x + h * 0.4, box.y1);
+  gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(0.5, `rgba(255,255,255,${alpha})`); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = gr;
+  ctx.fillRect(box.x0, box.y0, w, h);
+}
+const ART_PAINT = {
+  plain() {},
+  // R：名前シール（白い名前欄に手書きの線）
+  namesticker(ctx, g, P) {
+    const { box } = g;
+    const h = (box.y1 - box.y0) * 0.62, w = Math.min(7, (box.x1 - box.x0) * 0.24);
+    const x = box.x0 + (box.x1 - box.x0) * 0.56, y = (box.y0 + box.y1) / 2 - h / 2;
+    ctx.fillStyle = 'rgba(255, 255, 250, 0.95)';
+    roundRect(ctx, x, y, w, h, 0.3); ctx.fill();
+    ctx.strokeStyle = 'rgba(200, 60, 60, 0.7)'; ctx.lineWidth = Math.max(0.04, 0.8 / P); ctx.stroke();
+    ctx.strokeStyle = 'rgba(30, 40, 90, 0.75)'; ctx.lineWidth = Math.max(0.06, 1.2 / P);
+    ctx.beginPath();
+    for (let k = 0; k < 4; k++) { const cx = x + w * (0.2 + k * 0.19); ctx.moveTo(cx - 0.35, y + h * 0.65); ctx.quadraticCurveTo(cx, y + h * 0.15, cx + 0.4, y + h * 0.6); }
+    ctx.stroke();
+  },
+  // R：筆箱サイズ（はしに丸い穴とラベル）
+  pencase(ctx, g, P) {
+    const { box } = g;
+    const cy = (box.y0 + box.y1) / 2, x = box.x0 + 1.1, r = Math.min(0.45, (box.y1 - box.y0) * 0.18);
+    ctx.fillStyle = 'rgba(30, 30, 40, 0.55)'; ctx.beginPath(); ctx.arc(x, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = Math.max(0.04, 0.8 / P); ctx.stroke();
+    ctx.fillStyle = 'rgba(255, 210, 63, 0.85)';
+    roundRect(ctx, box.x0 + (box.x1 - box.x0) * 0.35, box.y0 + 0.25, (box.x1 - box.x0) * 0.22, (box.y1 - box.y0) * 0.32, 0.15); ctx.fill();
+  },
+  // R：インク汚れ
+  inkstain(ctx, g) {
+    const { box } = g;
+    const rnd = rng(31);
+    ctx.fillStyle = 'rgba(30, 60, 170, 0.55)';
+    for (let k = 0; k < 5; k++) {
+      const x = box.x0 + (0.2 + rnd() * 0.6) * (box.x1 - box.x0), y = box.y0 + rnd() * (box.y1 - box.y0), r = 0.3 + rnd() * 0.9;
+      ctx.beginPath(); ctx.ellipse(x, y, r * 1.4, r, rnd() * 3, 0, Math.PI * 2); ctx.fill();
+      for (let j = 0; j < 4; j++) { ctx.beginPath(); ctx.arc(x + (rnd() - 0.5) * 3, y + (rnd() - 0.5) * 2, 0.08 + rnd() * 0.18, 0, Math.PI * 2); ctx.fill(); }
+    }
+  },
+  // R：2色目盛り（辺に沿って赤と青の帯）
+  twotone(ctx, g, P) {
+    ctx.lineWidth = 0.7;
+    const v = g.outer;
+    for (let i = 0; i < v.length; i++) {
+      const a = v[i], q = v[(i + 1) % v.length], n = g.normals[i];
+      ctx.strokeStyle = i % 2 ? 'rgba(220, 60, 50, 0.45)' : 'rgba(40, 110, 220, 0.45)';
+      ctx.beginPath(); ctx.moveTo(a.x - n.x * 0.4, a.y - n.y * 0.4); ctx.lineTo(q.x - n.x * 0.4, q.y - n.y * 0.4); ctx.stroke();
+    }
+  },
+  // R：キャラ柄（顔と星）
+  character(ctx, g) {
+    const { box } = g;
+    const cx = box.x0 + (box.x1 - box.x0) * 0.24, cy = box.y1 - (box.y1 - box.y0) * 0.24, r = Math.min(1.5, (box.y1 - box.y0) * 0.15);
+    ctx.fillStyle = '#ffe07a'; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#3a2a20';
+    ctx.beginPath(); ctx.arc(cx - r * 0.35, cy - r * 0.15, r * 0.12, 0, Math.PI * 2); ctx.arc(cx + r * 0.35, cy - r * 0.15, r * 0.12, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#3a2a20'; ctx.lineWidth = r * 0.1;
+    ctx.beginPath(); ctx.arc(cx, cy + r * 0.1, r * 0.4, 0.2, Math.PI - 0.2); ctx.stroke();
+    ctx.fillStyle = 'rgba(255, 140, 170, 0.8)';
+    ctx.beginPath(); ctx.arc(cx - r * 0.6, cy + r * 0.25, r * 0.15, 0, Math.PI * 2); ctx.arc(cx + r * 0.6, cy + r * 0.25, r * 0.15, 0, Math.PI * 2); ctx.fill();
+    const rnd = rng(5);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    for (let k = 0; k < 6; k++) { star(ctx, box.x0 + rnd() * (box.x1 - box.x0), box.y0 + rnd() * (box.y1 - box.y0), 0.35 + rnd() * 0.3); ctx.fill(); }
+  },
+  // R：カラー（虹色の帯）
+  colorful(ctx, g) {
+    const { box } = g;
+    const gr = ctx.createLinearGradient(box.x0, 0, box.x1, 0);
+    ['#ff6b6b', '#ffb84d', '#ffe66d', '#7bd389', '#5ab8ff', '#a78bfa'].forEach((c, i, a) => gr.addColorStop(i / (a.length - 1), c));
+    ctx.globalAlpha *= 0.45;
+    fillBox(ctx, g, gr);
+  },
+  // SR：方眼（1mmと5mmの細かい方眼）
+  grid(ctx, g, P) {
+    const { box } = g;
+    for (const [step, a] of [[0.1, 0.12], [0.5, 0.3]]) {
+      if (step * P < 2.5) continue;
+      ctx.strokeStyle = `rgba(20, 80, 60, ${a})`; ctx.lineWidth = Math.max(0.01, 0.6 / P);
+      ctx.beginPath();
+      for (let x = Math.ceil(box.x0 / step) * step; x <= box.x1; x += step) { ctx.moveTo(x, box.y0); ctx.lineTo(x, box.y1); }
+      for (let y = Math.ceil(box.y0 / step) * step; y <= box.y1; y += step) { ctx.moveTo(box.x0, y); ctx.lineTo(box.x1, y); }
+      ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(40, 170, 120, 0.12)'; fillBox(ctx, g, ctx.fillStyle);
+  },
+  // SR：ステンレス（つや消しの銀と、面取りの影）
+  steel(ctx, g, P) {
+    const { box } = g;
+    const gr = ctx.createLinearGradient(box.x0, box.y0, box.x0, box.y1);
+    gr.addColorStop(0, '#f4f6f8'); gr.addColorStop(0.5, '#c3c9d0'); gr.addColorStop(1, '#e8ebee');
+    fillBox(ctx, g, gr);
+    const rnd = rng(9);
+    ctx.lineWidth = Math.max(0.01, 0.5 / P);
+    for (let y = box.y0; y < box.y1; y += 0.08) { ctx.strokeStyle = rnd() > 0.5 ? 'rgba(255,255,255,0.4)' : 'rgba(80,90,100,0.08)'; ctx.beginPath(); ctx.moveTo(box.x0, y); ctx.lineTo(box.x1, y); ctx.stroke(); }
+  },
+  // SR：すべり止め（ふちに沿ってコルクの点）
+  nonslip(ctx, g) {
+    ctx.fillStyle = 'rgba(150, 100, 50, 0.75)';
+    const v = g.outer;
+    for (let i = 0; i < v.length; i++) {
+      const a = v[i], q = v[(i + 1) % v.length], n = g.normals[i];
+      const len = Math.hypot(q.x - a.x, q.y - a.y);
+      for (let d = 1; d < len - 0.6; d += 1.6) {
+        const t = d / len;
+        ctx.beginPath(); ctx.arc(a.x + (q.x - a.x) * t - n.x * 0.55, a.y + (q.y - a.y) * t - n.y * 0.55, 0.28, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  },
+  // SR：製図三角（緑がかった地と、内側の面取り線）
+  drafting(ctx, g, P) {
+    ctx.fillStyle = 'rgba(60, 190, 140, 0.28)'; fillBox(ctx, g, ctx.fillStyle);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.75)'; ctx.lineWidth = Math.max(0.05, 1.1 / P);
+    ctx.beginPath(); addPoly(ctx, insetPolygon(g.outer, g.normals, 0.45)); ctx.stroke();
+  },
+  // SR：全円目盛り（中心の十字と、放射状の細い線）
+  fullcircle(ctx, g, P) {
+    ctx.strokeStyle = 'rgba(20, 30, 50, 0.4)'; ctx.lineWidth = Math.max(0.02, 0.6 / P);
+    const R = g.sh.R || 7;
+    ctx.beginPath();
+    for (let k = 0; k < 36; k++) { const t = Math.PI + (k / 36) * Math.PI; ctx.moveTo(Math.cos(t) * R * 0.3, Math.sin(t) * R * 0.3); ctx.lineTo(Math.cos(t) * R * 0.62, Math.sin(t) * R * 0.62); }
+    ctx.moveTo(-1, 0); ctx.lineTo(1, 0); ctx.moveTo(0, -1); ctx.lineTo(0, 0.6);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(200, 40, 40, 0.6)'; ctx.beginPath(); ctx.arc(0, 0, R * 0.25, Math.PI, Math.PI * 2); ctx.stroke();
+  },
+  // SSR：金蒔絵（黒漆に金の流水と梅、金粉）
+  makie(ctx, g, P, now) {
+    const { box } = g;
+    fillBox(ctx, g, '#16110e');
+    const gold = ctx.createLinearGradient(box.x0, box.y0, box.x1, box.y1);
+    gold.addColorStop(0, '#f6d77a'); gold.addColorStop(0.5, '#c8962c'); gold.addColorStop(1, '#ffe9a8');
+    ctx.strokeStyle = gold; ctx.lineWidth = Math.max(0.08, 1.4 / P);
+    const h = box.y1 - box.y0;
+    for (let k = 0; k < 3; k++) {
+      ctx.beginPath();
+      for (let x = box.x0; x <= box.x1; x += 0.4) { const y = box.y0 + h * (0.3 + k * 0.2) + Math.sin(x * 0.7 + k) * h * 0.12; if (x === box.x0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+      ctx.stroke();
+    }
+    ctx.fillStyle = gold;
+    for (const fx of [0.3, 0.72]) { const cx = box.x0 + (box.x1 - box.x0) * fx, cy = box.y0 + h * 0.5; for (let p = 0; p < 5; p++) { const t = (p / 5) * Math.PI * 2; ctx.beginPath(); ctx.arc(cx + Math.cos(t) * h * 0.14, cy + Math.sin(t) * h * 0.14, h * 0.1, 0, Math.PI * 2); ctx.fill(); } }
+    const rnd = rng(77);
+    for (let k = 0; k < 60; k++) { ctx.globalAlpha = 0.4 + rnd() * 0.5; ctx.fillRect(box.x0 + rnd() * (box.x1 - box.x0), box.y0 + rnd() * h, 0.08, 0.08); }
+    ctx.globalAlpha = 1;
+    glint(ctx, g, now, 0.25);
+  },
+  // SSR：金唐革（深い赤茶の革に、金の唐草を浮き出し）
+  karakawa(ctx, g, P, now) {
+    const { box } = g;
+    fillBox(ctx, g, '#5a1f14');
+    ctx.strokeStyle = '#d9a83c'; ctx.lineWidth = Math.max(0.07, 1.2 / P);
+    const h = box.y1 - box.y0;
+    for (let x = box.x0 + 1; x < box.x1; x += 2.6) {
+      ctx.beginPath();
+      ctx.arc(x, box.y0 + h * 0.5, h * 0.28, Math.PI * 0.2, Math.PI * 1.7);
+      ctx.moveTo(x + h * 0.3, box.y0 + h * 0.5);
+      ctx.arc(x + h * 0.55, box.y0 + h * 0.5, h * 0.18, Math.PI, Math.PI * 2.6);
+      ctx.stroke();
+    }
+    ctx.fillStyle = 'rgba(0,0,0,0.18)'; ctx.fillRect(box.x0, box.y1 - h * 0.18, box.x1 - box.x0, h * 0.18);
+    glint(ctx, g, now, 0.2);
+  },
+  // SSR：螺鈿（黒い地に、虹色に光る貝の小片）
+  raden(ctx, g, P, now) {
+    const { box } = g;
+    fillBox(ctx, g, '#0f1420');
+    const rnd = rng(13);
+    const shift = (now / 30) % 360;
+    for (let k = 0; k < 70; k++) {
+      const x = box.x0 + rnd() * (box.x1 - box.x0), y = box.y0 + rnd() * (box.y1 - box.y0), r = 0.25 + rnd() * 0.7;
+      ctx.fillStyle = `hsla(${(rnd() * 360 + shift) % 360}, 70%, 78%, ${0.55 + rnd() * 0.35})`;
+      ctx.beginPath(); ctx.moveTo(x, y - r); ctx.lineTo(x + r * 0.9, y + r * 0.2); ctx.lineTo(x - r * 0.3, y + r); ctx.closePath(); ctx.fill();
+    }
+    glint(ctx, g, now, 0.3);
+  },
+  // SSR：朱漆（深い朱に、つやの光）
+  urushi(ctx, g, P, now) {
+    const { box } = g;
+    const gr = ctx.createLinearGradient(box.x0, box.y0, box.x1, box.y1);
+    gr.addColorStop(0, '#d8402a'); gr.addColorStop(0.5, '#a8231a'); gr.addColorStop(1, '#c9341f');
+    fillBox(ctx, g, gr);
+    ctx.strokeStyle = 'rgba(20, 8, 6, 0.85)'; ctx.lineWidth = 0.5;
+    ctx.beginPath(); addPoly(ctx, g.outer); ctx.stroke();
+    glint(ctx, g, now, 0.4);
+  },
+  // SSR：金箔（少しずつ色の違う金の四角を貼り重ねる）
+  kinpaku(ctx, g, P, now) {
+    const { box } = g;
+    const rnd = rng(21);
+    const s = 1.3;
+    for (let x = box.x0; x < box.x1; x += s) for (let y = box.y0; y < box.y1; y += s) {
+      ctx.fillStyle = `hsl(${42 + rnd() * 8}, ${70 + rnd() * 15}%, ${55 + rnd() * 14}%)`;
+      ctx.fillRect(x + (rnd() - 0.5) * 0.2, y + (rnd() - 0.5) * 0.2, s + 0.15, s + 0.15);
+    }
+    ctx.strokeStyle = 'rgba(120, 80, 10, 0.25)'; ctx.lineWidth = Math.max(0.02, 0.5 / P);
+    for (let x = box.x0; x < box.x1; x += s) { ctx.beginPath(); ctx.moveTo(x, box.y0); ctx.lineTo(x, box.y1); ctx.stroke(); }
+    glint(ctx, g, now, 0.45);
+  },
+};

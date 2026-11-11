@@ -161,7 +161,7 @@ const Physics = (() => {
 
   // アクセサリの効果の上限（±5%）。レベルの分と合わせた上限は ±10%
   const MOD_LIMIT = 0.05;
-  const MOD_TOTAL_LIMIT = 0.1;
+  const MOD_TOTAL_LIMIT = 0.16; // レア度（最大+6%）×レベル（+3.6%）×アクセサリ（5%）をおさめる
 
   // ---- 体力 ----
   // 押されたときにすべる距離の倍率：体力が満タンで kbMin、0で kbMax（はじいた本人には効かない）
@@ -173,7 +173,8 @@ const Physics = (() => {
   function setHp(b, hp) {
     const max = b.maxHp || HP.max;
     b.hp = Math.max(0, Math.min(max, hp));
-    const kb = b.shooter ? 1 : HP.kbMin + (HP.kbMax - HP.kbMin) * (1 - b.hp / max);
+    // kbMul：特性「重心」で、当てられたときの飛び方を少し小さくする
+    const kb = b.shooter ? 1 : (HP.kbMin + (HP.kbMax - HP.kbMin) * (1 - b.hp / max)) * (b.kbMul ?? 1);
     b.grip = Math.pow(kb, -HP.gripExp);
     const mk = Math.pow(kb, HP.massExp);
     b.cM = b.invM * mk; b.cI = b.invI * mk;
@@ -421,6 +422,43 @@ const Physics = (() => {
     return true;
   }
 
+  // 一角：tip を持つ定規が、決めた角の先（tip.r 以内）で最初に当たったとき、相手だけを (push - 1) 倍ぶん余計に押し、ダメージを tip.dmg 倍にする
+  function applyTip(world, c) {
+    const { A, B, nx, ny } = c;
+    const src = A.tip && !A.tip.used ? A : B.tip && !B.tip.used ? B : null;
+    if (!src) return null;
+    const t = src.tip;
+    const cs = Math.cos(src.a), sn = Math.sin(src.a);
+    const tx = src.x + t.x * cs - t.y * sn, ty = src.y + t.x * sn + t.y * cs;
+    const hit = c.points.find((p) => Math.hypot(p.x - tx, p.y - ty) <= t.r);
+    if (!hit) return null;
+    t.used = true;
+    const target = src === A ? B : A, sign = src === A ? 1 : -1;
+    for (const p of c.points) {
+      const P = p.Pn * (t.push - 1) * sign;
+      const rx = target === B ? p.rBx : p.rAx, ry = target === B ? p.rBy : p.rAy;
+      target.vx += P * nx * target.cM; target.vy += P * ny * target.cM;
+      target.w += target.cI * (rx * P * ny - ry * P * nx);
+    }
+    (world.events ||= []).push({ type: 'tip', time: world.time, owner: src.owner, target: target.owner, x: hit.x, y: hit.y });
+    return { by: src, dmg: t.dmg };
+  }
+  // 形のいちばん鋭い角（重心から見た位置）と、形のいちばん長い所
+  function sharpestCorner(shapeKey) {
+    const sh = SHAPES[shapeKey];
+    let best = null, bestAng = Infinity;
+    const v = sh.verts;
+    for (let i = 0; i < v.length; i++) {
+      const a = v[(i - 1 + v.length) % v.length], p = v[i], q = v[(i + 1) % v.length];
+      const ux = a.x - p.x, uy = a.y - p.y, wx = q.x - p.x, wy = q.y - p.y;
+      const ang = Math.acos(Math.max(-1, Math.min(1, (ux * wx + uy * wy) / (Math.hypot(ux, uy) * Math.hypot(wx, wy)))));
+      if (ang < bestAng - 1e-6) { bestAng = ang; best = { x: p.x, y: p.y }; }
+    }
+    let span = 0;
+    for (const p of v) for (const q of v) span = Math.max(span, Math.hypot(p.x - q.x, p.y - q.y));
+    return { ...best, angle: (bestAng * 180) / Math.PI, span };
+  }
+
   // 椅子：机の辺に沿った壁。wall = { nx, ny（外向き）, d（辺の位置 n·p）, lo, hi（辺に沿った範囲） }
   // 定規の角が辺の外に出ようとしたら押し戻し、少しだけ跳ね返す
   const WALL_E = 0.25;
@@ -447,6 +485,15 @@ const Physics = (() => {
   function step(world, dt) {
     const P = world.params;
     const live = world.bodies.filter((b) => b.state === 'desk');
+    for (const b of live) {
+      // 百八十度：決めた時間がたったら、速さを保ったまま向きを変える
+      if (b.curve && !b.curve.done && world.time >= b.curve.at) {
+        b.curve.done = true;
+        const c = Math.cos(b.curve.ang), s = Math.sin(b.curve.ang);
+        [b.vx, b.vy] = [b.vx * c - b.vy * s, b.vx * s + b.vy * c];
+        (world.events ||= []).push({ type: 'curve', time: world.time, owner: b.owner, x: b.x, y: b.y });
+      }
+    }
     for (const b of live) { b.vx0 = b.vx; b.vy0 = b.vy; }
     // スティックのり：のりの周りでは、ほかの定規が止まりやすい
     const zones = live.filter((z) => z.zone);
@@ -464,6 +511,9 @@ const Physics = (() => {
     for (let it = 0; it < 12; it++) for (const c of contacts) solve(c);
     for (const c of contacts) applyAffinity(c);
     for (const c of contacts) c.crit = applyCrit(world, c);
+    for (const c of contacts) c.tip = applyTip(world, c);
+    // 一文字：この1打のあいだは回らない
+    for (const b of live) if (b.noSpin) b.w = 0;
     // 新しくぶつかった組だけダメージ（触れ続けている間や、0.25秒以内の当たり直しは数えない）
     const touching = new Set();
     const last = (world.lastHit ||= new Map());
@@ -486,7 +536,7 @@ const Physics = (() => {
       const [att, rec] = sA >= sB ? [c.A, c.B] : [c.B, c.A];
       const pt = c.points[0];
       const base = Math.min(HP.dmgMax, HP.dmgK * Math.pow(speed - HP.dmgFloor, HP.dmgExp) * Math.sqrt(att.m / 26));
-      const amount = base * (c.crit ? HP.critDmg : 1) * (att.dmgMul ?? 1);
+      const amount = base * (c.crit ? HP.critDmg : 1) * (att.dmgMul ?? 1) * (c.tip && c.tip.by === att ? c.tip.dmg : 1);
       damage(world, rec, amount, att, pt.x, pt.y, c.crit ? 'crit' : 'hit');
     }
     world.touching = touching;
@@ -499,6 +549,17 @@ const Physics = (() => {
       if (b.state === 'falling') {
         b.vx *= 0.995; b.vy *= 0.995; b.w *= 0.995;
         if (world.time - b.fallAt > 0.7) b.state = 'gone';
+      } else if (!onDesk(world.desk, b.x, b.y) && b.edgeBounce?.left > 0) {
+        // ゴム跳び：机の端で1回だけ跳ね返る（越えた向きの速さを反対にして、少し遅くする）
+        const px = b.x - b.vx * dt, py = b.y - b.vy * dt;
+        const k = b.edgeBounce.speed;
+        if (onDesk(world.desk, px, b.y)) { b.vy = -b.vy * k; b.vx *= k; }
+        else if (onDesk(world.desk, b.x, py)) { b.vx = -b.vx * k; b.vy *= k; }
+        else { b.vx = -b.vx * k; b.vy = -b.vy * k; }
+        b.w *= k;
+        b.x = px; b.y = py;
+        b.edgeBounce.left--;
+        (world.events ||= []).push({ type: 'bounce', time: world.time, owner: b.owner, x: px, y: py });
       } else if (!onDesk(world.desk, b.x, b.y)) {
         // 重心が天板の外に出たら傾いて落ちる
         b.state = 'falling'; b.fallAt = world.time; fell.push(b);
@@ -579,7 +640,7 @@ const Physics = (() => {
   return {
     G, DESK, SHAPES, MATERIALS, BEATS, AFFINITY_BONUS, RULERS, DEFAULT_PARAMS, MAX_IMPULSE, MOD_LIMIT, MOD_TOTAL_LIMIT,
     createBody, createWorld, step, atRest, flick, blast, collide, nearestOnShape, worldVerts, HP, setHp, damage,
-    formIndex, shapeOf, ENEMY_SPECS,
+    formIndex, shapeOf, ENEMY_SPECS, sharpestCorner, onDesk,
   };
 })();
 export default Physics;
