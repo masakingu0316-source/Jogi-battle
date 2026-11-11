@@ -122,7 +122,7 @@ export class StageCore extends RoomCore {
         n: g.n, order: g.order, turn: g.turn, shots: g.shots, id: g.id,
         desk: g.desk, desks: g.desks, vanish: null, vanishIn: null, vanishWait: null,
         gauge: g.gauge, extra: !!g.extra, event: null, eventId: 0,
-        walls: g.walls || [], icy: g.icy || 0, icyNext: !!g.icyNext, fx: g.fx || [],
+        walls: g.walls || [], icy: g.icy || 0, icyNext: !!g.icyNext, fx: g.fx || [], items: g.items || [],
         bodies: g.bodies, players: g.players, result: g.result, looks: g.looks, board: g.board, boardClear: !!g.boardClear, boss: !!g.boss,
       },
     };
@@ -131,13 +131,15 @@ export class StageCore extends RoomCore {
   // 番の終わり：倒れた敵・落ちた自分・盤面クリアを決めて、次の番へ
   finishTurn(shooter, now = Date.now(), opt = {}) {
     const s = this.s, g = s.game;
-    if (!opt.keepTurn && !opt.again) s.stage.shots += shooter === 0 ? 1 : 0;
-    // 身代わり：落ちた定規が1回だけ机の真ん中に戻る（体力は半分）
+    if (!opt.keepTurn && !opt.again && !opt.skipped) s.stage.shots += shooter === 0 ? 1 : 0;
+    // 身代わり：落ちた（体力0で倒れた）定規が1回だけ机の真ん中に戻る（体力は半分。倒れたときは最大の半分）
     g.bodies.forEach((b, i) => {
-      if (!b.sub || b.state === 'desk' || !g.players[i].alive) return;
+      const down = b.state !== 'desk' || (b.hp ?? 1) <= 0;
+      if (!b.sub || !down || !g.players[i].alive) return;
+      const ko = b.state === 'desk';
       b.state = 'desk'; b.sub = false;
       Object.assign(b, this.freeSpot(i));
-      b.hp = Math.round((b.hp ?? 100) / 2 * 10) / 10;
+      b.hp = ko ? Math.round((b.maxHp || 100) / 2) : Math.round((b.hp ?? 100) / 2 * 10) / 10;
       this.pushFx({ kind: 'subUsed', owner: i, x: b.x, y: b.y });
     });
     // 敵：机から落ちたか、体力が0になったら倒れる
@@ -154,9 +156,13 @@ export class StageCore extends RoomCore {
         this.pushFx({ kind: 'down', owner: i, how: 'ko', x: b.x, y: b.y });
       }
     });
-    // 自分が落ちたら、ライフを1つ使って盤面に戻る。ライフが残っていなければ、このマップは失敗
-    if (g.bodies[0].state !== 'desk') {
-      const how = shooter === 0 ? '自分の定規が机から落ちた（自滅）' : `${this.look(shooter).name}に机から落とされた`;
+    // 自分が落ちたか体力が0になったら、ライフを1つ使って盤面に戻る。ライフが残っていなければ、このマップは失敗
+    const meKo = g.bodies[0].state === 'desk' && (g.bodies[0].hp ?? 1) <= 0;
+    if (g.bodies[0].state !== 'desk' || meKo) {
+      if (meKo) this.pushFx({ kind: 'down', owner: 0, how: 'ko', x: g.bodies[0].x, y: g.bodies[0].y });
+      const how = meKo
+        ? (shooter === 0 ? '自分の体力が0になった' : `${this.look(shooter).name}に体力を0にされた`)
+        : shooter === 0 ? '自分の定規が机から落ちた（自滅）' : `${this.look(shooter).name}に机から落とされた`;
       const lives = s.stage.lives ?? LIVES;
       if (lives > 1) {
         s.stage.lives = lives - 1;
@@ -164,6 +170,7 @@ export class StageCore extends RoomCore {
         return this.finishTurn(shooter, now, { ...opt, again: true });
       }
       s.stage.lives = 0;
+      g.bodies[0].state = 'gone';
       g.players[0].alive = false;
       g.players[0].selfOut = shooter === 0;
       const reason = `ライフがなくなった（最後は${how}）`;
@@ -293,15 +300,16 @@ export class StageCore extends RoomCore {
     for (let k = 0; k < 8; k++) frames.push(encodeFrame(world));
     const hit = Physics.blast(world, src, d.range, d.speed * sc.body, d.amount * sc.act, 'compass');
     const blast = { kind: 'compass', f: frames.length - 1, x: round2(src.x), y: round2(src.y), r: d.range, hit };
-    const { falls, hits } = runWorld(world, frames);
+    const { falls, hits, pickups } = runWorld(world, frames);
     this.applyWorld(world);
     this.finishTurn(i, now);
-    return [{ t: 'shot', by: i, frames, falls, saved: false, crit: null, vanished: null, skill: null, blast, hits, state: this.snapshot() }];
+    return [{ t: 'shot', by: i, frames, falls, saved: false, crit: null, vanished: null, skill: null, blast, hits, pickups, state: this.snapshot() }];
   }
 
   // 物理の結果を盤面に書き戻す
   applyWorld(world) {
     const g = this.s.game;
+    if (g.items?.length) g.items = g.items.filter((it) => !world.items?.find((w) => w.id === it.id)?.taken);
     g.bodies = g.bodies.map((prev, i) => {
       const b = world.bodies[i];
       return { ...prev, x: round2(b.x), y: round2(b.y), a: round4(b.a), hp: Math.round(b.hp * 10) / 10, state: b.state === 'desk' ? 'desk' : 'gone' };
@@ -312,7 +320,7 @@ export class StageCore extends RoomCore {
 // 止まるまで動かす（コンパスの弾き飛ばし用）
 function runWorld(world, frames) {
   const dt = STEP, perFrame = Math.round(1 / FPS / dt);
-  const falls = [], hits = [];
+  const falls = [], hits = [], pickups = [];
   let steps = 0, seen = 0;
   while (!Physics.atRest(world) && steps < MAX_SIM_SECONDS / dt) {
     for (let k = 0; k < perFrame; k++) {
@@ -324,11 +332,12 @@ function runWorld(world, frames) {
   }
   drain(); // 動かなかったとき（刺さっている相手だけ）も、ダメージは記録する
   for (const b of world.bodies) if (b.state === 'falling') b.state = 'gone';
-  return { falls, hits };
+  return { falls, hits, pickups };
   function drain() {
     while (world.events && seen < world.events.length) {
       const e = world.events[seen++];
       if (e.type === 'hit') hits.push({ f: frames.length - 1, target: e.target, from: e.from, dmg: e.dmg, x: round2(e.x), y: round2(e.y), kind: e.kind });
+      if (e.type === 'pickup') pickups.push({ f: frames.length - 1, item: e.item, owner: e.owner, amount: e.amount, x: round2(e.x), y: round2(e.y) });
     }
   }
 }

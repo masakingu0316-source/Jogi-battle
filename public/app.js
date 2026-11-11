@@ -477,8 +477,16 @@ function applyState(st) {
       const t0 = performance.now() + (instant ? CUTIN_MS - 200 : 0);
       // ステージの敵の出来事（倒れた・消しゴムに削られた・修正テープで直った）
       if (f.kind === 'down') {
-        app.fx.push({ x: f.x, y: f.y - 3, t0, text: f.how === 'ko' ? '撃破！' : '落とした！', color: '#ffd84a', big: true });
+        // 体力0：敵や相手なら「撃破！」、自分なら「ダウン！」
+        const mine = app.you && st.game.order[f.owner] === app.you.id;
+        const who = isStage(st) ? '' : `${seatLook(f.owner).name} `;
+        app.fx.push({ x: f.x, y: f.y - 3, t0, text: f.how === 'ko' ? (mine ? 'ダウン！' : `${who}撃破！`) : '落とした！', color: mine ? '#ff8a7a' : '#ffd84a', big: true });
         app.fx.push({ x: f.x, y: f.y, t0, burst: true });
+        continue;
+      }
+      if (f.kind === 'item') {
+        app.fx.push({ x: f.x, y: f.y - 3, t0, text: 'ばんそうこう！', color: '#7fe3a0', small: true });
+        app.itemBorn = { ...(app.itemBorn || {}), [f.item]: performance.now() };
         continue;
       }
       if (f.kind === 'mend') {
@@ -642,7 +650,7 @@ function renderGame() {
   const info = (i) => {
     const mid = g.order[i], m = memberById(mid), p = g.players[i], body = g.bodies[i];
     const won = over && g.result?.winners.includes(i);
-    const status = won ? '勝ち' : !p.alive ? (p.selfOut ? '自滅' : '脱落') : st.phase === 'aim' && m && !m.connected ? '接続待ち' : '';
+    const status = won ? '勝ち' : !p.alive ? (p.selfOut ? '自滅' : p.ko ? '体力0' : '脱落') : st.phase === 'aim' && m && !m.connected ? '接続待ち' : '';
     const mat = Physics.RULERS[body?.specKey]?.mat;
     const hp = Math.max(0, Math.round(body?.hp ?? 100));
     const pct = Math.max(0, Math.min(100, ((body?.hp ?? 100) / (body?.maxHp || 100)) * 100));
@@ -987,6 +995,7 @@ function startPlayback(m) {
   app.playing = {
     frames: m.frames, falls: m.falls, by: m.by, saved: m.saved, next: m.state, crit: m.crit, critDone: false,
     skill: m.skill || null, skillDone: false, blast: m.blast || null, blastDone: false, hits: m.hits || [], hitDone: 0, marks: m.marks || [], markDone: 0,
+    items: app.state?.game?.items || [], pickups: m.pickups || [], pickDone: 0, picked: new Set(),
     hpNow: (app.state?.game?.bodies || m.state.game.bodies).map((b) => b.hp ?? 100),
     vanished: m.vanished, vanishFx: false, desks: app.state?.game?.desks || null,
     looks: m.state.game.bodies.map((b, k) => {
@@ -1069,6 +1078,14 @@ function playbackBodies(now) {
     }
   }
   // クリティカル：当たった瞬間に文字と光
+  // 回復アイテムを拾った瞬間：アイテムを消して、体力を戻す
+  while (p.pickDone < p.pickups.length && t >= p.pickups[p.pickDone].f) {
+    const pk = p.pickups[p.pickDone++];
+    p.picked.add(pk.item);
+    if (p.hpNow[pk.owner] !== undefined) p.hpNow[pk.owner] += pk.amount;
+    app.fx.push({ x: pk.x, y: pk.y - 4, t0: now, text: `回復 +${Math.round(pk.amount)}`, color: '#6fe39a', big: true });
+    app.fx.push({ x: pk.x, y: pk.y, t0: now, ring: 5, color: '#6fe39a', inward: true });
+  }
   // SSRの技の印：一角（角の先で当てた）・ゴム跳び（端で跳ね返った）・百八十度（曲がった）
   while (p.markDone < p.marks.length && t >= p.marks[p.markDone].f) {
     const mk = p.marks[p.markDone++];
@@ -1188,6 +1205,9 @@ function frame(now) {
     desks.icy = app.state.phase === 'aim' && g.icy > 0;
     desks.walls = app.state.phase === 'aim' ? (g.walls || []).map((w) => w.wall) : [];
     if (isStage()) desks.label = `${deskText({ desk: g.desk, tiles: g.desks })}　${DESKS[g.desk].w} × ${DESKS[g.desk].h} cm`;
+    // 回復アイテム：再生中は、はじく前のものから拾われた分を消して見せる
+    const items = app.playing ? app.playing.items.filter((it) => !app.playing.picked.has(it.id)) : app.state.phase === 'aim' ? g.items || [] : [];
+    desks.items = items.map((it) => ({ ...it, born: app.itemBorn?.[it.id] }));
     board.draw({ bodies, active, aim, fx: app.fx, now, desks });
     // クリティカルの瞬間だけ、盤面を小さく揺らす
     const cv = $('board');
@@ -1228,7 +1248,7 @@ window.addEventListener('resize', () => { if (!$('login').hidden) drawLoginArt()
 document.fonts?.ready?.then(() => { if (!$('game').hidden) board.layout(); });
 // 盤面に筆で書く字（クリティカル・必殺技の名前など）は、先に読み込んでおく（その字の分だけ）
 try {
-  const brush = ['クリティカル！机が消えた落ちた自滅セーフ一角曲がるゴム跳び対戦相棒の定規', ...Object.values(SKILLS).map((s) => s.name), ...PLAYERS.map((p) => p.name)].join('');
+  const brush = ['クリティカル！机が消えた落ちた自滅セーフ一角曲がるゴム跳び対戦相棒の定規ばんそうこう回復撃破ダウン体力', ...Object.values(SKILLS).map((s) => s.name), ...PLAYERS.map((p) => p.name)].join('');
   document.fonts?.load?.('30px "Yuji Boku"', brush).catch(() => {});
 } catch { /* 読み込めなくても、ほかの字で書く */ }
 // 名前の札などの高さが変わったら、盤面の大きさを合わせ直す

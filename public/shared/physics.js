@@ -567,8 +567,36 @@ const Physics = (() => {
         b.vx = 0; b.vy = 0; b.w = 0;
       }
     }
+    // 回復アイテム：机の上の定規が触れたら、その定規の体力を回復して消える
+    if (world.items?.length) {
+      for (const it of world.items) {
+        if (it.taken) continue;
+        for (const b of world.bodies) {
+          if (b.state !== 'desk' || Math.hypot(b.x - it.x, b.y - it.y) > b.shape.radius + it.r) continue;
+          if (distToBody(b, it.x, it.y) > it.r) continue;
+          it.taken = true;
+          const before = b.hp;
+          setHp(b, b.hp + it.heal);
+          (world.events ||= []).push({ type: 'pickup', time: world.time, item: it.id, owner: b.owner, amount: Math.round((b.hp - before) * 10) / 10, x: it.x, y: it.y });
+          break;
+        }
+      }
+    }
     world.time += dt;
     return fell;
+  }
+  // 点から定規の形までの距離（中なら0）
+  function distToBody(b, x, y) {
+    const v = worldVerts(b), n = worldNormals(b);
+    let inside = true, best = Infinity;
+    for (let i = 0; i < v.length; i++) {
+      const a = v[i], q = v[(i + 1) % v.length];
+      if (n[i].x * (x - a.x) + n[i].y * (y - a.y) > 0) inside = false;
+      const ex = q.x - a.x, ey = q.y - a.y;
+      const t = Math.max(0, Math.min(1, ((x - a.x) * ex + (y - a.y) * ey) / (ex * ex + ey * ey)));
+      best = Math.min(best, Math.hypot(x - (a.x + ex * t), y - (a.y + ey * t)));
+    }
+    return inside ? 0 : best;
   }
 
   function atRest(world) {
@@ -640,7 +668,7 @@ const Physics = (() => {
   return {
     G, DESK, SHAPES, MATERIALS, BEATS, AFFINITY_BONUS, RULERS, DEFAULT_PARAMS, MAX_IMPULSE, MOD_LIMIT, MOD_TOTAL_LIMIT,
     createBody, createWorld, step, atRest, flick, blast, collide, nearestOnShape, worldVerts, HP, setHp, damage,
-    formIndex, shapeOf, ENEMY_SPECS, sharpestCorner, onDesk,
+    formIndex, shapeOf, ENEMY_SPECS, sharpestCorner, onDesk, distToBody,
   };
 })();
 export default Physics;

@@ -225,6 +225,8 @@ export function createBoard(canvas, wrap, opt = {}) {
     ctx.stroke();
     ctx.globalAlpha = 1;
 
+    // 回復アイテム（ばんそうこう）は、定規の下に置く
+    if (desks.items?.length) drawItems(desks.items, now);
     for (const b of bodies) {
       if (b.alpha <= 0) continue;
       drawRuler(b, px, b.owner === active && !aim, now);
@@ -328,6 +330,50 @@ export function createBoard(canvas, wrap, opt = {}) {
   }
 
   function drawRuler(b, px, active, now) { paintRuler(ctx, b, px, active, now); }
+
+  // ばんそうこう：うっすら光る緑の輪の上に、斜めに貼ったばんそうこう
+  function drawItems(items, now) {
+    for (const it of items) {
+      const born = it.born ? Math.min(1, (now - it.born) / 400) : 1;
+      const pulse = 0.5 + 0.5 * Math.sin(now / 380 + it.id);
+      ctx.save();
+      ctx.translate(it.x, it.y);
+      ctx.globalAlpha = born;
+      // 光の輪
+      const R = it.r * (1.25 + 0.15 * pulse);
+      const gr = ctx.createRadialGradient(0, 0, it.r * 0.3, 0, 0, R);
+      gr.addColorStop(0, 'rgba(120, 230, 150, 0.45)'); gr.addColorStop(1, 'rgba(120, 230, 150, 0)');
+      ctx.fillStyle = gr;
+      ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = `rgba(60, 180, 100, ${0.35 + 0.35 * pulse})`;
+      ctx.lineWidth = 0.12;
+      ctx.setLineDash([0.35, 0.25]);
+      ctx.beginPath(); ctx.arc(0, 0, it.r * 1.05, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+      // ばんそうこう本体
+      ctx.rotate(it.a || 0.3);
+      ctx.scale(born, born);
+      const L = it.r * 2.7, W = it.r * 1.05;
+      ctx.shadowColor = 'rgba(40, 22, 8, 0.35)'; ctx.shadowBlur = 0.4; ctx.shadowOffsetY = 0.15;
+      roundRect(-L / 2, -W / 2, L, W, W / 2);
+      ctx.fillStyle = '#f2c9a0'; ctx.fill();
+      ctx.shadowColor = 'transparent';
+      ctx.strokeStyle = 'rgba(150, 95, 50, 0.6)'; ctx.lineWidth = 0.06; ctx.stroke();
+      // 真ん中のガーゼ
+      roundRect(-L * 0.17, -W * 0.36, L * 0.34, W * 0.72, 0.12);
+      ctx.fillStyle = '#fffaf2'; ctx.fill();
+      // 赤い十字
+      ctx.fillStyle = '#e0483a';
+      ctx.fillRect(-0.09, -W * 0.25, 0.18, W * 0.5);
+      ctx.fillRect(-W * 0.25, -0.09, W * 0.5, 0.18);
+      // 空気穴
+      ctx.fillStyle = 'rgba(150, 95, 50, 0.45)';
+      for (const sx of [-1, 1]) for (let k = 0; k < 3; k++) for (const sy of [-1, 1]) {
+        ctx.beginPath(); ctx.arc(sx * (L * 0.27 + k * 0.32), sy * W * 0.18, 0.05, 0, Math.PI * 2); ctx.fill();
+      }
+      ctx.restore();
+    }
+  }
 
   // 体力の札：[席の色の印｜バー｜数字] の小さな札を、定規の画面上の外枠のすぐ上（上が狭ければ下）に置く
   // 盤面を隠しすぎないよう小さく半透明にし、狙っている自分の定規の札はさらに薄くする

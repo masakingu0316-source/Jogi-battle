@@ -190,6 +190,11 @@ export const traitDesc = (key, pct) => (TRAITS[key] ? TRAITS[key].desc.replace('
 // ゲージのたまり方
 export const GAUGE = { max: 100, shot: 20, hit: 10, beHit: 30 };
 
+// ---- 回復アイテム（ばんそうこう） ----
+// 2周目から、番が変わるたびに rate の確率で、机の上の空いている所に出る（同時に max 個まで）。
+// どの定規でも（敵でも）触れると heal だけ体力が回復し、アイテムは消える。r は大きさ（触れたとみなす半径・cm）
+export const FIELD_ITEM = { name: 'ばんそうこう', rate: 0.18, max: 1, heal: 25, r: 2.4 };
+
 // ---- 場のイベント ----
 // 2周目から、番が変わるたびに rate の確率で起きる（ほかのイベントが続いている間は起きない）
 //  ice：その番のあいだ机が凍って、すべりやすくなる
