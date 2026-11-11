@@ -5,7 +5,7 @@ import { DESKS } from './rules.js';
 
 // ---- 敵 ----
 // move：自分ではじいてくる敵／それ以外は置物（番が来ると act の効果だけ使う）
-// act：nibble 近くの自分を削る / heal 近くの敵を直す / swing 近づいた定規を弾き飛ばす
+// act：nibble 近くの自分を削る / heal 近くの敵を直す / swing 近づいた定規を弾き飛ばす（ダメージなし）
 // pinned：机に刺さって動かない / thorns：ぶつかった定規へのトゲのダメージ / zone：周りの机がねばる
 export const ENEMIES = {
   eraser: {
@@ -31,8 +31,8 @@ export const ENEMIES = {
   },
   compass: {
     name: 'コンパス', spec: 'en-compass', hp: 70, color: '#7a8696', pinned: true,
-    act: 'swing', range: 14, speed: 115, amount: 10,
-    desc: '針で刺さっていて動かない。番が来たとき近くにいる定規を、ぐるっと弾き飛ばす',
+    act: 'swing', range: 14, speed: 115,
+    desc: '針で刺さっていて動かない。番が来たとき近くにいる定規を、ぐるっと弾き飛ばす（ダメージはない。机から落とされないように）',
   },
   // 敵の定規：spec で形と素材を決める。必殺技も使う
   ruler: { name: '定規', hp: 100, color: '#c0504d', move: true, skill: true, desc: '必殺技を使ってくる定規' },

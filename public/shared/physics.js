@@ -181,7 +181,7 @@ const Physics = (() => {
   }
   function damage(world, target, amount, from, x, y, kind) {
     const dmg = Math.round(amount * 10) / 10;
-    if (dmg <= 0) return;
+    if (dmg <= 0 || world.noDamage) return; // noDamage：コンパスの番（弾くだけで、だれも体力が減らない）
     setHp(target, target.hp - dmg);
     (world.events ||= []).push({ type: 'hit', time: world.time, target: target.owner, from: from ? from.owner : -1, dmg, x, y, kind });
   }
@@ -577,7 +577,7 @@ const Physics = (() => {
           it.taken = true;
           const before = b.hp;
           setHp(b, b.hp + it.heal);
-          (world.events ||= []).push({ type: 'pickup', time: world.time, item: it.id, owner: b.owner, amount: Math.round((b.hp - before) * 10) / 10, x: it.x, y: it.y });
+          (world.events ||= []).push({ type: 'pickup', time: world.time, item: it.id, owner: b.owner, amount: Math.round((b.hp - before) * 10) / 10, x: it.x, y: it.y, big: !!it.big });
           break;
         }
       }

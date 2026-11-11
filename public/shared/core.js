@@ -377,7 +377,7 @@ export class RoomCore {
       while (world.events && seen < world.events.length) {
         const e = world.events[seen++];
         if (e.type === 'hit') hits.push({ f: frames.length - 1, target: e.target, from: e.from, dmg: e.dmg, x: round2(e.x), y: round2(e.y), kind: e.kind });
-        if (e.type === 'pickup') pickups.push({ f: frames.length - 1, item: e.item, owner: e.owner, amount: e.amount, x: round2(e.x), y: round2(e.y) });
+        if (e.type === 'pickup') pickups.push({ f: frames.length - 1, item: e.item, owner: e.owner, amount: e.amount, x: round2(e.x), y: round2(e.y), ...(e.big ? { big: true } : {}) });
       }
     };
     const run = () => {
@@ -684,14 +684,16 @@ export class RoomCore {
     this.maybeSpawnItem();
   }
 
-  // 回復アイテム：2周目から、番が変わるたびに確率で、机の上の空いている所に出す
+  // 回復アイテム：2周目から、番が変わるたびに確率で、机の上の空いている所に出す（ときどき大回復の救急箱）
   maybeSpawnItem() {
     const g = this.s.game;
     if (!g || g.result || (this.s.phase !== 'aim') || g.shots < g.n) return;
     g.items ||= [];
     if (g.items.length >= FIELD_ITEM.max || this.rand() >= FIELD_ITEM.rate) return;
     const tiles = deskTiles(this.deskDef()).filter((t) => !g.desks || g.desks.includes(t.i));
-    const r = FIELD_ITEM.r;
+    const big = this.rand() < FIELD_ITEM.big.chance;
+    const kind = big ? FIELD_ITEM.big : FIELD_ITEM;
+    const r = kind.r;
     for (let k = 0; k < 40; k++) {
       const t = tiles[Math.floor(this.rand() * tiles.length) % tiles.length];
       const m = Math.min(5, (t.x1 - t.x0) / 4, (t.y1 - t.y0) / 4);
@@ -701,9 +703,9 @@ export class RoomCore {
         && g.items.every((o) => Math.hypot(o.x - x, o.y - y) > r * 4);
       if (!clear) continue;
       g.itemId = (g.itemId || 0) + 1;
-      const it = { id: g.itemId, x, y, r, heal: FIELD_ITEM.heal, a: round2((this.rand() - 0.5) * 1.2) };
+      const it = { id: g.itemId, x, y, r, heal: kind.heal, a: round2((this.rand() - 0.5) * 1.2), ...(big ? { big: true } : {}) };
       g.items.push(it);
-      this.pushFx({ kind: 'item', x, y, item: it.id });
+      this.pushFx({ kind: 'item', x, y, item: it.id, ...(big ? { big: true } : {}) });
       return;
     }
   }

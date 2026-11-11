@@ -289,7 +289,7 @@ export class StageCore extends RoomCore {
     if (healed.length) this.pushFx({ kind: 'mend', owner: i, x: b.x, y: b.y, healed, r: d.range });
   }
 
-  // コンパス：近くにいる定規を弾き飛ばす（近くにだれもいなければ何もしない）
+  // コンパス：近くにいる定規を弾き飛ばすだけ（ダメージは与えない。弾かれた定規どうしがぶつかっても減らない）
   swing(i, d, now) {
     const g = this.s.game, b = g.bodies[i];
     const near = g.bodies.some((o, j) => j !== i && o.state === 'desk' && g.players[j].alive && Math.hypot(o.x - b.x, o.y - b.y) < d.range + 8);
@@ -298,11 +298,12 @@ export class StageCore extends RoomCore {
       return [];
     }
     const world = this.buildWorld();
+    world.noDamage = true;
     const src = world.bodies[i];
     const sc = scaleOf(this.s.stage.map);
     const frames = [encodeFrame(world)];
     for (let k = 0; k < 8; k++) frames.push(encodeFrame(world));
-    const hit = Physics.blast(world, src, d.range, d.speed * sc.body, d.amount * sc.act, 'compass');
+    const hit = Physics.blast(world, src, d.range, d.speed * sc.body, 0, 'compass');
     const blast = { kind: 'compass', f: frames.length - 1, x: round2(src.x), y: round2(src.y), r: d.range, hit };
     const { falls, hits, pickups } = runWorld(world, frames);
     this.applyWorld(world);
@@ -341,7 +342,7 @@ function runWorld(world, frames) {
     while (world.events && seen < world.events.length) {
       const e = world.events[seen++];
       if (e.type === 'hit') hits.push({ f: frames.length - 1, target: e.target, from: e.from, dmg: e.dmg, x: round2(e.x), y: round2(e.y), kind: e.kind });
-      if (e.type === 'pickup') pickups.push({ f: frames.length - 1, item: e.item, owner: e.owner, amount: e.amount, x: round2(e.x), y: round2(e.y) });
+      if (e.type === 'pickup') pickups.push({ f: frames.length - 1, item: e.item, owner: e.owner, amount: e.amount, x: round2(e.x), y: round2(e.y), ...(e.big ? { big: true } : {}) });
     }
   }
 }

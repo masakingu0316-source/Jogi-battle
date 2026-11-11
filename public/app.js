@@ -485,7 +485,10 @@ function applyState(st) {
         continue;
       }
       if (f.kind === 'item') {
-        app.fx.push({ x: f.x, y: f.y - 3, t0, text: 'ばんそうこう！', color: '#7fe3a0', small: true });
+        app.fx.push(f.big
+          ? { x: f.x, y: f.y - 3.5, t0, text: '救急箱！', color: '#ffd84a', big: true }
+          : { x: f.x, y: f.y - 3, t0, text: 'ばんそうこう！', color: '#7fe3a0', small: true });
+        if (f.big) app.fx.push({ x: f.x, y: f.y, t0, ring: 7, color: '#ffd84a' });
         app.itemBorn = { ...(app.itemBorn || {}), [f.item]: performance.now() };
         continue;
       }
@@ -1083,8 +1086,9 @@ function playbackBodies(now) {
     const pk = p.pickups[p.pickDone++];
     p.picked.add(pk.item);
     if (p.hpNow[pk.owner] !== undefined) p.hpNow[pk.owner] += pk.amount;
-    app.fx.push({ x: pk.x, y: pk.y - 4, t0: now, text: `回復 +${Math.round(pk.amount)}`, color: '#6fe39a', big: true });
-    app.fx.push({ x: pk.x, y: pk.y, t0: now, ring: 5, color: '#6fe39a', inward: true });
+    app.fx.push({ x: pk.x, y: pk.y - 4, t0: now, text: `${pk.big ? '大回復' : '回復'} +${Math.round(pk.amount)}`, color: pk.big ? '#ffd84a' : '#6fe39a', big: true });
+    app.fx.push({ x: pk.x, y: pk.y, t0: now, ring: pk.big ? 8 : 5, color: pk.big ? '#ffd84a' : '#6fe39a', inward: true });
+    if (pk.big) app.fx.push({ x: pk.x, y: pk.y, t0: now, burst: true });
   }
   // SSRの技の印：一角（角の先で当てた）・ゴム跳び（端で跳ね返った）・百八十度（曲がった）
   while (p.markDone < p.marks.length && t >= p.marks[p.markDone].f) {
@@ -1248,7 +1252,7 @@ window.addEventListener('resize', () => { if (!$('login').hidden) drawLoginArt()
 document.fonts?.ready?.then(() => { if (!$('game').hidden) board.layout(); });
 // 盤面に筆で書く字（クリティカル・必殺技の名前など）は、先に読み込んでおく（その字の分だけ）
 try {
-  const brush = ['クリティカル！机が消えた落ちた自滅セーフ一角曲がるゴム跳び対戦相棒の定規ばんそうこう回復撃破ダウン体力', ...Object.values(SKILLS).map((s) => s.name), ...PLAYERS.map((p) => p.name)].join('');
+  const brush = ['クリティカル！机が消えた落ちた自滅セーフ一角曲がるゴム跳び対戦相棒の定規ばんそうこう救急箱大回復撃破ダウン体力', ...Object.values(SKILLS).map((s) => s.name), ...PLAYERS.map((p) => p.name)].join('');
   document.fonts?.load?.('30px "Yuji Boku"', brush).catch(() => {});
 } catch { /* 読み込めなくても、ほかの字で書く */ }
 // 名前の札などの高さが変わったら、盤面の大きさを合わせ直す

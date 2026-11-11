@@ -332,8 +332,10 @@ export function createBoard(canvas, wrap, opt = {}) {
   function drawRuler(b, px, active, now) { paintRuler(ctx, b, px, active, now); }
 
   // ばんそうこう：うっすら光る緑の輪の上に、斜めに貼ったばんそうこう
+  // 救急箱（大回復）：金色に光る輪の上に、取っ手の付いた白い箱と赤い十字
   function drawItems(items, now) {
     for (const it of items) {
+      if (it.big) { drawAidBox(it, now); continue; }
       const born = it.born ? Math.min(1, (now - it.born) / 400) : 1;
       const pulse = 0.5 + 0.5 * Math.sin(now / 380 + it.id);
       ctx.save();
@@ -373,6 +375,57 @@ export function createBoard(canvas, wrap, opt = {}) {
       }
       ctx.restore();
     }
+  }
+
+  function drawAidBox(it, now) {
+    const born = it.born ? Math.min(1, (now - it.born) / 400) : 1;
+    const pulse = 0.5 + 0.5 * Math.sin(now / 300 + it.id);
+    ctx.save();
+    ctx.translate(it.x, it.y);
+    ctx.globalAlpha = born;
+    // 金色の光
+    const R = it.r * (1.45 + 0.2 * pulse);
+    const gr = ctx.createRadialGradient(0, 0, it.r * 0.3, 0, 0, R);
+    gr.addColorStop(0, 'rgba(255, 220, 90, 0.55)'); gr.addColorStop(1, 'rgba(255, 220, 90, 0)');
+    ctx.fillStyle = gr;
+    ctx.beginPath(); ctx.arc(0, 0, R, 0, Math.PI * 2); ctx.fill();
+    // 回るきらめき
+    ctx.save();
+    ctx.rotate(now / 900);
+    ctx.fillStyle = `rgba(255, 240, 170, ${0.5 + 0.4 * pulse})`;
+    for (let k = 0; k < 4; k++) {
+      ctx.rotate(Math.PI / 2);
+      ctx.beginPath(); ctx.arc(it.r * 1.2, 0, 0.16, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.restore();
+    ctx.strokeStyle = `rgba(220, 160, 30, ${0.45 + 0.4 * pulse})`;
+    ctx.lineWidth = 0.14;
+    ctx.setLineDash([0.4, 0.25]);
+    ctx.beginPath(); ctx.arc(0, 0, it.r * 1.05, 0, Math.PI * 2); ctx.stroke();
+    ctx.setLineDash([]);
+    // 箱
+    ctx.rotate(it.a || 0.2);
+    ctx.scale(born, born);
+    const w = it.r * 1.7, h = it.r * 1.3;
+    // 取っ手
+    ctx.strokeStyle = '#8a1f18'; ctx.lineWidth = 0.22;
+    roundRect(-w * 0.2, -h / 2 - h * 0.28, w * 0.4, h * 0.4, 0.2); ctx.stroke();
+    ctx.shadowColor = 'rgba(40, 22, 8, 0.4)'; ctx.shadowBlur = 0.5; ctx.shadowOffsetY = 0.2;
+    roundRect(-w / 2, -h / 2, w, h, 0.4);
+    ctx.fillStyle = '#e3392e'; ctx.fill();
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = '#8a1f18'; ctx.lineWidth = 0.08; ctx.stroke();
+    // ふたの線とつや
+    ctx.strokeStyle = 'rgba(120, 20, 15, 0.55)'; ctx.lineWidth = 0.06;
+    ctx.beginPath(); ctx.moveTo(-w / 2 + 0.15, -h * 0.22); ctx.lineTo(w / 2 - 0.15, -h * 0.22); ctx.stroke();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.25)';
+    roundRect(-w / 2 + 0.2, -h / 2 + 0.15, w - 0.4, h * 0.18, 0.15); ctx.fill();
+    // 白い十字
+    const c = h * 0.5, t = h * 0.17;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(-t / 2, -c / 2 + h * 0.08, t, c);
+    ctx.fillRect(-c / 2, -t / 2 + h * 0.08, c, t);
+    ctx.restore();
   }
 
   // 体力の札：[席の色の印｜バー｜数字] の小さな札を、定規の画面上の外枠のすぐ上（上が狭ければ下）に置く

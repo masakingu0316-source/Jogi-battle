@@ -74,10 +74,15 @@ test('回復アイテム：2周目から確率で空いている所に出て、�
   r.maybeSpawnItem();
   assert.equal((g.items || []).length, 0);
   g.shots = g.n;
+  // 出る（0.01）・救急箱にはならない（0.9）・あとは置き場所
+  const seq = [0.01, 0.9];
+  r.rand = () => seq.length ? seq.shift() : 0.01;
   r.maybeSpawnItem();
+  r.rand = () => 0.01;
   assert.equal(g.items.length, 1);
   const it = g.items[0];
   assert.equal(it.heal, FIELD_ITEM.heal);
+  assert.ok(!it.big);
   r.maybeSpawnItem();
   assert.equal(g.items.length, FIELD_ITEM.max, '同時に出るのは決まった数まで');
   assert.ok(r.snapshot().game.items.length === 1);
@@ -142,4 +147,52 @@ test('ステージ：敵は体力0で倒れる（今までどおり）', () => {
   c.finishTurn(0);
   assert.equal(c.s.game.players[1].alive, false);
   assert.equal(c.s.game.boardClear, true);
+});
+
+test('回復アイテム：ときどき大回復の救急箱が出て、拾うと大きく回復する', () => {
+  const { r, ms, g } = game('standard');
+  g.shots = g.n;
+  r.rand = () => 0.01; // 出る・救急箱になる
+  r.maybeSpawnItem();
+  const it = g.items[0];
+  assert.equal(it.big, true);
+  assert.equal(it.heal, FIELD_ITEM.big.heal);
+  assert.equal(it.r, FIELD_ITEM.big.r);
+  assert.ok(g.fx.some((f) => f.kind === 'item' && f.big));
+  assert.ok(FIELD_ITEM.big.heal > FIELD_ITEM.heal);
+  r.rand = () => 0.99;
+  Object.assign(it, { x: 0, y: 0 });
+  g.bodies[0].hp = 20;
+  Object.assign(g.bodies[0], { x: -10, y: 0, a: Math.PI / 2 });
+  Object.assign(g.bodies[1], { x: -40, y: 25 });
+  g.turn = 0;
+  const m = r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.45 })[0].msg;
+  assert.equal(m.pickups.length, 1);
+  assert.equal(m.pickups[0].big, true);
+  assert.equal(g.bodies[0].hp, 20 + FIELD_ITEM.big.heal);
+  assert.equal(g.items.length, 0);
+});
+
+test('ステージ：コンパスは近くの定規を弾き飛ばすだけで、だれの体力も減らさない', () => {
+  // 可変定規編のマップ5「横一列の廊下」の盤面1：鉛筆・消しゴム・コンパス
+  const c = new StageCore('kahen', 5, { name: 't', loadout: resolveLoadout({}) });
+  c.rand = () => 0.99;
+  const g = c.s.game;
+  const ci = g.bodies.findIndex((b) => b.specKey === 'en-compass');
+  assert.ok(ci > 0);
+  const cp = g.bodies[ci];
+  // 自分と鉛筆をコンパスのすぐそばに、ほかの敵は遠くに
+  Object.assign(g.bodies[0], { x: cp.x - 7, y: cp.y, a: Math.PI / 2 });
+  const others = g.bodies.map((b, j) => j).filter((j) => j !== 0 && j !== ci);
+  Object.assign(g.bodies[others[0]], { x: cp.x, y: cp.y + 7, a: 0 });
+  for (const j of others.slice(1)) Object.assign(g.bodies[j], { x: -40, y: 0 });
+  const before = g.bodies.map((b) => b.hp);
+  const pos = { x: g.bodies[0].x, y: g.bodies[0].y };
+  g.turn = ci;
+  const m = c.enemyTurn()[0];
+  assert.equal(m.blast.kind, 'compass');
+  assert.ok(m.blast.hit.includes(0), '自分も弾かれる');
+  assert.equal(m.hits.length, 0, 'ダメージは出ない');
+  g.bodies.forEach((b, j) => assert.equal(b.hp, before[j], `体力はそのまま（${j}）`));
+  assert.ok(Math.hypot(g.bodies[0].x - pos.x, g.bodies[0].y - pos.y) > 3, '弾き飛ばされて動いた');
 });
