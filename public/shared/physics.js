@@ -167,14 +167,16 @@ const Physics = (() => {
   // 押されたときにすべる距離の倍率：体力が満タンで kbMin、0で kbMax（はじいた本人には効かない）
   // ダメージ：ぶつかった瞬間に近づく速さ（cm/秒）から。当てられた側だけが受ける
   // ダメージ = dmgK ×（近づく速さ − dmgFloor）^dmgExp（強く当てても伸びすぎないよう、ゆるやかに増える。1回 dmgMax まで）
-  const HP = { max: 100, kbMin: 0.6, kbMax: 1.6, dmgK: 0.32, dmgExp: 0.7, dmgFloor: 12, dmgMax: 35, critDmg: 1.5, windDmg: 18, gripExp: 0.5, massExp: 0.5 };
+  // zeroKb・zeroPower：体力0でも倒れない定規（プレイヤー）の「瀕死」。当てられるとかなり飛び、自分ではじくと力がかなり弱い
+  const HP = { max: 100, kbMin: 0.6, kbMax: 1.6, zeroKb: 10, zeroPower: 0.55, dmgK: 0.32, dmgExp: 0.7, dmgFloor: 12, dmgMax: 35, critDmg: 1.5, windDmg: 18, gripExp: 0.5, massExp: 0.5 };
   // 体力から、押されたときのすべりにくさ（摩擦の倍率）を決める。すべる距離は摩擦に反比例する
   // 体力から「押されたときの飛びやすさ」kb を出し、すべりにくさ（摩擦）と、ぶつかったときの重さの両方に分けて効かせる
   function setHp(b, hp) {
     const max = b.maxHp || HP.max;
     b.hp = Math.max(0, Math.min(max, hp));
     // kbMul：特性「重心」で、当てられたときの飛び方を少し小さくする
-    const kb = b.shooter ? 1 : (HP.kbMin + (HP.kbMax - HP.kbMin) * (1 - b.hp / max)) * (b.kbMul ?? 1);
+    const base = b.hp <= 0 && b.weakAtZero ? HP.zeroKb : HP.kbMin + (HP.kbMax - HP.kbMin) * (1 - b.hp / max);
+    const kb = b.shooter ? 1 : base * (b.kbMul ?? 1);
     b.grip = Math.pow(kb, -HP.gripExp);
     const mk = Math.pow(kb, HP.massExp);
     b.cM = b.invM * mk; b.cI = b.invI * mk;
@@ -611,7 +613,8 @@ const Physics = (() => {
     const r = rot(b, { x: lx, y: ly });
     const arm = r.x * diry - r.y * dirx;
     const effMass = 1 / (b.invM + b.invI * arm * arm);
-    const k = power * world.params.power; // 力の割合（引っぱった長さ×倍率）
+    // 力の割合（引っぱった長さ×倍率）。瀕死（体力0で残っている）ときは弱くなる
+    const k = power * world.params.power * (b.hp <= 0 && b.weakAtZero ? HP.zeroPower : 1);
     const E = MAX_ENERGY * Math.pow(b.spec.mass / 26, ENERGY_MASS_EXP) * b.powerMul;
     const J = k * Math.sqrt(2 * E * effMass);
     const Jx = dirx * J, Jy = diry * J;

@@ -290,10 +290,24 @@ export class RoomCore {
     if (b.trait === 'edge') body.dmgMul = (body.dmgMul ?? 1) * (1 + tp);
     if (b.trait === 'grip') body.mu *= 1 + tp;
     if (b.trait === 'center') body.kbMul = 1 - tp;
+    // 体力0でも倒れない定規（瀕死になる）
+    body.weakAtZero = this.zeroSurvives(b.owner);
     Physics.setHp(body, b.hp ?? body.maxHp);
     return body;
   }
   bodyExtra() { return {}; }
+  // 体力0になっても倒れず「瀕死」で残るか（対人では人だけ。コンピュータは体力0で倒れる。ステージでは自分だけ）
+  zeroSurvives(i) { return !this.member(this.s.game?.order?.[i])?.cpu; }
+  // 瀕死になった・抜けた印（なった瞬間に一度だけ知らせる）
+  markWeak() {
+    const g = this.s.game;
+    g.bodies.forEach((b, i) => {
+      if (!this.zeroSurvives(i)) return;
+      const weak = b.state === 'desk' && g.players[i].alive && (b.hp ?? 1) <= 0;
+      if (weak && !b.weak) this.pushFx({ kind: 'weak', owner: i, x: b.x, y: b.y });
+      if (weak) b.weak = true; else delete b.weak;
+    });
+  }
 
   buildWorld() {
     const g = this.s.game;
@@ -493,9 +507,10 @@ export class RoomCore {
       g.vanishIn = null;
       g.vanishWait = null;
     }
-    // 体力が0になった定規は倒れる（机の上に残っていても）
+    // 体力が0になっても倒れず、瀕死で残る（当てられるとかなり飛び、自分ではじく力がかなり弱い）。
+    // zeroSurvives が false の定規だけ、体力0で倒れる
     g.bodies.forEach((b, i) => {
-      if (b.state !== 'desk' || !g.players[i].alive || (b.hp ?? 1) > 0) return;
+      if (b.state !== 'desk' || !g.players[i].alive || (b.hp ?? 1) > 0 || this.zeroSurvives(i)) return;
       b.state = 'gone'; b.ko = true;
     });
     // 身代わり：落ちた（倒れた）定規が1回だけ机の真ん中に戻る（体力は半分。倒れたときは最大の半分）
@@ -518,6 +533,7 @@ export class RoomCore {
       }
     });
     if (newly.length) g.outOrder.push(newly);
+    this.markWeak();
     for (const i of newly) if (i !== shooter && !g.players[i].byDesk && !opt.skipped) g.kos[shooter]++;
     const alive = g.players.map((p, i) => (p.alive ? i : -1)).filter((i) => i >= 0);
     const label = (i) => `${this.member(g.order[i])?.name ?? '?'}（${PLAYERS[i].name}）`;
@@ -674,12 +690,13 @@ export class RoomCore {
     // 不動・反撃は、使った人の次の番が来たら終わる
     b.anchor = false;
     b.counter = false;
-    // インク漏れ：自分の番が来るたびに体力が減る。0になったら、その番は来ずに倒れる
+    // インク漏れ：自分の番が来るたびに体力が減る。0になったら瀕死（倒れる定規なら、その番は来ずに倒れる）
     if (b.ink > 0) {
       b.hp = Math.max(0, Math.round(((b.hp ?? 100) - SKILL_TUNE.inkDmg) * 10) / 10);
       b.ink--;
       this.pushFx({ kind: 'ink', owner: t, x: b.x, y: b.y, amount: SKILL_TUNE.inkDmg });
-      if (b.hp <= 0 && this.s.phase === 'aim') { this.finishTurn(t, Date.now(), { skipped: true }); return; }
+      if (b.hp <= 0 && !this.zeroSurvives(t) && this.s.phase === 'aim') { this.finishTurn(t, Date.now(), { skipped: true }); return; }
+      this.markWeak();
     }
     this.maybeSpawnItem();
   }

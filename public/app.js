@@ -497,6 +497,14 @@ function applyState(st) {
         f.healed.forEach((h, n) => app.fx.push({ x: h.x, y: h.y - 4, t0: t0 + 200 + n * 120, text: `+${h.amount}`, color: '#7fe3c8', small: true }));
         continue;
       }
+      if (f.kind === 'weak') {
+        // 体力0：倒れずに瀕死で残る
+        const mine = app.you && st.game.order[f.owner] === app.you.id;
+        const who = isStage(st) || mine ? '' : `${seatLook(f.owner).name} `;
+        app.fx.push({ x: f.x, y: f.y - 3, t0, text: `${who}瀕死！`, color: '#ff8a7a', big: true });
+        app.fx.push({ x: f.x, y: f.y, t0, ring: 6, color: '#ff8a7a', inward: true });
+        continue;
+      }
       if (f.kind === 'respawn') {
         app.fx.push({ x: f.x, y: f.y, t0, ring: 9, color: '#ffffff', inward: true });
         app.fx.push({ x: f.x, y: f.y - 5, t0: t0 + 150, text: `ライフ -1　のこり${f.lives}`, color: '#ff8a7a', big: true });
@@ -668,7 +676,7 @@ function renderGame() {
         : stage ? [mat ? `${MATERIAL_INFO[mat].name} Lv.${body.level || 1}` : ''].filter(Boolean).join('・')
         : [mat ? `${MATERIAL_INFO[mat].name} Lv.${body.level || 1}` : '', teams ? TEAMS[teamOf(i)].name : '', `${st.wins[mid] || 0}勝`].filter(Boolean).join('・'),
       // 続いている必殺技の効果
-      fxs: [body?.anchor && '不動', body?.counter && '反撃の構え', body?.sub && '身代わり', body?.ink > 0 && `インク あと${body.ink}`].filter(Boolean),
+      fxs: [p.alive && !body?.enemy && body?.state === 'desk' && (body?.hp ?? 1) <= 0 && '瀕死', body?.anchor && '不動', body?.counter && '反撃の構え', body?.sub && '身代わり', body?.ink > 0 && `インク あと${body.ink}`].filter(Boolean),
     };
   };
   const hpBar = (x) => `<span class="hpbar ${x.hpCls}" role="img" aria-label="体力 ${x.hp}"><i style="width:${x.pct}%"></i><b>${x.hp}</b></span>`;
@@ -1252,7 +1260,7 @@ window.addEventListener('resize', () => { if (!$('login').hidden) drawLoginArt()
 document.fonts?.ready?.then(() => { if (!$('game').hidden) board.layout(); });
 // 盤面に筆で書く字（クリティカル・必殺技の名前など）は、先に読み込んでおく（その字の分だけ）
 try {
-  const brush = ['クリティカル！机が消えた落ちた自滅セーフ一角曲がるゴム跳び対戦相棒の定規ばんそうこう救急箱大回復撃破ダウン体力', ...Object.values(SKILLS).map((s) => s.name), ...PLAYERS.map((p) => p.name)].join('');
+  const brush = ['クリティカル！机が消えた落ちた自滅セーフ一角曲がるゴム跳び対戦相棒の定規ばんそうこう救急箱大回復撃破瀕死ダウン体力', ...Object.values(SKILLS).map((s) => s.name), ...PLAYERS.map((p) => p.name)].join('');
   document.fonts?.load?.('30px "Yuji Boku"', brush).catch(() => {});
 } catch { /* 読み込めなくても、ほかの字で書く */ }
 // 名前の札などの高さが変わったら、盤面の大きさを合わせ直す

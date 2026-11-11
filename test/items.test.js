@@ -28,43 +28,81 @@ function hit(r, ms, g, power = 0.6) {
   return r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power })[0].msg;
 }
 
-test('対人：体力が0になったら、机の上に残っていても倒れて決着する', () => {
+test('対人：体力が0になっても倒れず、瀕死で残る（決着しない）', () => {
   const { r, ms, g } = game();
   g.bodies[1].hp = 1;
-  const m = hit(r, ms, g);
+  const m = hit(r, ms, g, 0.45);
+  assert.equal(m.t, 'shot');
+  assert.equal(g.bodies[1].hp, 0);
+  assert.equal(g.bodies[1].state, 'desk');
+  assert.equal(g.players[1].alive, true);
+  assert.equal(g.result, null);
+  assert.equal(g.bodies[1].weak, true);
+  assert.ok(g.fx.some((f) => f.kind === 'weak' && f.owner === 1), '瀕死になったことを知らせる');
+  assert.ok(!g.fx.some((f) => f.kind === 'down'));
+  // 回復すれば瀕死は抜ける
+  g.bodies[1].hp = 30;
+  r.markWeak();
+  assert.equal(g.bodies[1].weak, undefined);
+});
+
+test('コンピュータは瀕死にならず、体力0で倒れる', () => {
+  const { r, ms, g } = game();
+  r.member(ms[1].id).cpu = true;
+  g.bodies[1].hp = 1;
+  const m = hit(r, ms, g, 0.45);
   assert.equal(m.t, 'shot');
   assert.equal(g.players[1].alive, false);
   assert.equal(g.players[1].ko, true);
-  assert.equal(g.players[1].selfOut, false);
   assert.equal(g.result.winners[0], 0);
-  assert.match(g.result.reason, /体力が0/);
-  assert.equal(g.kos[0], 1, '倒した人の手柄になる');
   assert.ok(g.fx.some((f) => f.kind === 'down' && f.owner === 1 && f.how === 'ko'));
+  assert.ok(!g.fx.some((f) => f.kind === 'weak'));
+  assert.equal(r.makeBody(g.bodies[0]).weakAtZero, true, '人は瀕死になる');
 });
 
-test('対人：乱戦で1人が体力0になっても、残りの人で続く。身代わりがあれば最大の半分で戻る', () => {
-  const { r, ms, g } = game('melee');
-  g.bodies[1].hp = 1;
-  hit(r, ms, g);
-  assert.equal(g.players[1].alive, false);
-  assert.equal(g.result, null);
-  assert.equal(r.s.phase, 'aim');
-  const b = game();
-  b.g.bodies[1].hp = 1; b.g.bodies[1].sub = true;
-  hit(b.r, b.ms, b.g);
-  assert.equal(b.g.players[1].alive, true);
-  assert.equal(b.g.bodies[1].hp, 50);
-  assert.equal(b.g.bodies[1].state, 'desk');
+// 同じ当て方で、当てられた側がどれだけ動いたか
+function pushed(hp) {
+  const { r, ms, g } = game('standard');
+  g.shots = g.n;
+  g.bodies[1].hp = hp;
+  Object.assign(g.bodies[0], { x: -38, y: 0, a: Math.PI / 2 });
+  Object.assign(g.bodies[1], { x: -24, y: 0, a: Math.PI / 2 });
+  r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.6 });
+  const b = g.bodies[1];
+  return b.state === 'desk' ? Math.hypot(b.x + 24, b.y) : Infinity;
+}
+// 同じ力ではじいて、自分がどれだけ進んだか（相手は遠くに置く）
+function slid(hp) {
+  const { r, ms, g } = game();
+  g.shots = g.n;
+  g.bodies[0].hp = hp;
+  Object.assign(g.bodies[0], { x: -30, y: 0, a: Math.PI / 2 });
+  Object.assign(g.bodies[1], { x: 30, y: 25, a: 0 });
+  r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.4 });
+  return g.bodies[0].x + 30;
+}
+
+test('瀕死：当てられるとかなり飛びやすい', () => {
+  const half = pushed(50), weak = pushed(0);
+  assert.ok(weak > half * 5, `体力50で${half.toFixed(1)}cm → 瀕死で${weak.toFixed(1)}cm`);
 });
 
-test('対人：インク漏れで体力が0になったら、その人の番は来ずに倒れる', () => {
+test('瀕死：自分ではじくと、進む距離がかなり小さい', () => {
+  const low = slid(1), weak = slid(0);
+  assert.ok(low > 5);
+  assert.ok(weak < low * 0.45, `体力1で${low.toFixed(1)}cm → 瀕死で${weak.toFixed(1)}cm`);
+});
+
+test('対人：インク漏れで体力が0になっても倒れず、瀕死のまま自分の番が来る', () => {
   const { r, ms, g } = game('melee');
   g.shots = g.n;
   g.bodies[1].hp = SKILL_TUNE.inkDmg - 1; g.bodies[1].ink = 2;
   Object.assign(g.bodies[0], { x: -30, y: 0 });
   r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
-  assert.equal(g.players[1].alive, false);
-  assert.equal(g.turn, 2, '次の人の番へ');
+  assert.equal(g.players[1].alive, true);
+  assert.equal(g.bodies[1].hp, 0);
+  assert.equal(g.turn, 1, '番は来る');
+  assert.ok(g.fx.some((f) => f.kind === 'weak' && f.owner === 1));
 });
 
 test('回復アイテム：2周目から確率で空いている所に出て、触れた定規が回復し、アイテムは消える', () => {
@@ -112,7 +150,7 @@ test('回復アイテム：体力は最大より上がらない', () => {
   assert.equal(g.bodies[0].hp, 100);
 });
 
-test('ステージ：自分の体力が0になったらライフを1つ使って戻る。敵も回復アイテムを拾える', () => {
+test('ステージ：自分の体力が0になってもライフは減らず、瀕死で残る。敵も回復アイテムを拾える', () => {
   const c = new StageCore('kahen', 1, { name: 't', loadout: resolveLoadout({}, undefined, 1, STAGE_LEVEL_MAX) });
   c.rand = () => 0.99;
   const g = c.s.game;
@@ -122,10 +160,14 @@ test('ステージ：自分の体力が0になったらライフを1つ使って
   g.bodies[0].hp = 1;
   g.turn = 1;
   c.enemyTurn();
-  assert.equal(c.s.stage.lives, 2);
+  assert.equal(c.s.stage.lives, 3, 'ライフはそのまま');
   assert.equal(c.s.phase, 'aim');
-  assert.equal(g.bodies[0].hp, Math.round(stageMaxHp(1) / 2));
-  assert.ok(g.fx.some((f) => f.kind === 'down' && f.owner === 0));
+  assert.equal(g.bodies[0].hp, 0);
+  assert.equal(g.bodies[0].state, 'desk');
+  assert.ok(g.fx.some((f) => f.kind === 'weak' && f.owner === 0));
+  assert.ok(!g.fx.some((f) => f.kind === 'down' && f.owner === 0));
+  assert.equal(c.makeBody(g.bodies[0]).weakAtZero, true);
+  assert.equal(c.makeBody(g.bodies[1]).weakAtZero, false, '敵は瀕死にならない（0で倒れる）');
   // 敵が拾う：鉛筆の進む先にアイテム
   const d = new StageCore('kahen', 2, { name: 't', loadout: resolveLoadout({}) });
   d.rand = () => 0.99;

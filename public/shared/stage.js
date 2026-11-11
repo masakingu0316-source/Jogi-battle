@@ -68,9 +68,10 @@ export const aiOf = (map) => ({
 
 // 盤面と盤面の間の回復
 export const BOARD_HEAL = 20;
-// ライフ：1マップに3つ。落ちても2回までは盤面に戻れる（戻ったとき、体力は最大の半分より少なければ半分まで戻る）
+// ライフ：1マップに3つ。落ちても（体力0で倒れても）2回までは盤面に戻れる
+// 戻ったとき、体力は RESPAWN_HP（100）になる（それより多く残っていれば、そのまま）
 export const LIVES = 3;
-export const RESPAWN_HP = 0.5;
+export const RESPAWN_HP = 100;
 
 // 敵1体の名前と見た目の色（定規は形と素材から）
 const SHORT = { straight30: '30cm定規', straight15: '15cm定規', tri45: '三角定規45°', tri60: '三角定規60°', protractor: '分度器' };

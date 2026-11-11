@@ -18,6 +18,7 @@ export function createPractice({ mode, cpus, level, name, loadout, loadoutFor, o
   const cpuIds = [];
   for (let i = 0; i < cpus; i++) {
     const m = core.join(`CPU${i + 1}`, null, null).member;
+    m.cpu = true; // コンピュータは瀕死にならず、体力0で倒れる
     const ids = rulerIds();
     const ruler = ids[Math.floor(Math.random() * ids.length)];
     core.setLoadout(m.id, resolveLoadout({ ruler }, cfg, CPU_LEVELS[lv].level));

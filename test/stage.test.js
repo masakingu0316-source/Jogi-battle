@@ -86,7 +86,7 @@ test('ライフは3つ。2回までは落ちても盤面に戻り、3回目で�
   const me = c.s.game.bodies[0];
   assert.equal(me.state, 'desk');
   assert.deepEqual([me.x, me.y], [-18, 0], '盤面の最初の位置に戻る');
-  assert.equal(me.hp, 50, '体力は最大の半分まで戻る');
+  assert.equal(me.hp, 100, '体力は100で戻る');
   assert.equal(c.s.game.turn, 0);
   assert.equal(c.snapshot().stage.lives, 2);
   assert.equal(c.s.stage.shots, 1, '戻っても打った回数は1回');

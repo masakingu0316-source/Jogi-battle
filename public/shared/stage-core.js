@@ -83,6 +83,9 @@ export class StageCore extends RoomCore {
     s.phase = 'aim';
   }
 
+  // 体力0で倒れず瀕死になるのは自分だけ（敵は今までどおり倒れる）
+  zeroSurvives(i) { return i === 0; }
+
   bodyExtra(b) {
     if (!b.enemy) return { maxHp: b.maxHp || Physics.HP.max, modLimit: STAGE_MOD_LIMIT };
     const d = ENEMIES[b.enemy];
@@ -138,7 +141,7 @@ export class StageCore extends RoomCore {
     if (!opt.keepTurn && !opt.again && !opt.skipped) s.stage.shots += shooter === 0 ? 1 : 0;
     // 身代わり：落ちた（体力0で倒れた）定規が1回だけ机の真ん中に戻る（体力は半分。倒れたときは最大の半分）
     g.bodies.forEach((b, i) => {
-      const down = b.state !== 'desk' || (b.hp ?? 1) <= 0;
+      const down = b.state !== 'desk' || ((b.hp ?? 1) <= 0 && !this.zeroSurvives(i));
       if (!b.sub || !down || !g.players[i].alive) return;
       const ko = b.state === 'desk';
       b.state = 'desk'; b.sub = false;
@@ -160,13 +163,10 @@ export class StageCore extends RoomCore {
         this.pushFx({ kind: 'down', owner: i, how: 'ko', x: b.x, y: b.y });
       }
     });
-    // 自分が落ちたか体力が0になったら、ライフを1つ使って盤面に戻る。ライフが残っていなければ、このマップは失敗
-    const meKo = g.bodies[0].state === 'desk' && (g.bodies[0].hp ?? 1) <= 0;
-    if (g.bodies[0].state !== 'desk' || meKo) {
-      if (meKo) this.pushFx({ kind: 'down', owner: 0, how: 'ko', x: g.bodies[0].x, y: g.bodies[0].y });
-      const how = meKo
-        ? (shooter === 0 ? '自分の体力が0になった' : `${this.look(shooter).name}に体力を0にされた`)
-        : shooter === 0 ? '自分の定規が机から落ちた（自滅）' : `${this.look(shooter).name}に机から落とされた`;
+    // 自分が落ちたら、ライフを1つ使って盤面に戻る。ライフが残っていなければ、このマップは失敗
+    // （体力0では倒れず、瀕死で残る）
+    if (g.bodies[0].state !== 'desk') {
+      const how = shooter === 0 ? '自分の定規が机から落ちた（自滅）' : `${this.look(shooter).name}に机から落とされた`;
       const lives = s.stage.lives ?? LIVES;
       if (lives > 1) {
         s.stage.lives = lives - 1;
@@ -183,6 +183,7 @@ export class StageCore extends RoomCore {
       s.phase = 'over';
       return { saved: false, vanished: null };
     }
+    this.markWeak();
     // 敵が全部倒れたら盤面クリア（次の盤面へは nextBoard で進む）
     if (g.players.every((p, i) => i === 0 || !p.alive)) {
       g.boardClear = true;
@@ -210,7 +211,7 @@ export class StageCore extends RoomCore {
     const body = this.makeBody(me);
     const blocked = g.bodies.some((o, j) => j > 0 && o.state === 'desk' && g.players[j].alive && Physics.collide(body, this.makeBody(o)));
     if (blocked) Object.assign(me, this.freeSpot(0));
-    me.hp = Math.max(me.hp ?? 0, Math.round(me.maxHp * RESPAWN_HP));
+    me.hp = Math.max(me.hp ?? 0, Math.min(me.maxHp, RESPAWN_HP));
     this.pushFx({ kind: 'respawn', owner: 0, x: me.x, y: me.y, lives: st.lives });
   }
 
