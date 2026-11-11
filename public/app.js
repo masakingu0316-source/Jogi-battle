@@ -1229,7 +1229,7 @@ document.fonts?.ready?.then(() => { if (!$('game').hidden) board.layout(); });
 // 盤面に筆で書く字（クリティカル・必殺技の名前など）は、先に読み込んでおく（その字の分だけ）
 try {
   const brush = ['クリティカル！机が消えた落ちた自滅セーフ一角曲がるゴム跳び対戦相棒の定規', ...Object.values(SKILLS).map((s) => s.name), ...PLAYERS.map((p) => p.name)].join('');
-  document.fonts?.load?.('30px "Yuji Mai"', brush).catch(() => {});
+  document.fonts?.load?.('30px "Yuji Boku"', brush).catch(() => {});
 } catch { /* 読み込めなくても、ほかの字で書く */ }
 // 名前の札などの高さが変わったら、盤面の大きさを合わせ直す
 if (window.ResizeObserver) new ResizeObserver(() => { if (!$('game').hidden) board.layout(); }).observe($('players'));

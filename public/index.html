@@ -10,7 +10,7 @@
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='12' width='26' height='8' rx='1.5' fill='%23ff7f6e'/%3E%3Cpath d='M6 12v3M9 12v2M12 12v3M15 12v2M18 12v3M21 12v2M24 12v3' stroke='%232a1a14' stroke-width='1'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Yuji+Syuku&family=Yuji+Mai&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Yuji+Syuku&family=Yuji+Mai&family=Yuji+Boku&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -77,7 +77,12 @@
         <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 26V6h3v20zM9 7h15l-3 5 3 5H9z" fill="currentColor"/></svg>
         <span>ステージ</span><small id="stageHomeNote"></small>
       </button>
-      <button type="button" class="bb main" id="openBattle" aria-label="対戦"><span class="seal"><span>対戦</span></span></button>
+      <button type="button" class="bb main" id="openBattle" aria-label="対戦">
+        <span class="bb-halo" aria-hidden="true"></span>
+        <span class="bb-ticks" aria-hidden="true"></span>
+        <span class="bb-gloss" aria-hidden="true"></span>
+        <span class="seal" aria-hidden="true"><i class="seal-kicker">いざ</i><span class="seal-main">対戦</span><i class="seal-sub">勝負</i></span>
+      </button>
       <button type="button" class="bb side" id="openJoin">
         <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8 4h14a2 2 0 0 1 2 2v20a2 2 0 0 1-2 2H8z" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M4 16h11m-4-4 4 4-4 4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
         <span>部屋に入る</span><small>部屋コード</small>

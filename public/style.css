@@ -43,7 +43,9 @@
   --tabbar-h: clamp(58px, 11dvh, 76px);
 
   --font-display: "Yuji Syuku", "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
-  --font-brush: "Yuji Mai", "Yuji Syuku", "Hiragino Mincho ProN", "Yu Mincho", serif;
+  --font-brush: "Yuji Boku", "Yuji Mai", "Yuji Syuku", "Hiragino Mincho ProN", "Yu Mincho", serif;  /* 墨の太い筆 */
+  --brush-w: 0.05em;              /* 筆文字の太らせ（文字のふちを同じ色でなぞる） */
+  --display-w: 0.028em;           /* 見出しの筆文字の太らせ */
   --font-body: "BIZ UDPGothic", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
 
   /* 以前の名前（設定画面などのページ内スタイル用） */
@@ -279,7 +281,7 @@ canvas.can-aim:active { cursor: grabbing; }
 
 .toast {
   position: fixed; left: 50%; transform: translateX(-50%);
-  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px) + var(--toast-lift, 0px));
   padding: 9px 18px; font-size: 14px; width: max-content; max-width: calc(100vw - 32px); z-index: 20;
   border-color: var(--line-strong);
 }
@@ -963,17 +965,77 @@ body.on-home .page { max-width: 460px; gap: 0; }
 .bb.side svg { width: 26px; height: 26px; color: var(--pen); }
 .bb.side small { font-size: 12px; font-weight: 400; color: var(--ink-soft); }
 .bb.side:active { transform: translateY(2px); box-shadow: 0 1px 0 var(--line-strong); }
+/* 対戦：朱漆の丸に、金の縁と分度器の目盛り。真ん中に朱文の落款（押すと判を押したように沈む） */
 .bb.main {
-  width: min(19dvh, 132px); height: min(19dvh, 132px); min-width: 96px; min-height: 96px; padding: 0; border-radius: 50%; border: 0;
-  background: radial-gradient(circle at 38% 32%, #e2563d, #b9301f 70%, #9a2416); box-shadow: 0 5px 0 #6e1a10, 0 10px 22px -8px rgba(120, 30, 20, 0.7);
-  display: grid; place-items: center;
+  --s: max(104px, min(20dvh, 144px));
+  position: relative; width: var(--s); height: var(--s); padding: 0; border-radius: 50%; border: 3px solid transparent; isolation: isolate;
+  background:
+    radial-gradient(circle at 34% 26%, #f47a58 0%, #d33f25 34%, #b02a17 64%, #7d170c 100%) padding-box,
+    conic-gradient(from 210deg, #fff4c4, #d9a63a 20%, #8a5a12 38%, #f6d77a 55%, #b8862a 72%, #fff4c4) border-box;
+  box-shadow: 0 6px 0 #5a130a, 0 16px 26px -10px rgba(110, 25, 15, 0.8), inset 0 -8px 14px rgba(60, 0, 0, 0.35), inset 0 4px 8px rgba(255, 220, 200, 0.3);
+  display: grid; place-items: center; transition: transform .08s, box-shadow .08s;
 }
-.bb.main:active { transform: translateY(3px); box-shadow: 0 2px 0 #6e1a10; }
+.bb.main:hover { background:
+    radial-gradient(circle at 34% 26%, #f8866a 0%, #d94a2e 34%, #b52f1b 64%, #7d170c 100%) padding-box,
+    conic-gradient(from 210deg, #fff4c4, #d9a63a 20%, #8a5a12 38%, #f6d77a 55%, #b8862a 72%, #fff4c4) border-box; }
+.bb.main:active { transform: translateY(5px) scale(0.98); box-shadow: 0 1px 0 #5a130a, 0 6px 14px -8px rgba(110, 25, 15, 0.8), inset 0 -4px 10px rgba(60, 0, 0, 0.4), inset 0 4px 8px rgba(255, 220, 200, 0.25); }
+.bb.main:active .seal { transform: rotate(-5deg) scale(0.94); }
+.bb.main:focus-visible { outline: 3px solid var(--pen); outline-offset: 4px; }
+/* 分度器の目盛り（ゆっくり回る） */
+.bb-ticks {
+  position: absolute; inset: 4%; border-radius: 50%; pointer-events: none;
+  background:
+    repeating-conic-gradient(from 0deg, rgba(255, 233, 186, 0.95) 0deg 1.4deg, transparent 1.4deg 30deg),
+    repeating-conic-gradient(from 0deg, rgba(255, 233, 186, 0.6) 0deg 0.7deg, transparent 0.7deg 6deg);
+  -webkit-mask: radial-gradient(circle closest-side, transparent 0 84%, #000 85% 97%, transparent 98%);
+          mask: radial-gradient(circle closest-side, transparent 0 84%, #000 85% 97%, transparent 98%);
+  animation: bb-spin 48s linear infinite;
+}
+.bb-ticks::after {
+  content: ''; position: absolute; inset: 0; border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, rgba(255, 233, 186, 0.95) 0deg 1.6deg, transparent 1.6deg 90deg);
+  -webkit-mask: radial-gradient(circle closest-side, transparent 0 78%, #000 79% 97%, transparent 98%);
+          mask: radial-gradient(circle closest-side, transparent 0 78%, #000 79% 97%, transparent 98%);
+}
+@keyframes bb-spin { to { transform: rotate(360deg); } }
+/* 漆のつや */
+.bb-gloss {
+  position: absolute; left: 14%; top: 7%; width: 58%; height: 30%; border-radius: 50%; pointer-events: none; transform: rotate(-22deg);
+  background: radial-gradient(ellipse at 50% 40%, rgba(255, 255, 255, 0.55), rgba(255, 255, 255, 0) 70%);
+}
+/* まわりに広がる輪（呼んでいる感じ） */
+.bb-halo { position: absolute; inset: -6px; border-radius: 50%; pointer-events: none; border: 2px solid rgba(214, 70, 40, 0.55); animation: bb-halo 2.6s ease-out infinite; z-index: -1; }
+@keyframes bb-halo { 0% { transform: scale(0.94); opacity: 0.9; } 70%, 100% { transform: scale(1.22); opacity: 0; } }
+/* 落款：生成りの二重枠に、かすれ */
 .bb.main .seal {
-  width: 70%; height: 70%; display: grid; place-items: center; border: 3px double rgba(255, 240, 225, 0.92); border-radius: 12%;
-  transform: rotate(-4deg);
+  position: relative; width: 58%; height: 58%; display: grid; place-items: center; align-content: center; gap: 0;
+  border: 3px double rgba(255, 241, 222, 0.95); border-radius: 10%; transform: rotate(-5deg); transition: transform .08s;
+  box-shadow: inset 0 0 0 1px rgba(120, 20, 8, 0.4), 0 0 0 1px rgba(120, 20, 8, 0.25);
+  background: radial-gradient(circle at 50% 45%, rgba(255, 255, 255, 0.08), rgba(0, 0, 0, 0.12));
 }
-.bb.main .seal span { font-family: var(--font-brush); font-size: max(26px, min(5.3dvh, 37px)); white-space: nowrap; color: #fff8ef; line-height: 1; text-shadow: 0 1px 0 rgba(0, 0, 0, 0.2); }
+.bb.main .seal::after {
+  /* 判のかすれ（朱の点を散らして、白い線をところどころ欠けさせる） */
+  content: ''; position: absolute; inset: -4px; pointer-events: none; border-radius: 10%;
+  background:
+    linear-gradient(90deg, transparent 22%, #b52d19 22% 27%, transparent 27%) 0 0 / 100% 5px no-repeat,
+    linear-gradient(90deg, transparent 63%, #b52d19 63% 66%, transparent 66%) 0 100% / 100% 6px no-repeat,
+    linear-gradient(0deg, transparent 58%, #b52d19 58% 64%, transparent 64%) 0 0 / 6px 100% no-repeat,
+    linear-gradient(0deg, transparent 30%, #b52d19 30% 33%, transparent 33%) 100% 0 / 6px 100% no-repeat;
+  opacity: 0.85;
+}
+.seal-main {
+  font-family: var(--font-brush); font-size: calc(var(--s) * 0.27); line-height: 1; white-space: nowrap; color: #fff6e8;
+  -webkit-text-stroke: 0.07em #fff6e8; paint-order: stroke fill;
+  text-shadow: 0 2px 0 rgba(90, 10, 0, 0.55), 0 0 10px rgba(255, 200, 160, 0.35);
+  letter-spacing: -0.02em;
+}
+.seal-kicker, .seal-sub {
+  font-style: normal; font-family: var(--font-display); font-size: max(12px, calc(var(--s) * 0.09)); line-height: 1.1; color: rgba(255, 238, 214, 0.92);
+  letter-spacing: 0.3em; padding-left: 0.3em;
+}
+.seal-kicker { margin-bottom: 0.15em; }
+.seal-sub { margin-top: 0.2em; }
+@media (prefers-reduced-motion: reduce) { .bb-ticks, .bb-halo { animation: none; } .bb-halo { display: none; } }
 .home-error { position: absolute; left: 0; right: 0; bottom: calc(21dvh + 8px); background: var(--card); border: 1px solid var(--red-pen); border-radius: 10px; padding: 8px 12px; box-shadow: var(--shadow); }
 @media (max-height: 600px) { .partner-info .pi-bars { display: none; } }
 
@@ -1064,6 +1126,7 @@ dialog.sheet[open] { animation: sheet-in .2s ease-out; }
   body.on-home::before, body.on-home::after { position: fixed; top: 50%; transform: translateY(-50%); pointer-events: none; z-index: 0; }
   body.on-home::before {
     content: '定規バトル'; left: calc(50% - 400px); writing-mode: vertical-rl; font-family: var(--font-brush); font-size: 64px; letter-spacing: 0.2em;
+    -webkit-text-stroke: 0.05em currentColor; paint-order: stroke fill;
     color: color-mix(in srgb, var(--ink) 14%, transparent);
   }
   body.on-home::after {
@@ -1076,3 +1139,28 @@ dialog.sheet[open] { animation: sheet-in .2s ease-out; }
   }
   body.on-home .page { position: relative; z-index: 1; }
 }
+
+
+/* ==== 筆文字を太く、インパクトを出す ====
+   筆の書体は太さが1つしかないので、文字のふちを同じ色でなぞって太らせる（paint-order で、なぞった線を文字の下に描く） */
+.cutin-name, .stage-title, .box-title h3, .bb.side span {
+  -webkit-text-stroke: var(--brush-w) currentColor; paint-order: stroke fill;
+}
+h1, h2, .msg b, .mode-opt .mo-name, .md-title, .pi-name, .partner-label, .res-name, .countdown .cd-time, .tile .v,
+.result h2, dialog.sheet h2, .members .seat, .orow .seat, .me-line .seat, .player .seat, .history .res, .base, .bm-label, .bt-lv, .mi-no, .bd-no {
+  -webkit-text-stroke: var(--display-w) currentColor; paint-order: stroke fill;
+}
+h1 { -webkit-text-stroke-width: 0.035em; }
+/* カットインの技の名前：太い墨字に、朱の影をずらして重ねる */
+.cutin-name {
+  --brush-w: 0.075em;
+  letter-spacing: 0.02em;
+  text-shadow: 0.05em 0.06em 0 #c73e2b, 0 0 2px rgba(255, 255, 255, 0.5), 0 5px 0 rgba(0, 0, 0, 0.45);
+}
+.stage-title { --brush-w: 0.06em; text-shadow: 0.04em 0.05em 0 color-mix(in srgb, var(--red-pen) 35%, transparent); }
+.box-title h3 { --brush-w: 0.06em; }
+.bb.side span { --brush-w: 0.012em; }
+
+body.with-tabs { --toast-lift: var(--tabbar-h); }
+/* ホームでは、お知らせを上の帯のすぐ下に出す（大ボタンにかぶらないように） */
+body.on-home .toast { bottom: auto; top: calc(max(10px, env(safe-area-inset-top, 0px)) + 7dvh + 8px); }

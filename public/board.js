@@ -305,14 +305,24 @@ export function createBoard(canvas, wrap, opt = {}) {
       }
       // 画面からはみ出さないよう、文字の幅に合わせて寄せる
       const size = f.big ? Math.min(36, view.w / 9) : f.small ? Math.min(22, view.w / 14) : Math.min(28, view.w / 11);
-      ctx.font = `400 ${size}px "Yuji Mai", "Yuji Syuku", "BIZ UDPGothic", serif`;
+      ctx.font = `400 ${size}px "Yuji Boku", "Yuji Mai", "Yuji Syuku", "BIZ UDPGothic", serif`;
       const half = ctx.measureText(f.text).width / 2 + 8;
       const x = Math.max(half, Math.min(view.w - half, p.x));
       const y = Math.max(24, Math.min(view.h - 24, p.y)) - t * 18;
+      // 出た瞬間だけ少し大きく（判を押すように）
+      const pop = 1 + 0.25 * Math.max(0, 1 - t * 6);
+      ctx.save();
+      ctx.translate(x, y); ctx.scale(pop, pop);
       ctx.globalAlpha = 1 - t * t;
-      ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(30, 24, 20, 0.85)';
-      ctx.strokeText(f.text, x, y);
-      ctx.fillStyle = f.color; ctx.fillText(f.text, x, y);
+      ctx.lineJoin = 'round';
+      // 墨のふち → 少しずらした影 → 同じ色で太らせてから塗る
+      ctx.lineWidth = Math.max(5, size * 0.26); ctx.strokeStyle = 'rgba(24, 18, 14, 0.9)';
+      ctx.strokeText(f.text, 0, 0);
+      if (f.big) { ctx.fillStyle = 'rgba(24, 18, 14, 0.75)'; ctx.fillText(f.text, size * 0.05, size * 0.07); }
+      ctx.lineWidth = Math.max(1.5, size * 0.09); ctx.strokeStyle = f.color;
+      ctx.strokeText(f.text, 0, 0);
+      ctx.fillStyle = f.color; ctx.fillText(f.text, 0, 0);
+      ctx.restore();
       ctx.globalAlpha = 1;
     }
   }
