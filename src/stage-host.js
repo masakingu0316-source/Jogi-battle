@@ -1,7 +1,7 @@
 // ステージモードの進行を、1人に1つの Durable Object（名前は stage:<アカウントID>）で受け持つ。
 // 部屋と同じクラス（Room）の中で動かすので、wrangler.jsonc は変えなくてよい。
 // 画面からは HTTP で「始める・はじく・必殺技・やめる」を送り、結果（自分の1打と、続く敵の番）をまとめて返す。
-import { StageCore, runEnemies, ME } from '../public/shared/stage-core.js';
+import { StageCore, runEnemies, syncMessages, ME } from '../public/shared/stage-core.js';
 import { STAGES } from '../public/shared/stage.js';
 import { STAGE_LEVEL_MAX } from '../public/shared/catalog.js';
 import { ensureSchema, loadoutFor, stageProgress, recordStageClear } from './db.js';
@@ -61,7 +61,17 @@ export async function handleStage(room, request, user) {
     if (!core || core.s.members[0]?.userId !== user.id) return json({ error: '攻略中のマップがありません。ステージ選択からやり直してください', gone: true }, 404);
     if (!['flick', 'skill'].includes(body.t)) return json({ error: 'その操作はできません' }, 400);
     const messages = core.handle(ME, body).map((o) => o.msg);
-    if (!messages.some((m) => m.t === 'error')) messages.push(...runEnemies(core));
+    if (!messages.some((m) => m.t === 'error')) {
+      try {
+        messages.push(...runEnemies(core));
+      } catch (e) {
+        // 敵の番で思わぬ失敗があっても、止まらずに自分の番へ戻す
+        console.error('敵の番で失敗', e);
+        const g = core.s.game;
+        if (core.s.phase === 'aim' && g) { g.turn = 0; g.extra = false; }
+      }
+      syncMessages(core, messages);
+    }
     // マップクリア：記録して報酬を配る
     const rec = core.takeRecord();
     if (rec) {

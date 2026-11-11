@@ -906,7 +906,7 @@ canvas.addEventListener('pointerup', () => {
   const len = Math.hypot(dx, dy);
   if (len < 0.8) { hint('定規を押さえたまま、はじきたい方向と逆に引っぱって離します'); return; }
   const power = Math.min(len, MAX_DRAG) / MAX_DRAG;
-  send({ t: 'flick', lx: a.lx, ly: a.ly, dx: -dx / len, dy: -dy / len, power, skill: !!app.skillArmed });
+  if (!send({ t: 'flick', lx: a.lx, ly: a.ly, dx: -dx / len, dy: -dy / len, power, skill: !!app.skillArmed })) return;
   app.skillArmed = false;
   app.waitingShot = true;
   renderGame();
@@ -1104,7 +1104,7 @@ account = createAccount({
   onProfile: () => { if (!$('home').hidden) renderHome(); },
 });
 // 確認用：?debug を付けて開いたときだけ、今の状態を読めるようにする
-if (new URLSearchParams(location.search).has('debug')) { window.__jogiApp = app; window.__jogiState = () => structuredClone(app.state); window.__jogiSend = (m) => { app.waitingShot = m.t === 'flick'; return send(m); }; }
+if (new URLSearchParams(location.search).has('debug')) { window.__jogiApp = app; window.__jogiState = () => structuredClone(app.state); window.__jogiSend = (m) => { const ok = send(m); if (ok && m.t === 'flick') { app.waitingShot = true; renderGame(); } return ok; }; }
 await account.load();
 if (app.config?.version && app.config.version !== VERSION) showUpdate();
 if (!app.me) {

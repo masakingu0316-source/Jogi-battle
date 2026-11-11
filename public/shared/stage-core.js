@@ -378,6 +378,11 @@ export function planEnemy(core, i, rand = Math.random) {
     const score = trial(core, i, c) + rand() * 2;
     if (score > bestScore) { bestScore = score; best = c; }
   }
+  // 試したはじき方がどれも使えなかったとき（念のため）は、自分の定規へまっすぐ
+  if (!best) {
+    const len = Math.hypot(me.x - mine.x, me.y - mine.y) || 1;
+    best = { lx: 0, ly: 0, dx: (me.x - mine.x) / len, dy: (me.y - mine.y) / len, power: 0.6, skill: false };
+  }
   const ang = gauss(rand) * ai.aimNoise;
   const cs = Math.cos(ang), sn = Math.sin(ang);
   return {
@@ -385,6 +390,19 @@ export function planEnemy(core, i, rand = Math.random) {
     dx: best.dx * cs - best.dy * sn, dy: best.dx * sn + best.dy * cs,
     power: Math.max(0.1, Math.min(1, best.power * (1 + gauss(rand) * ai.powerNoise))),
   };
+}
+
+// 画面へ送るメッセージの最後が、いまの状態（だれの番か）と合うようにする。
+// 何もしなかった置物（のり・画びょう・遠くの消しゴムなど）の番は、メッセージを出さずに進むので、
+// 最後のメッセージの状態が「敵の番」のままになり、画面で自分の番が来ないことがあった
+export function syncMessages(core, messages) {
+  const last = [...messages].reverse().find((m) => m.state);
+  const s = core.s, g = s.game;
+  const lg = last?.state?.game;
+  if (!last || last.state.phase !== s.phase || lg?.id !== g?.id || lg?.turn !== g?.turn || !!lg?.extra !== !!g?.extra) {
+    messages.push({ t: 'state', state: core.snapshot() });
+  }
+  return messages;
 }
 
 // 自分の番になるまで（または盤面クリア・失敗まで）敵を動かす。戻り値はメッセージの配列

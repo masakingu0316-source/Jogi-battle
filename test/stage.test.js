@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { StageCore, runEnemies, ME } from '../public/shared/stage-core.js';
+import { StageCore, runEnemies, syncMessages, ME } from '../public/shared/stage-core.js';
 import { STAGES, ENEMIES, mapOf, stageMaxHp, BOARD_HEAL, REWARD } from '../public/shared/stage.js';
 import { DESKS, deskTiles, onTile, GAUGE } from '../public/shared/rules.js';
 import { resolveLoadout, levelInfo, STAGE_LEVEL_MAX, LEVEL_MAX, ITEMS, GACHA_POOL } from '../public/shared/catalog.js';
@@ -147,6 +147,25 @@ test('動く敵は自分を狙ってはじき、敵の番が終わると自分�
   const msgs = runEnemies(c, Date.now(), seeded(5));
   assert.ok(msgs.some((m) => m.t === 'shot' && m.by === 1), '鉛筆がはじいた');
   assert.ok(c.s.phase === 'over' || c.s.game.turn === 0);
+});
+
+test('何もしない置物の番のあとも、画面へ送る最後の状態は自分の番になっている', () => {
+  // マップ1の盤面1：遠くの消しゴムは何もしない（メッセージを出さない）
+  const c = make(1);
+  const msgs = c.handle(ME, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 }).map((o) => o.msg);
+  msgs.push(...runEnemies(c));
+  syncMessages(c, msgs);
+  const last = msgs.filter((m) => m.state).at(-1);
+  assert.equal(c.s.game.turn, 0);
+  assert.equal(last.state.game.turn, 0);
+  // のりと画びょうだけが残った盤面でも同じ
+  const d = make(4);
+  d.loadBoard(0, null);
+  d.s.game.bodies.forEach((b, i) => { if (b.enemy === 'pencil') { b.state = 'gone'; d.s.game.players[i].alive = false; } });
+  const m2 = d.handle(ME, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 }).map((o) => o.msg);
+  m2.push(...runEnemies(d));
+  syncMessages(d, m2);
+  assert.equal(m2.filter((m) => m.state).at(-1).state.game.turn, 0);
 });
 
 test('ステージでは Lv.50 まで効き、体力の最大が増える。対人では Lv.10 まで', () => {
