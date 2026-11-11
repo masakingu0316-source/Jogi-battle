@@ -313,3 +313,36 @@ test('サーバー：持っていない定規では始められない。ほか�
   const other = await call(room, { id: 'someone', name: 'x' }, '/stage/act', { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.5 });
   assert.equal(other.status, 404);
 });
+
+test('敵の体力は設定画面の値で変えられ、マップが進むほど決まった割合で増える', async () => {
+  const { sanitizeConfig, defaultConfig } = await import('../public/shared/catalog.js');
+  const { enemyMaxHp } = await import('../public/shared/stage.js');
+  const cfg = sanitizeConfig({ enemyHp: { eraser: 80, boss: 99999, nope: 5 }, enemyHpGrow: 20 });
+  assert.equal(cfg.enemyHp.eraser, 80);
+  assert.equal(cfg.enemyHp.boss, 3000, '上限で止める');
+  assert.equal(cfg.enemyHp.nope, undefined);
+  assert.equal(defaultConfig().enemyHp.eraser, ENEMIES.eraser.hp);
+  assert.equal(enemyMaxHp('eraser', 1, cfg), 80);
+  assert.equal(enemyMaxHp('eraser', 6, cfg), 160);
+  const c = new StageCore('kahen', 1, { name: 't', loadout: lo() }, Date.now(), { enemyHp: cfg.enemyHp, enemyHpGrow: cfg.enemyHpGrow });
+  assert.equal(c.s.game.bodies[1].hp, 80);
+  assert.equal(c.s.game.bodies[1].maxHp, 80);
+  // 保存して読み直しても、次の盤面で同じ値を使う
+  const r = StageCore.restore(structuredClone(c.s));
+  r.loadBoard(1, { hp: 50, gauge: 0 });
+  assert.ok(r.s.game.bodies.slice(1).every((b) => b.hp === 80));
+  // 何も渡さなければ今までどおり
+  assert.equal(make(1).s.game.bodies[1].hp, ENEMIES.eraser.hp);
+});
+
+test('サーバー：設定画面で変えた敵の体力で、マップが始まる', { skip }, async () => {
+  const u = (await D.upsertGoogleUser(db, 'stage-hp', 'たいりょく')).user;
+  await D.saveConfig(db, { enemyHp: { eraser: 77 } });
+  try {
+    const room = fakeRoom();
+    const r = await call(room, { id: u.id, name: u.name }, '/stage/start', { stage: 'kahen', map: 1 });
+    assert.equal(r.data.messages[0].state.game.bodies[1].hp, 77);
+  } finally {
+    await D.resetConfig(db);
+  }
+});

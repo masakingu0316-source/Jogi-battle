@@ -4,6 +4,7 @@ import {
   applyConfig, defaultBrands, RULER_RARITY, RARITY_ORDER, ARTS, SHAPE_INFO, MATERIAL_INFO, MAT_ORDER, rulerOdds, RARITY_BONUS,
 } from './shared/catalog.js';
 import { SKILLS, TRAITS, SKILL_TUNE_KEYS, traitDesc, skillDesc } from './shared/rules.js';
+import { ENEMIES, STAGES, enemyMaxHp } from './shared/stage.js';
 import Physics from './shared/physics.js';
 
 const $ = (id) => document.getElementById(id);
@@ -70,7 +71,32 @@ function renderAll() {
   renderBrands();
   renderRulerGacha();
   renderTraits();
+  renderEnemies();
   markChanges();
+}
+
+// ---- ステージの敵の体力 ----
+// どのマップに出てくるか（表に添える）
+const ENEMY_MAPS = (() => {
+  const out = {};
+  for (const st of Object.values(STAGES)) st.maps.forEach((m, i) => m.boards.forEach((b) => b.foes.forEach((f) => { (out[f.t] ||= new Set()).add(i + 1); })));
+  return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, [...v].sort((a, b) => a - b)]));
+})();
+function renderEnemies() {
+  $('enemyGrow').value = draft.enemyHpGrow;
+  $('enemies').innerHTML = `<thead><tr><th>敵</th><th>動き</th><th>体力（マップ1）</th><th>マップ5</th><th>マップ10</th><th>出てくるマップ</th></tr></thead><tbody>${
+    Object.entries(ENEMIES).map(([k, d]) => `<tr>
+      <td><span class="enemy-dot" style="background:${d.color}"></span>${esc(k === 'ruler' ? '敵の定規' : d.name)}${d.boss ? '（ラスボス）' : ''}</td>
+      <td>${d.move ? '動く' : '置物'}</td>
+      <td><input type="number" data-path='${JSON.stringify(['enemyHp', k])}' min="1" max="3000" step="1" value="${draft.enemyHp[k]}" aria-label="${esc(d.name)}の体力"><small>初期 ${defaults.enemyHp[k]}</small></td>
+      <td data-ehp="${k}" data-map="5"></td><td data-ehp="${k}" data-map="10"></td>
+      <td><small>${(ENEMY_MAPS[k] || []).join('・') || '—'}</small></td></tr>`).join('')}</tbody>`;
+  refreshEnemyPreview();
+}
+function refreshEnemyPreview() {
+  const c = sanitizeConfig(draft);
+  for (const el of document.querySelectorAll('[data-ehp]')) el.textContent = enemyMaxHp(el.dataset.ehp, +el.dataset.map, c);
+  $('enemyGrowNote').textContent = `たとえば消しゴム：マップ1で${enemyMaxHp('eraser', 1, c)} → マップ10で${enemyMaxHp('eraser', 10, c)}`;
 }
 
 // 定規の性能（形×素材ごと。銘柄はこの性能にレア度の上乗せが掛かる）
@@ -262,6 +288,7 @@ document.addEventListener('input', (e) => {
       if (small && p[0] === 'traits') small.textContent = traitDesc(p[1], val);
     }
     if (p[0] === 'skillTune') renderSkills();
+    if (p[0] === 'enemyHp' || p[0] === 'enemyHpGrow') refreshEnemyPreview();
   }
   else if (el.dataset.tune) {
     const k = el.dataset.tune;

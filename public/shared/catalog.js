@@ -2,6 +2,7 @@
 // kind: ruler 定規 / pattern 柄 / sticker シール / acc アクセサリ（性能に効く）
 import Physics from './physics.js';
 import { SKILLS, RULER_SKILL, skillFor, SKILL_TUNE, SKILL_TUNE_KEYS, TRAITS } from './rules.js';
+import { ENEMIES, SCALE } from './stage.js';
 
 export const RARITIES = {
   N: { name: 'ノーマル', weight: 60, refund: 2, color: '#c9d3cd' },
@@ -237,12 +238,15 @@ export function defaultConfig() {
     traits: Object.fromEntries(Object.entries(TRAITS).map(([k, t]) => [k, t.pct])), // 特性の効き目（％）
     skillTune: Object.fromEntries(Object.keys(SKILL_TUNE_KEYS).map((k) => [k, SKILL_TUNE[k]])), // SSR の技の数値
     rulerGacha: structuredClone(RULER_GACHA),           // 定規ガチャ
+    enemyHp: Object.fromEntries(Object.entries(ENEMIES).map(([k, d]) => [k, d.hp])), // ステージの敵の体力（マップ1のとき）
+    enemyHpGrow: Math.round(SCALE.hp * 1000) / 10,     // マップが1つ進むごとに増える体力（％）
     brands: {}, // 変えた銘柄と、追加した銘柄だけ { id: { name, rarity, art, trait, skill, gacha（追加は custom, shape, mat も） } }
   };
 }
 
 // ---- レア度の上乗せと、定規ガチャ ----
 export const RARITY_BONUS = { N: 0, R: 2, SR: 4, SSR: 6 };
+export const ENEMY_HP_RANGE = { min: 1, max: 3000 };
 export const RULER_GACHA = {
   pull1: 30, pull10: 300,                         // 値段（えんぴつ）。10回はSR以上が1本確定
   weights: { N: 55, R: 30, SR: 12, SSR: 3 },     // 確率の重み
@@ -343,7 +347,10 @@ export function sanitizeConfig(input) {
     for (const k of Object.keys(out)) if (out[k] === (d[k] ?? null)) delete out[k];
     if (Object.keys(out).length) brands[id] = out;
   }
-  return { economy, rarities, acc, disabled, skills, rulers, rarityBonus, traits, skillTune, rulerGacha, brands };
+  const enemyHp = {};
+  for (const k of Object.keys(ENEMIES)) enemyHp[k] = num(src.enemyHp?.[k], ENEMY_HP_RANGE.min, ENEMY_HP_RANGE.max, base.enemyHp[k]);
+  const enemyHpGrow = num(src.enemyHpGrow, 0, 50, base.enemyHpGrow, 0.5);
+  return { economy, rarities, acc, disabled, skills, rulers, rarityBonus, traits, skillTune, rulerGacha, brands, enemyHp, enemyHpGrow };
 }
 
 // 設定として成り立っているか（保存の前に確かめる）。問題があれば理由を返す

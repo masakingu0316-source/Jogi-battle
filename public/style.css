@@ -1164,3 +1164,4 @@ h1 { -webkit-text-stroke-width: 0.035em; }
 body.with-tabs { --toast-lift: var(--tabbar-h); }
 /* ホームでは、お知らせを上の帯のすぐ下に出す（大ボタンにかぶらないように） */
 body.on-home .toast { bottom: auto; top: calc(max(10px, env(safe-area-inset-top, 0px)) + 7dvh + 8px); }
+.foe-chip .foe-hp { font-weight: 700; font-size: 12px; margin-left: 4px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }

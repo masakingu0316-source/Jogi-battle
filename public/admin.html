@@ -41,6 +41,9 @@
   .tbl.brands select + select { margin-left: 4px; }
   #addBrand { justify-self: start; }
   #giftTitle { max-width: 24em; }
+  .enemy-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+  #enemies td small { display: block; font-size: 11px; color: var(--ink-soft); }
+  #enemies input[type=number] { width: 6em; }
   .savebar {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 5;
     background: var(--card); border-top: 1px solid var(--line-strong); box-shadow: 0 -6px 18px -12px rgba(28, 39, 71, 0.35);
@@ -102,6 +105,13 @@
         <div class="num-grid" id="traits"></div>
         <h3>SSRの技の数値</h3>
         <div class="num-grid" id="skillTune"></div>
+      </section>
+
+      <section>
+        <h2>ステージの敵の体力</h2>
+        <p class="lead">敵の種類ごとの、マップ1での体力です。マップが1つ進むごとに、下の割合ずつ増えます（同じ種類の敵でも、先のマップほど体力が多い）。保存すると、次に始めるマップから使われます（攻略中のマップはそのまま）。</p>
+        <div class="num-grid"><label>マップが1つ進むごとに増える体力（%）<input type="number" data-path='["enemyHpGrow"]' id="enemyGrow" min="0" max="50" step="0.5"><small id="enemyGrowNote"></small></label></div>
+        <div class="table-wrap"><table class="tbl" id="enemies"></table></div>
       </section>
 
       <section>

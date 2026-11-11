@@ -49,6 +49,12 @@ export const scaleOf = (map) => {
   const k = Math.max(0, map - 1);
   return { hp: 1 + SCALE.hp * k, atk: 1 + SCALE.atk * k, body: 1 + SCALE.body * k, power: SCALE.power0 + SCALE.power * k, act: 1 + SCALE.act * k };
 };
+// 敵の体力の最大（マップ map のとき）。tune：設定画面の値 { enemyHp: { 種類: 体力 }, enemyHpGrow: ％ }
+export function enemyMaxHp(type, map, tune) {
+  const base = tune?.enemyHp?.[type] ?? ENEMIES[type]?.hp ?? 30;
+  const grow = (tune?.enemyHpGrow ?? SCALE.hp * 100) / 100;
+  return Math.max(1, Math.round(base * (1 + grow * Math.max(0, map - 1))));
+}
 // ステージでの自分の体力の最大：レベルが上がるほど増える（対人の対戦はいつも100）
 export const STAGE_HP = { base: 100, perLevel: 3 };
 export const stageMaxHp = (level) => STAGE_HP.base + STAGE_HP.perLevel * Math.max(0, (level | 0) - 1);

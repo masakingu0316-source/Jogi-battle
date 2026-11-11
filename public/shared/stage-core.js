@@ -4,7 +4,7 @@
 import Physics from './physics.js';
 import { RoomCore, encodeFrame, round2, round4, FPS, STEP, MAX_SIM_SECONDS } from './core.js';
 import { DESKS, deskTiles, onTile, GAUGE, SKILLS, skillFor, PLAYERS } from './rules.js';
-import { ENEMIES, scaleOf, aiOf, BOARD_HEAL, enemyLook, mapOf, STAGES, stageMaxHp, LIVES, RESPAWN_HP } from './stage.js';
+import { ENEMIES, scaleOf, aiOf, BOARD_HEAL, enemyLook, mapOf, STAGES, stageMaxHp, LIVES, RESPAWN_HP, enemyMaxHp } from './stage.js';
 
 export const ME = 'P';
 const STAGE_MOD_LIMIT = 0.3; // ステージでは Lv.50 まで効くので、倍率の上限を広げる
@@ -12,13 +12,17 @@ const ENEMY_GAUGE = 0.5;     // 敵の必殺ゲージのたまる速さ（自分
 
 export class StageCore extends RoomCore {
   // player: { name, userId, loadout }
-  constructor(stageId, map, player, now = Date.now()) {
+  // opt.enemyHp：敵の種類ごとの体力（マップ1のとき）、opt.enemyHpGrow：マップが1つ進むごとに増える体力（％）。設定画面の値
+  constructor(stageId, map, player, now = Date.now(), opt = {}) {
     super('STAGE', 'standard', now);
     const def = mapOf(stageId, map);
     if (!def) throw new Error('そのマップはありません');
     this.s.mode = 'stage';
     this.s.phase = 'aim';
-    this.s.stage = { id: stageId, map, board: 0, boards: def.boards.length, result: null, shots: 0, startedAt: now, lives: LIVES };
+    this.s.stage = {
+      id: stageId, map, board: 0, boards: def.boards.length, result: null, shots: 0, startedAt: now, lives: LIVES,
+      enemyHp: opt.enemyHp || null, enemyHpGrow: opt.enemyHpGrow ?? null,
+    };
     this.s.members = [{ id: ME, token: '', userId: player.userId || null, name: player.name || 'あなた', loadout: player.loadout, ready: true, connected: true }];
     this.s.hostId = ME;
     this.loadBoard(0, null);
@@ -55,7 +59,7 @@ export class StageCore extends RoomCore {
     def.foes.forEach((f, k) => {
       const d = ENEMIES[f.t];
       const spec = f.spec || d.spec;
-      const hp = Math.round(d.hp * sc.hp);
+      const hp = enemyMaxHp(f.t, st.map, st);
       const skill = d.skill === true ? skillFor(spec) : d.skill || 'none';
       bodies.push({
         owner: k + 1, enemy: f.t, hp, maxHp: hp, specKey: spec, level: 1, tune: null, skill,

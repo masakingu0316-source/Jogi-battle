@@ -1,5 +1,5 @@
 // ステージ選択の画面（マップの一覧・マップの中身・使う定規・続きから）
-import { STAGES, STAGE_ORDER, ENEMIES, REWARD, enemyLook, stageMaxHp, deskText } from './shared/stage.js';
+import { STAGES, STAGE_ORDER, ENEMIES, REWARD, enemyLook, stageMaxHp, deskText, enemyMaxHp } from './shared/stage.js';
 import { ITEMS, levelInfo, levelBonus, STAGE_LEVEL_MAX, LEVEL_MAX, MATERIAL_INFO } from './shared/catalog.js';
 import { previewRuler } from './ruler-paint.js';
 import { stageRun } from './stage-client.js';
@@ -71,7 +71,7 @@ export function createStageUI({ app, $, esc, show, onStart, onResume, onAbandon 
     $('mdBoards').innerHTML = m.boards.map((b, i) => {
       const foes = b.foes.map((f) => {
         const lk = enemyLook({ ...f, spec: f.spec || ENEMIES[f.t].spec });
-        return `<span class="foe-chip${f.t === 'boss' ? ' boss' : ''}"><i style="background:${lk.color}"></i>${esc(lk.name)}</span>`;
+        return `<span class="foe-chip${f.t === 'boss' ? ' boss' : ''}" title="体力 ${enemyMaxHp(f.t, n, app.game)}"><i style="background:${lk.color}"></i>${esc(lk.name)}<b class="foe-hp">${enemyMaxHp(f.t, n, app.game)}</b></span>`;
       }).join('');
       return `<li><span class="bd-no">盤面${i + 1}</span><span class="bd-desk">${esc(deskText(b))}</span><span class="bd-foes">${foes}</span></li>`;
     }).join('');

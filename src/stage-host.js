@@ -4,7 +4,7 @@
 import { StageCore, runEnemies, syncMessages, ME } from '../public/shared/stage-core.js';
 import { STAGES } from '../public/shared/stage.js';
 import { STAGE_LEVEL_MAX } from '../public/shared/catalog.js';
-import { ensureSchema, loadoutFor, stageProgress, recordStageClear } from './db.js';
+import { ensureSchema, loadoutFor, stageProgress, recordStageClear, getConfig } from './db.js';
 import { VERSION } from '../public/shared/version.js';
 
 const KEY = 'stage';
@@ -46,7 +46,8 @@ export async function handleStage(room, request, user) {
     if (map > prog.cleared + 1) return json({ error: `マップ${prog.cleared + 1}をクリアすると、次のマップが開放されます` }, 403);
     const lo = await loadoutFor(db, user.id, body.ruler || null, STAGE_LEVEL_MAX);
     if (lo.error) return json({ error: lo.error }, 400);
-    core = room.stage = new StageCore(body.stage, map, { name: user.name, userId: user.id, loadout: lo.loadout });
+    const cfg = await getConfig(db);
+    core = room.stage = new StageCore(body.stage, map, { name: user.name, userId: user.id, loadout: lo.loadout }, Date.now(), { enemyHp: cfg.enemyHp, enemyHpGrow: cfg.enemyHpGrow });
     await save();
     return json({ messages: [{ t: 'welcome', you: { id: ME }, state: core.snapshot() }] });
   }
