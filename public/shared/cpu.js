@@ -2,7 +2,7 @@
 // 強さは「試す数」と「手元のぶれ」で変える。サーバーと同じ計算（core.js）を使うので、ずるはしない。
 import Physics from './physics.js';
 import { RoomCore } from './core.js';
-import { DESKS, MODES, teamOf, deskTiles, onTile, GAUGE } from './rules.js';
+import { DESKS, MODES, teamOf, deskTiles, onTile, GAUGE, SKILLS } from './rules.js';
 
 export const CPU_LEVELS = {
   easy: { name: 'やさしい', samples: 8, aimNoise: 0.22, powerNoise: 0.3, skillRate: 0.3, level: 1 },
@@ -102,12 +102,29 @@ function trial(core, input) {
   return evaluate(before, sim.s, me, core.s.mode);
 }
 
+// その場で使う必殺技（保健室・ワープなど）を、いま使うか
+export function decideNow(core, levelKey = 'normal', rand = Math.random) {
+  const lv = CPU_LEVELS[levelKey] || CPU_LEVELS.normal;
+  const g = core.s.game, me = g.turn;
+  if (g.extra || (g.gauge?.[me] ?? 0) < GAUGE.max) return false;
+  const k = core.skillOf(me);
+  if (SKILLS[k].mode !== 'now') return false;
+  const b = g.bodies[me];
+  const tiles = deskTiles(DESKS[MODES[core.s.mode].desk]).filter((t) => !g.desks || g.desks.includes(t.i));
+  const m = margin(tiles, b.x, b.y);
+  if (k === 'heal') return (b.hp ?? 100) < 65;
+  if (k === 'warp') return m < 14;
+  if (k === 'chair') return m < 12;
+  return rand() < lv.skillRate;
+}
+
 // 次のはじき方を決める。重い計算なので、少しずつ区切って画面を止めない
 export async function planShot(core, levelKey = 'normal', rand = Math.random) {
   const lv = CPU_LEVELS[levelKey] || CPU_LEVELS.normal;
   const g = core.s.game;
   const me = g.turn;
-  const canSkill = !g.extra && (g.gauge?.[me] ?? 0) >= GAUGE.max;
+  // 構えてはじく必殺技だけ、ここで使うかを考える（その場で使う技は decideNow）
+  const canSkill = !g.extra && (g.gauge?.[me] ?? 0) >= GAUGE.max && SKILLS[core.skillOf(me)].mode === 'shot';
   const useSkill = canSkill && rand() < lv.skillRate;
   let best = null, bestScore = -Infinity;
   for (let k = 0; k < lv.samples; k++) {

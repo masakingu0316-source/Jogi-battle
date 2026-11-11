@@ -141,17 +141,19 @@ const Physics = (() => {
   const ENERGY_MASS_EXP = 0.7;
 
   // mods: アクセサリとレベルの効果 { mass, mu, power }（倍率。1.0 が効果なし）
-  function createBody(id, owner, specKey, x, y, a, mods) {
+  // tune：設定画面で変えた定規の性能 { mass（g）, mu, e, power（%） }。無ければ素材と形から決まる値
+  function createBody(id, owner, specKey, x, y, a, mods, tune) {
     const s = RULERS[specKey] || RULERS['straight30-acrylic'];
     const sh = SHAPES[s.shape];
     const mm = clampMod(mods?.mass ?? 1), mu = clampMod(mods?.mu ?? 1), pw = clampMod(mods?.power ?? 1);
-    const m = s.mass * mm;
+    const baseMass = tune?.mass ?? s.mass, baseMu = tune?.mu ?? s.mu, baseE = tune?.e ?? s.e, basePow = (tune?.power ?? 100) / 100;
+    const m = baseMass * mm;
     const I = m * sh.inertiaPerMass;
     return {
       id, owner, specKey, spec: s, shape: sh, mat: s.mat,
       x, y, a, vx: 0, vy: 0, w: 0,
       m, invM: 1 / m, I, invI: 1 / I, cM: 1 / m, cI: 1 / I, // cM・cI：ぶつかったときに使う重さ（体力で変わる）
-      mu: s.mu * mu, e: s.e, powerMul: pw,
+      mu: baseMu * mu, e: baseE, powerMul: pw * basePow,
       state: 'desk', fallAt: 0,
       hp: HP.max, grip: 1, // 体力と、押されたときのすべりにくさ（体力が多いほど止まりやすい）
     };
@@ -406,7 +408,7 @@ const Physics = (() => {
       const [att, rec] = sA >= sB ? [c.A, c.B] : [c.B, c.A];
       const pt = c.points[0];
       const base = Math.min(HP.dmgMax, HP.dmgK * Math.pow(speed - HP.dmgFloor, HP.dmgExp) * Math.sqrt(att.m / 26));
-      const amount = base * (c.crit ? HP.critDmg : 1);
+      const amount = base * (c.crit ? HP.critDmg : 1) * (att.dmgMul ?? 1);
       damage(world, rec, amount, att, pt.x, pt.y, c.crit ? 'crit' : 'hit');
     }
     world.touching = touching;
@@ -450,7 +452,8 @@ const Physics = (() => {
   }
 
   // 突風：src の重心から半径 radius の中にある定規を外向きに吹き飛ばす。近いほど強く、軽いほど速く飛ぶ
-  function blast(world, src, radius, speed) {
+  // speed がマイナスなら内向き（引き寄せ）。dmg はいちばん近くでのダメージ（0ならダメージなし）
+  function blast(world, src, radius, speed, dmg = HP.windDmg, kind = 'wind') {
     const hit = [];
     for (const b of world.bodies) {
       if (b === src || b.state !== 'desk') continue;
@@ -470,7 +473,7 @@ const Physics = (() => {
       const rx = bx - b.x, ry = by - b.y;
       b.w += (rx * uy - ry * ux) * v * b.m * b.invI * 0.15;
       hit.push(b.owner);
-      damage(world, b, HP.windDmg * Math.pow(1 - d / radius, 0.5), src, bx, by, 'wind');
+      if (dmg > 0) damage(world, b, dmg * Math.pow(1 - d / radius, 0.5), src, bx, by, kind);
     }
     return hit;
   }

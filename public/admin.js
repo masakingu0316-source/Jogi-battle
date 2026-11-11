@@ -1,5 +1,6 @@
 // 設定画面（管理者だけ）
-import { ITEMS, RARITIES, ECONOMY, ECONOMY_KEYS, ORDER, GACHA_POOL, STATS, odds, sanitizeConfig, configProblem } from './shared/catalog.js';
+import { ITEMS, RARITIES, ECONOMY, ECONOMY_KEYS, ORDER, GACHA_POOL, STATS, odds, sanitizeConfig, configProblem, RULER_TUNE_KEYS, rulerTune, rulerTuneDefault } from './shared/catalog.js';
+import { SKILLS, RULER_SKILL, skillFor } from './shared/rules.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -60,7 +61,25 @@ function renderAll() {
   renderEconomy();
   renderRarities();
   renderItems();
+  renderSkills();
   markChanges();
+}
+
+// 定規の性能と必殺技（定規15本それぞれ）
+function renderSkills() {
+  const rulers = Object.values(ITEMS).filter((it) => it.kind === 'ruler');
+  const opts = (sel) => Object.entries(SKILLS).map(([k, v]) => `<option value="${k}"${k === sel ? ' selected' : ''}>${v.name}（${v.mode === 'now' ? 'その場で' : '構えて'}）</option>`).join('');
+  const head = Object.values(RULER_TUNE_KEYS).map((r) => `<th title="${esc(r.desc)}">${r.name}${r.unit ? `（${r.unit}）` : ''}</th>`).join('');
+  $('skills').innerHTML = `<thead><tr><th>定規</th>${head}<th>必殺技</th></tr></thead><tbody>${
+    rulers.map((it) => {
+      const cur = rulerTune(it.specKey, draft), d = rulerTuneDefault(it.specKey);
+      const cells = Object.entries(RULER_TUNE_KEYS).map(([k, r]) => `<td><input type="number" id="t-${it.specKey}-${k}" data-tune="${it.specKey}" data-key="${k}"
+          min="${r.min}" max="${r.max}" step="${r.step}" value="${cur[k]}" aria-label="${esc(it.name)}の${r.name}"><small>初期 ${d[k]}</small></td>`).join('');
+      return `<tr><td><span class="rar" style="background:${RARITIES[it.rarity]?.color || '#888'}">${it.rarity === 'basic' ? '基本' : it.rarity}</span> ${esc(it.name)}</td>${cells}
+        <td><select id="s-${it.specKey}" data-skill="${it.specKey}" aria-label="${esc(it.name)}の必殺技">${opts(skillFor(it.specKey, draft.skills))}</select><small>初期 ${SKILLS[RULER_SKILL[it.specKey]].name}</small></td></tr>`;
+    }).join('')}</tbody>`;
+  $('tuneHelp').innerHTML = Object.values(RULER_TUNE_KEYS).map((r) => `<li><b>${r.name}</b>：${esc(r.desc)}（${r.min}〜${r.max}${r.unit}）</li>`).join('');
+  $('skillList').innerHTML = Object.values(SKILLS).map((v) => `<li><b>${v.name}</b>（${v.mode === 'now' ? 'ボタンを押した時点で使う' : '構えてからはじく'}）：${esc(v.desc)}</li>`).join('');
 }
 
 function renderEconomy() {
@@ -114,6 +133,8 @@ function markChanges() {
   for (const el of document.querySelectorAll('[data-weight]')) el.classList.toggle('changed', draft.rarities[el.dataset.weight].weight !== saved.rarities[el.dataset.weight].weight);
   for (const el of document.querySelectorAll('[data-refund]')) el.classList.toggle('changed', draft.rarities[el.dataset.refund].refund !== saved.rarities[el.dataset.refund].refund);
   for (const el of document.querySelectorAll('[data-acc]')) el.classList.toggle('changed', draft.acc[el.dataset.acc] !== saved.acc[el.dataset.acc]);
+  for (const el of document.querySelectorAll('[data-skill]')) el.classList.toggle('changed', skillFor(el.dataset.skill, draft.skills) !== skillFor(el.dataset.skill, saved.skills));
+  for (const el of document.querySelectorAll('[data-tune]')) el.classList.toggle('changed', rulerTune(el.dataset.tune, sanitizeConfig(draft))[el.dataset.key] !== rulerTune(el.dataset.tune, saved)[el.dataset.key]);
   const dirty = !same(sanitizeConfig(draft), saved);
   const problem = configProblem(sanitizeConfig(draft));
   $('status').className = 'status' + (problem ? ' err' : '');
@@ -131,6 +152,11 @@ document.addEventListener('input', (e) => {
   else if (el.dataset.weight) draft.rarities[el.dataset.weight].weight = Number.isFinite(v) ? v : 0;
   else if (el.dataset.refund) draft.rarities[el.dataset.refund].refund = Number.isFinite(v) ? v : 0;
   else if (el.dataset.acc) draft.acc[el.dataset.acc] = Number.isFinite(v) ? v : 0;
+  else if (el.dataset.skill) draft.skills = { ...(draft.skills || {}), [el.dataset.skill]: el.value };
+  else if (el.dataset.tune) {
+    const k = el.dataset.tune;
+    draft.rulers = { ...(draft.rulers || {}), [k]: { ...(draft.rulers?.[k] || {}), [el.dataset.key]: Number.isFinite(v) ? v : rulerTuneDefault(k)[el.dataset.key] } };
+  }
   else if (el.dataset.enable) {
     const id = el.dataset.enable;
     draft.disabled = el.checked ? draft.disabled.filter((x) => x !== id) : [...draft.disabled, id];

@@ -425,6 +425,35 @@ export function paintRuler(ctx, b, px, active = false, now = 0) {
     ctx.restore();
   }
 
+  // 反撃の構え：オレンジの点線／身代わり：白い光の輪
+  if (b.counter || b.sub) {
+    ctx.save();
+    ctx.beginPath();
+    addPoly(ctx, outsetPolygon(g, b.counter ? 0.5 : 0.8));
+    ctx.strokeStyle = b.counter ? '#fd9644' : 'rgba(255, 255, 255, 0.95)'; // 身代わりは白い光
+    ctx.lineWidth = Math.max(0.2, 3 / P);
+    if (b.counter) ctx.setLineDash([0.7, 0.45]);
+    ctx.globalAlpha = (b.alpha ?? 1) * (0.7 + 0.3 * Math.sin(now / 250));
+    ctx.stroke();
+    ctx.restore();
+  }
+  // インク漏れ：紫のしみ
+  if (b.ink > 0) {
+    ctx.save();
+    bodyPath(ctx, g);
+    ctx.clip('evenodd');
+    let r = 11 + (b.owner || 0) * 7;
+    const rnd = () => (r = (r * 16807) % 2147483647) / 2147483647;
+    ctx.fillStyle = 'rgba(80, 50, 170, 0.55)';
+    const { box } = g;
+    for (let k = 0; k < 3 + b.ink; k++) {
+      ctx.beginPath();
+      ctx.arc(box.x0 + rnd() * (box.x1 - box.x0), box.y0 + rnd() * (box.y1 - box.y0), 0.5 + rnd() * 0.9, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
   // 手番の定規はチョークの点線で囲む
   if (active) {
     ctx.globalAlpha = (b.alpha ?? 1) * (0.55 + 0.45 * Math.sin(now / 260));

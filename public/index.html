@@ -5,12 +5,12 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>定規バトル</title>
 <meta name="description" content="机の上で定規をはじき合う、あの遊びをオンラインで。部屋コードで友だちと対戦。">
-<meta name="theme-color" content="#f7f9fc" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#131a2c" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f3f3ee" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#10172a" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='12' width='26' height='8' rx='1.5' fill='%23ff7f6e'/%3E%3Cpath d='M6 12v3M9 12v2M12 12v3M15 12v2M18 12v3M21 12v2M24 12v3' stroke='%232a1a14' stroke-width='1'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Klee+One:wght@600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Yuji+Syuku&family=Yuji+Mai&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -210,6 +210,16 @@
     <div class="board-wrap" id="boardWrap">
       <canvas id="board" aria-label="机の上の定規バトル盤面。自分の番に、自分の定規を押さえて引っぱり、離すとはじけます。"></canvas>
       <div class="hint" id="hint" hidden></div>
+      <div class="cutin" id="cutin" hidden role="status">
+        <div class="cutin-band" id="cutinBand">
+          <canvas class="cutin-ruler" id="cutinRuler" aria-hidden="true"></canvas>
+          <div class="cutin-text">
+            <span class="cutin-who" id="cutinWho"></span>
+            <span class="cutin-title"><span class="cutin-name" id="cutinName"></span><span class="cutin-seal" aria-hidden="true">必殺</span></span>
+            <span class="cutin-desc" id="cutinDesc"></span>
+          </div>
+        </div>
+      </div>
       <div class="result" id="result" hidden>
         <h2 id="resultTitle"></h2>
         <p id="resultReason"></p>

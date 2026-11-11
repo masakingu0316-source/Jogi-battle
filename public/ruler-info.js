@@ -1,7 +1,6 @@
 // 定規のレベル・属性の表示（ホーム・定規ケース・部屋・対戦で共用）
-import Physics from './shared/physics.js';
-import { ITEMS, MATERIAL_INFO, matInfo, levelInfo, levelBonus } from './shared/catalog.js';
-import { SKILLS, SHAPE_SKILL } from './shared/rules.js';
+import { ITEMS, MATERIAL_INFO, matInfo, levelInfo, levelBonus, rulerTune } from './shared/catalog.js';
+import { SKILLS, skillFor } from './shared/rules.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -27,18 +26,18 @@ export function nextText(info) {
   return info.max ? '最大レベル' : `次のレベルまで あと${info.need - info.into}点`;
 }
 // 定規の性能の説明（重さは素材と形で決まる。レベルの分も見せる）
-export function specText(id, level) {
+export function specText(id, level, cfg) {
   const r = rulerOf(id);
   if (!r) return '';
-  const spec = Physics.RULERS[r.specKey];
+  const spec = rulerTune(r.specKey, cfg);
   const bonus = levelBonus(level);
   const lv = bonus ? `　レベルで 重さ・はじく力 +${(bonus * 100).toFixed(1)}%` : '';
   return `重さ${spec.mass}g・${MATERIAL_INFO[r.mat].desc}（${affinityText(r.mat)}）${lv}`;
 }
-// 必殺技（定規の形で決まる）
-export function skillText(id) {
+// 必殺技（定規ごとに決まる。cfg は設定画面の値）
+export function skillText(id, cfg) {
   const r = rulerOf(id);
-  const sk = r && SKILLS[SHAPE_SKILL[r.shape]];
+  const sk = r && SKILLS[skillFor(r.specKey, cfg?.skills)];
   return sk ? `必殺技「${sk.name}」：${sk.desc}` : '';
 }
 export function rulerTitle(id) {

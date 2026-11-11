@@ -162,8 +162,8 @@ export function createAccount(ctx) {
     const r = ITEMS[e.ruler], lv = levelOfRuler(app.me, e.ruler);
     $('edTitle').innerHTML = `${esc(r.name)} ${matChip(r.mat)}`;
     $('edLevel').innerHTML = `${levelHtml(lv)}<span class="xp-note">${nextText(lv)}</span>`;
-    const base = specText(e.ruler, lv.level);
-    $('accDesc').textContent = (e.acc ? `${base}　アクセサリ：${accText(e.acc)}` : base) + `\n${skillText(e.ruler)}`;
+    const base = specText(e.ruler, lv.level, app.game);
+    $('accDesc').textContent = (e.acc ? `${base}　アクセサリ：${accText(e.acc)}` : base) + `\n${skillText(e.ruler, app.game)}`;
   }
   for (const id of ['edPattern', 'edSticker', 'edAcc']) $(id).addEventListener('change', updatePreview);
 

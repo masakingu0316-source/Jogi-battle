@@ -1,6 +1,7 @@
 // アイテムの一覧（サーバーと画面で共有）
 // kind: ruler 定規 / pattern 柄 / sticker シール / acc アクセサリ（性能に効く）
 import Physics from './physics.js';
+import { SKILLS, RULER_SKILL, skillFor } from './rules.js';
 
 export const RARITIES = {
   N: { name: 'ノーマル', weight: 60, refund: 2, color: '#c9d3cd' },
@@ -133,8 +134,24 @@ export function defaultConfig() {
     rarities: Object.fromEntries(ORDER.map((k) => [k, { weight: RARITIES[k].weight, refund: RARITIES[k].refund }])),
     acc: Object.fromEntries(items.filter((it) => it.kind === 'acc').map((it) => [it.id, it.pct])),
     disabled: [],
+    skills: {}, // 必殺技の割り当てを変えた定規だけ { specKey: skillKey }
+    rulers: {}, // 性能を変えた定規だけ { specKey: { mass, mu, e, power } }
   };
 }
+
+// 設定画面で変えられる定規の性能
+export const RULER_TUNE_KEYS = {
+  mass: { name: '重さ', unit: 'g', min: 5, max: 80, step: 0.5, desc: '重いほど押されにくく、押す力も強い' },
+  mu: { name: 'すべりにくさ', unit: '', min: 0.1, max: 1.2, step: 0.01, desc: '大きいほどすぐ止まる' },
+  e: { name: '跳ね返り', unit: '', min: 0, max: 0.9, step: 0.01, desc: '大きいほど、ぶつかったときによく跳ねる' },
+  power: { name: 'はじく力', unit: '%', min: 50, max: 150, step: 1, desc: '100%がふつう' },
+};
+export const rulerTuneDefault = (specKey) => {
+  const s = Physics.RULERS[specKey];
+  return { mass: s.mass, mu: s.mu, e: s.e, power: 100 };
+};
+// 定規の性能（設定で変えた値を含む）
+export const rulerTune = (specKey, cfg) => ({ ...rulerTuneDefault(specKey), ...(cfg?.rulers?.[specKey] || {}) });
 
 // 設定画面やデータベースから来た値を、決まった範囲に収めて、足りない項目は初期値で埋める
 export function sanitizeConfig(input) {
@@ -158,7 +175,24 @@ export function sanitizeConfig(input) {
   const acc = {};
   for (const id of Object.keys(base.acc)) acc[id] = num(src.acc?.[id], -limit, limit, base.acc[id], 0.5);
   const disabled = Array.isArray(src.disabled) ? [...new Set(src.disabled.filter((id) => GACHA_POOL.some((it) => it.id === id)))] : [];
-  return { economy, rarities, acc, disabled };
+  const skills = {};
+  for (const [k, v] of Object.entries(src.skills && typeof src.skills === 'object' ? src.skills : {})) {
+    if (RULER_SKILL[k] && SKILLS[v] && v !== RULER_SKILL[k]) skills[k] = v;
+  }
+  const rulers = {};
+  for (const [k, v] of Object.entries(src.rulers && typeof src.rulers === 'object' ? src.rulers : {})) {
+    if (!Physics.RULERS[k] || !v || typeof v !== 'object') continue;
+    const d = rulerTuneDefault(k), out = {};
+    for (const [key, r] of Object.entries(RULER_TUNE_KEYS)) {
+      const n = Number(v[key]);
+      if (!Number.isFinite(n)) continue;
+      const c = Math.round(Math.max(r.min, Math.min(r.max, n)) / r.step) * r.step;
+      const val = Math.round(c * 1000) / 1000;
+      if (Math.abs(val - d[key]) > 1e-9) out[key] = val;
+    }
+    if (Object.keys(out).length) rulers[k] = out;
+  }
+  return { economy, rarities, acc, disabled, skills, rulers };
 }
 
 // 設定として成り立っているか（保存の前に確かめる）。問題があれば理由を返す
@@ -218,7 +252,7 @@ export function resolveLoadout(setup, cfg = defaultConfig(), level = 1) {
   mods.mass *= 1 + bonus;
   mods.power *= 1 + bonus;
   for (const k of Object.keys(mods)) mods[k] = Math.round(mods[k] * 10000) / 10000;
-  return { ruler: ruler.id, specKey: ruler.specKey, pattern, sticker, acc, level: lv, mods };
+  return { ruler: ruler.id, specKey: ruler.specKey, pattern, sticker, acc, level: lv, mods, skill: skillFor(ruler.specKey, cfg.skills), tune: cfg.rulers?.[ruler.specKey] || null };
 }
 
 export function accText(id, cfg = defaultConfig()) {

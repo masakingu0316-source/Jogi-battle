@@ -96,20 +96,48 @@ export function pickVanish(desk, list, rand = Math.random) {
 export const CRIT = { rate: 0.1, mul: 1.6 };
 
 // ---- 必殺技 ----
-// 定規の形で技が決まる。ゲージ（0〜100）が満タンのとき、自分の番に1回使える
+// 定規ごとに1つ（初期の割り当ては RULER_SKILL。設定画面で変えられる）。ゲージ（0〜100）が満タンのとき、自分の番に1回使える
+// mode: 'shot' … 構えてからはじくと、その1打に効く／'now' … 押すとその場で効き、そのあと同じ番にふつうにはじける
 export const SKILLS = {
-  power: { name: '剛腕', desc: 'その1打のはじく力が大きく上がる（自滅もしやすい）', color: '#ff6b4a' },
-  double: { name: '連打', desc: '止まったあと、もう1回続けてはじける', color: '#4ab3ff' },
-  wind: { name: '突風', desc: '止まった場所から風を起こし、周りの定規を吹き飛ばす', color: '#5fd68a' },
-  anchor: { name: '不動', desc: '次の自分の番まで、定規が重くなって押されにくい', color: '#b48cff' },
+  power: { name: '剛腕', mode: 'shot', color: '#ff6b4a', desc: 'その1打のはじく力が大きく上がる（自滅もしやすい）' },
+  double: { name: '連打', mode: 'shot', color: '#4ab3ff', desc: '止まったあと、もう1回続けてはじける' },
+  wind: { name: '突風', mode: 'shot', color: '#5fd68a', desc: '止まった場所から風を起こし、周りの定規を吹き飛ばす' },
+  anchor: { name: '不動', mode: 'shot', color: '#b48cff', desc: 'はじいたあと、次の自分の番まで重くなって押されにくい' },
+  heavy: { name: '渾身', mode: 'shot', color: '#ff4f7b', desc: 'この1打で当てた相手へのダメージが2.5倍' },
+  ink: { name: 'インク漏れ', mode: 'shot', color: '#6c5ce7', desc: 'この1打で当てた相手は3周のあいだ、自分の番が来るたびに体力が5減る' },
+  bomb: { name: '爆発', mode: 'shot', color: '#ff9f1a', desc: '止まった場所で爆発し、近くの定規に大きなダメージ（吹き飛ばしは弱め）' },
+  magnet: { name: '磁石', mode: 'shot', color: '#e84393', desc: '止まった場所へ、周りの定規を引き寄せる' },
+  heal: { name: '保健室', mode: 'now', color: '#2ecc71', desc: 'その場で体力を35回復する（そのあとふつうにはじける）' },
+  sub: { name: '身代わり', mode: 'now', color: '#7a8ba8', desc: 'この対戦で1回だけ、落ちても机の真ん中に戻ってくる（体力は半分になる）' },
+  counter: { name: '反撃', mode: 'now', color: '#fd9644', desc: '次の自分の番までに当てられたら、受けたダメージと同じだけ相手にも返す' },
+  warp: { name: 'ワープ', mode: 'now', color: '#00cec9', desc: 'その場で自分の定規を机の真ん中へ移す（そのあとふつうにはじける）' },
+  chair: { name: 'いす召喚', mode: 'now', color: '#d39a1c', desc: '自分にいちばん近い辺に椅子を並べ、1周のあいだそこから落ちない' },
+  blizzard: { name: '吹雪', mode: 'now', color: '#74b9ff', desc: '次の人の番のあいだ、机が凍ってよくすべる' },
 };
-export const SHAPE_SKILL = { straight30: 'power', straight15: 'double', tri45: 'wind', tri60: 'anchor', protractor: 'wind' };
+// 初期の割り当て（形×素材）。アクリルは攻め、メタルは守り、ラバーはトリックが多め
+export const RULER_SKILL = {
+  'straight30-acrylic': 'power', 'straight30-metal': 'anchor', 'straight30-rubber': 'wind',
+  'straight15-acrylic': 'double', 'straight15-metal': 'heal', 'straight15-rubber': 'warp',
+  'tri45-acrylic': 'heavy', 'tri45-metal': 'counter', 'tri45-rubber': 'ink',
+  'tri60-acrylic': 'wind', 'tri60-metal': 'chair', 'tri60-rubber': 'blizzard',
+  'protractor-acrylic': 'bomb', 'protractor-metal': 'sub', 'protractor-rubber': 'magnet',
+};
+// 定規（specKey）の必殺技。cfgSkills は設定画面での割り当て { specKey: skillKey }
+export function skillFor(specKey, cfgSkills) {
+  const k = cfgSkills?.[specKey];
+  return SKILLS[k] ? k : RULER_SKILL[specKey] || 'power';
+}
 export const SKILL_TUNE = {
   powerMul: 1.5,            // 剛腕：はじく強さ（速さ）の倍率。すべる距離はおよそ2.2倍
   windRadius: 20,           // 突風が届く距離（cm）
   windRadiusProtractor: 26, // 分度器は半円なので広い
   windSpeed: 260,           // 突風のいちばん近くでの速さ（cm/秒、26gの定規）
   anchorMass: 3,            // 不動：重さの倍率
+  heavyDmg: 2.5,            // 渾身：ダメージの倍率
+  inkRounds: 3, inkDmg: 5,  // インク漏れ：何周、1回いくつ
+  bombRadius: 18, bombSpeed: 110, bombDmg: 32, // 爆発：届く距離・吹き飛ばし・いちばん近くのダメージ
+  magnetRadius: 30, magnetSpeed: -150,         // 磁石：届く距離・引き寄せる速さ（マイナスは内向き）
+  heal: 35,                 // 保健室：回復する量
 };
 // ゲージのたまり方
 export const GAUGE = { max: 100, shot: 20, hit: 10, beHit: 30 };

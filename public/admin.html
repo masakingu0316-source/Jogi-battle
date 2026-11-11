@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>設定画面｜定規バトル</title>
 <meta name="robots" content="noindex">
-<meta name="theme-color" content="#f7f9fc" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#131a2c" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f3f3ee" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#10172a" media="(prefers-color-scheme: dark)">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Klee+One:wght@600&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Yuji+Syuku&family=Yuji+Mai&display=swap">
 <link rel="stylesheet" href="style.css">
 <style>
   .admin { display: grid; gap: 18px; padding-bottom: 80px; }
@@ -27,6 +27,10 @@
   .tbl th { color: var(--chalk-dim); font-weight: 500; font-size: 12px; }
   .tbl input[type=number] { width: 6.5em; padding: 5px 8px; }
   .tbl input[type=checkbox] { width: 18px; height: 18px; accent-color: var(--ink); }
+  .tbl select { font: inherit; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--card); color: var(--ink); }
+  .tbl.tune input[type=number] { width: 5.2em; }
+  .tbl.tune td small { display: block; font-size: 11px; color: var(--ink-soft); margin-top: 2px; }
+  .skill-help { margin-top: 10px; font-size: 13px; } .skill-help ul { margin: 6px 0 0; padding-left: 1.2em; line-height: 1.7; }
   .tbl tr.off td { opacity: 0.45; }
   .tbl tr.off td:first-child, .tbl tr.off td:last-child { opacity: 1; }
   .pct { color: var(--chalk-yellow); }
@@ -73,6 +77,14 @@
         <h2>ガチャの確率</h2>
         <p class="lead">「重み」の割合で確率が決まります（合計が100でなくても、自動で%に直します）。重みを0にしたレア度は出なくなります。</p>
         <div class="table-wrap"><table class="tbl" id="rarities"></table></div>
+      </section>
+
+      <section>
+        <h2>定規の性能と必殺技</h2>
+        <p class="lead">定規ごとに、重さ・すべりにくさ・跳ね返り・はじく力と、必殺技を変えられます。初期値は素材と形から決まった値です。保存すると、次に始まる対戦から使われます（レベルやアクセサリの効果は、この値にさらに掛かります）。</p>
+        <div class="table-wrap"><table class="tbl tune" id="skills"></table></div>
+        <details class="skill-help"><summary>性能の説明</summary><ul id="tuneHelp"></ul></details>
+        <details class="skill-help"><summary>必殺技の一覧</summary><ul id="skillList"></ul></details>
       </section>
 
       <section>

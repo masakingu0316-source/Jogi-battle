@@ -1,7 +1,7 @@
 // 画面の切り替え・サーバーとの通信・はじく操作・動きの再生
 // 流れ：ログイン → ホーム（部屋を作る／入る／定規の編集） → 部屋（全員が準備OKか1分で開始） → 対戦 → 部屋に戻る
 import Physics from './shared/physics.js';
-import { DESKS, MODES, PLAYERS, TEAMS, teamOf, deskTiles, SKILLS, SHAPE_SKILL, GAUGE } from './shared/rules.js';
+import { DESKS, MODES, PLAYERS, TEAMS, teamOf, deskTiles, SKILLS, skillFor, GAUGE } from './shared/rules.js';
 import { VERSION } from './shared/version.js';
 import { CPU_LEVELS } from './shared/cpu.js';
 import { createPractice } from './practice.js';
@@ -45,7 +45,7 @@ let account; // 下で作る（画面の関数を渡すため）
 // ---------------- 共通 ----------------
 let toastTimer = 0;
 // ---------------- 必殺技 ----------------
-const skillOf = (body) => SHAPE_SKILL[Physics.RULERS[body?.specKey]?.shape] || null;
+const skillOf = (body) => (!body ? null : SKILLS[body.skill] ? body.skill : skillFor(body.specKey, app.game?.skills));
 // 円ゲージを描く（SVG）。gv: 0〜100
 function ring(gv, sk, { size = 24, label = '', full = false, anchor = false, svgOnly = false } = {}) {
   const r = 25, c = 2 * Math.PI * r, pct = Math.max(0, Math.min(1, gv / GAUGE.max));
@@ -60,9 +60,21 @@ function ring(gv, sk, { size = 24, label = '', full = false, anchor = false, svg
 }
 $('skillBtn').addEventListener('click', () => {
   if ($('skillBtn').disabled) return;
-  app.skillArmed = !app.skillArmed;
   const sk = skillOf(app.state?.game?.bodies[app.state.game.turn]);
-  if (app.skillArmed && sk) hint(`必殺技「${SKILLS[sk].name}」：${SKILLS[sk].desc}`);
+  if (!sk) return;
+  // その場で効く技は、1回目で説明、2回目（3秒以内）で発動。構える技は、押すたびに構える／やめる
+  if (SKILLS[sk].mode === 'now') {
+    if (app.skillArmed) { app.skillArmed = false; send({ t: 'skill' }); }
+    else {
+      app.skillArmed = true;
+      hint(`必殺技「${SKILLS[sk].name}」：${SKILLS[sk].desc}。もう一度押すと使います`);
+      clearTimeout(app.skillTimer);
+      app.skillTimer = setTimeout(() => { app.skillArmed = false; renderGame(); }, 3000);
+    }
+  } else {
+    app.skillArmed = !app.skillArmed;
+    if (app.skillArmed) hint(`必殺技「${SKILLS[sk].name}」：${SKILLS[sk].desc}`);
+  }
   renderGame();
 });
 
@@ -246,6 +258,7 @@ $('practiceBtn').addEventListener('click', () => {
     loadoutFor: (id) => myLoadout(id),
     onMessage: (m) => onMessage(m),
     busy: () => !!app.playing,
+    cfg: app.game,
   });
   show('lobby');
 });
@@ -401,7 +414,25 @@ function applyState(st) {
     const d = DESKS[MODES[st.mode].desk];
     app.fx.push({ x: 0, y: -d.h / 4, t0: performance.now(), text: ev.type === 'ice' ? '机が凍った！' : '椅子が並んだ！', color: ev.type === 'ice' ? '#8fd8ff' : '#f2c14e', big: true });
   }
-  if (st.game) { app.seenEvent = evKey ?? app.seenEvent; app.seenGame = st.game.id; }
+  // 必殺技などの出来事（回復・ワープ・インクのダメージ…）
+  if (st.game?.fx && app.seenGame === st.game.id) {
+    for (const f of st.game.fx) {
+      if (f.id <= (app.seenFx || 0)) continue;
+      // その場で使う必殺技は、カットインを出してから効果の文字
+      const instant = ['heal', 'sub', 'counter', 'warp', 'chair', 'blizzard'].includes(f.kind);
+      if (instant) showCutin(f.owner, f.kind);
+      const t0 = performance.now() + (instant ? CUTIN_MS - 200 : 0);
+      const text = { heal: `保健室！ +${f.amount}`, sub: '身代わり！', subUsed: '身代わり発動！', counter: '反撃の構え！', warp: 'ワープ！', chair: 'いす召喚！', blizzard: '吹雪！', ink: `インク -${f.amount}` }[f.kind];
+      const col = f.kind === 'subUsed' ? SKILLS.sub.color : f.kind === 'ink' ? SKILLS.ink.color : SKILLS[f.kind]?.color || '#fff';
+      if (f.kind === 'warp' && f.from) app.fx.push({ x: f.from.x, y: f.from.y, t0, ring: 8, color: col, inward: true });
+      if (text) app.fx.push({ x: f.x, y: f.y - 4, t0, text, color: col, big: f.kind !== 'ink', small: f.kind === 'ink' });
+    }
+  }
+  if (st.game) {
+    const last = st.game.fx?.at(-1)?.id || 0;
+    app.seenFx = app.seenGame === st.game.id ? Math.max(app.seenFx || 0, last) : last;
+    app.seenEvent = evKey ?? app.seenEvent; app.seenGame = st.game.id;
+  }
   app.startDeadline = st.startIn === null || st.startIn === undefined ? null : performance.now() + st.startIn;
   render();
 }
@@ -521,7 +552,7 @@ function renderMyRuler(me) {
   $('myRuler').value = lo.ruler;
   previewRuler($('lobbyPreview'), lo, Math.max(0, app.state.members.findIndex((m) => m.id === me.id)));
   const r = ITEMS[lo.ruler];
-  $('rulerNote').innerHTML = `${matChip(r?.mat)} ${esc(r ? affinityText(r.mat) : '')}<br>${esc(skillText(lo.ruler))}${lo.acc ? `<br>アクセサリ：${esc(ITEMS[lo.acc].name)}（${esc(accText(lo.acc))}）` : ''}`;
+  $('rulerNote').innerHTML = `${matChip(r?.mat)} ${esc(r ? affinityText(r.mat) : '')}<br>${esc(skillText(lo.ruler, app.game))}${lo.acc ? `<br>アクセサリ：${esc(ITEMS[lo.acc].name)}（${esc(accText(lo.acc))}）` : ''}`;
   $('openCase').hidden = !acct;
 }
 
@@ -544,6 +575,8 @@ function renderGame() {
       hpCls: hp > 60 ? 'ok' : hp > 30 ? 'mid' : 'low',
       turn: st.phase === 'aim' && g.turn === i, // 再生中も、はじいた人を大きいままにする（行の高さを変えない）
       sub: [mat ? `${MATERIAL_INFO[mat].name} Lv.${body.level || 1}` : '', teams ? TEAMS[teamOf(i)].name : '', `${st.wins[mid] || 0}勝`].filter(Boolean).join('・'),
+      // 続いている必殺技の効果
+      fxs: [body?.anchor && '不動', body?.counter && '反撃の構え', body?.sub && '身代わり', body?.ink > 0 && `インク あと${body.ink}`].filter(Boolean),
     };
   };
   const hpBar = (x) => `<span class="hpbar ${x.hpCls}" role="img" aria-label="体力 ${x.hp}"><i style="width:${x.hp}%"></i><b>${x.hp}</b></span>`;
@@ -556,7 +589,7 @@ function renderGame() {
     const sk = x.sk && SKILLS[x.sk];
     return `<div class="orow${x.turn ? ' is-turn' : ''}${x.p.alive || x.won ? '' : ' is-out'}" style="--seat:var(--seat-${i})">
       <span class="seat">${PLAYERS[i].name}</span>
-      <span class="who">${esc(x.m?.name || '（退出）')}<small>${esc(x.sub)}${x.status ? '・' + x.status : ''}</small></span>
+      <span class="who">${esc(x.m?.name || '（退出）')}${x.fxs.map((t) => `<em class="fx-chip">${esc(t)}</em>`).join('')}<small>${esc(x.sub)}${x.status ? '・' + x.status : ''}</small></span>
       ${hpBar(x)}
       ${sk ? ring(x.gv, sk, { size: x.turn ? 34 : 20, label: x.turn ? sk.name : '', full: x.full, anchor: x.body?.anchor }) : ''}
     </div>`;
@@ -570,7 +603,7 @@ function renderGame() {
     mePanel.className = `me-panel${x.turn ? ' is-turn' : ''}${x.p.alive || x.won ? '' : ' is-out'}`;
     mePanel.style.setProperty('--seat', `var(--seat-${meIdx})`);
     mePanel.innerHTML = `<div class="me-line"><span class="seat">${PLAYERS[meIdx].name}</span><span class="who">${esc(x.m?.name || 'あなた')}</span>
-        <small>${esc(x.sub)}${x.status ? '・' + x.status : ''}${x.body?.anchor ? '・不動 発動中' : ''}</small></div>
+        ${x.fxs.map((t) => `<em class="fx-chip">${esc(t)}</em>`).join('')}<small>${esc(x.sub)}${x.status ? '・' + x.status : ''}</small></div>
       <div class="me-hp">${hpBar(x)}</div>`;
     $('skillBtn').hidden = !sk;
     if (sk) {
@@ -590,7 +623,7 @@ function renderGame() {
   else if (st.phase === 'aim') {
     const first = (g.shots < g.n ? '<span class="first">1周目・落ちても戻る</span>' : '')
       + (g.vanish !== null && g.vanish !== undefined
-        ? `<span class="vanish">${(g.vanishIn ?? 1) <= 1 ? 'この番が終わると、赤い斜線の机が消える' : `あと${g.vanishIn}回はじくと、赤い斜線の机が消える`}</span>` : '');
+        ? `<span class="vanish">${vanishText(g)}</span>` : '');
     const tTag = teams ? `（${TEAMS[teamOf(cur)].name}）` : '';
     const sk = skillOf(g.bodies[cur]);
     canSkill = !!(mine && sk && !g.extra && (g.gauge?.[cur] ?? 0) >= GAUGE.max);
@@ -601,7 +634,9 @@ function renderGame() {
     const ev = g.event;
     const evTag = ev?.type === 'ice' ? `<span class="ev ice">こおり：この番は机がよくすべる</span>`
       : ev?.type === 'chair' ? `<span class="ev chair">いす：${ev.left <= 1 ? 'この番まで' : `あと${ev.left}回`}、椅子の辺からは落ちない</span>` : '';
-    tags = evTag + extra + first;
+    const skTags = (g.icy > 0 ? `<span class="ev ice">吹雪：この番は机がよくすべる</span>` : g.icyNext ? `<span class="ev ice">吹雪：次の番は机が凍る</span>` : '')
+      + (g.walls?.length ? `<span class="ev chair">いす召喚：${g.walls[0].left <= 1 ? 'この番まで' : `あと${g.walls[0].left}回`}、椅子の辺から落ちない</span>` : '');
+    tags = evTag + skTags + extra + first;
   } else msg.textContent = '対戦終了';
   $('tags').innerHTML = tags;
   // 左下の円ゲージ：満タンで自分の番なら押せる（押すと必殺技を構える）
@@ -610,7 +645,8 @@ function renderGame() {
   sb.setAttribute('aria-pressed', String(!!app.skillArmed));
   sb.classList.toggle('ready', canSkill);
   const skName = SKILLS[skillOf(g.bodies[meIdx])]?.name || '';
-  $('skillCap').textContent = canSkill ? (app.skillArmed ? '構え中' : 'タップ') : '';
+  const skNow = SKILLS[skillOf(g.bodies[meIdx])]?.mode === 'now';
+  $('skillCap').textContent = canSkill ? (app.skillArmed ? (skNow ? 'もう一度で発動' : '構え中') : 'タップ') : '';
   sb.setAttribute('aria-label', canSkill ? `必殺技「${skName}」${app.skillArmed ? 'を構えています。もう一度押すとやめる' : 'を使う'}` : `必殺技「${skName}」のゲージ`);
   $('board').classList.toggle('can-aim', canAim());
   $('skip').hidden = !(isHost() && st.phase === 'aim' && !app.playing && curMember && !curMember.connected);
@@ -725,15 +761,49 @@ canvas.addEventListener('pointerup', () => {
 canvas.addEventListener('pointercancel', () => { app.aim = null; });
 
 // ---------------- 動きの再生 ----------------
+// ---------------- 必殺技のカットイン（全員の画面に出す） ----------------
+const CUTIN_MS = 1150;
+function showCutin(owner, skill) {
+  const g = app.state?.game;
+  const sk = SKILLS[skill];
+  if (!g || !sk) return;
+  const m = memberById(g.order[owner]);
+  const body = g.bodies[owner];
+  const el = $('cutin');
+  el.style.setProperty('--seat', PLAYERS[owner].color);
+  el.style.setProperty('--sk', sk.color);
+  $('cutinWho').textContent = `${PLAYERS[owner].name}　${m?.name || ''} の必殺技`;
+  $('cutinName').textContent = sk.name;
+  $('cutinDesc').textContent = sk.desc;
+  el.hidden = false;
+  el.classList.remove('play');
+  void el.offsetWidth; // アニメーションを最初から
+  el.classList.add('play');
+  if (body) previewRuler($('cutinRuler'), { specKey: body.specKey, level: body.level, pattern: body.pattern, sticker: body.sticker }, owner);
+  clearTimeout(app.cutinTimer);
+  app.cutinTimer = setTimeout(() => { el.hidden = true; el.classList.remove('play'); }, CUTIN_MS);
+}
+
+// 机が消える予告の文。予告のあと、残った全員が1回ずつ番を終えたら消える
+function vanishText(g) {
+  const wait = g.vanishWait || [];
+  if (wait.length <= 1 && (wait.length === 0 || wait[0] === g.turn)) return 'この番が終わると、赤い斜線の机が消える';
+  return `${wait.map((i) => PLAYERS[i].name).join('・')}の番が終わると、赤い斜線の机が消える`;
+}
+
 function startPlayback(m) {
   app.aim = null;
   app.pendingState = null;
+  // 必殺技を使った1打は、カットインのあとで動き出す
+  const delay = m.skill ? CUTIN_MS - 150 : 0;
+  if (m.skill) showCutin(m.by, m.skill);
   app.playing = {
     frames: m.frames, falls: m.falls, by: m.by, saved: m.saved, next: m.state, crit: m.crit, critDone: false,
-    skill: m.skill || null, skillDone: false, wind: m.wind || null, windDone: false, hits: m.hits || [], hitDone: 0,
+    skill: m.skill || null, skillDone: false, blast: m.blast || null, blastDone: false, hits: m.hits || [], hitDone: 0,
+    hpNow: (app.state?.game?.bodies || m.state.game.bodies).map((b) => b.hp ?? 100),
     vanished: m.vanished, vanishFx: false, desks: app.state?.game?.desks || null,
-    looks: m.state.game.bodies.map((b, k) => ({ specKey: b.specKey, level: b.level, pattern: b.pattern, sticker: b.sticker, anchor: b.anchor, hp: app.state?.game?.bodies[k]?.hp ?? b.hp })),
-    start: performance.now(), fallStart: {}, fxDone: 0,
+    looks: m.state.game.bodies.map((b, k) => ({ specKey: b.specKey, level: b.level, pattern: b.pattern, sticker: b.sticker, anchor: b.anchor, counter: b.counter, sub: b.sub, ink: b.ink, hp: app.state?.game?.bodies[k]?.hp ?? b.hp })),
+    start: performance.now() + delay, fallStart: {}, fxDone: 0,
   };
   if (app.state) renderGame();
 }
@@ -763,7 +833,7 @@ function playbackBodies(now) {
       alpha = 1 - vt; scale = 1 - 0.38 * vt;
     }
     const lerp = (q) => (A[o + q] + (B[o + q] - A[o + q]) * frac);
-    bodies.push({ owner: k, ...p.looks[k], x: lerp(0) / 100, y: lerp(1) / 100, a: lerp(2) / 1000, alpha, scale });
+    bodies.push({ owner: k, ...p.looks[k], hp: p.hpNow?.[k] ?? p.looks[k].hp, x: lerp(0) / 100, y: lerp(1) / 100, a: lerp(2) / 1000, alpha, scale });
   }
   // 落ちた瞬間の文字
   while (p.fxDone < p.falls.length && p.falls[p.fxDone].f <= t) {
@@ -776,17 +846,18 @@ function playbackBodies(now) {
     });
   }
   // 必殺技：はじいた瞬間に技の名前（突風は風が起きたときに）
-  if (p.skill && !p.skillDone && p.skill !== 'wind') {
+  // 剛腕は、はじいた瞬間に盤面を揺らす（技の名前はカットインで出している）
+  if (p.skill && !p.skillDone && t >= 0) {
     p.skillDone = true;
-    const b0 = bodies.find((b) => b.owner === p.by);
-    if (b0) app.fx.push({ x: b0.x, y: b0.y, t0: now, text: `${SKILLS[p.skill].name}！`, color: SKILLS[p.skill].color, big: true });
     if (!reducedMotion() && p.skill === 'power') app.shakeUntil = now + 200;
   }
-  if (p.wind && !p.windDone && t >= p.wind.f) {
-    p.windDone = true;
-    app.fx.push({ x: p.wind.x, y: p.wind.y, t0: now, ring: p.wind.r, color: SKILLS.wind.color });
-    app.fx.push({ x: p.wind.x, y: p.wind.y - 4, t0: now, text: '突風！', color: SKILLS.wind.color, big: true });
-    if (!reducedMotion()) app.shakeUntil = now + 300;
+  if (p.blast && !p.blastDone && t >= p.blast.f) {
+    p.blastDone = true;
+    const k = p.blast.kind, col = SKILLS[k].color;
+    app.fx.push({ x: p.blast.x, y: p.blast.y, t0: now, ring: p.blast.r, color: col, inward: k === 'magnet' });
+    if (k === 'bomb') app.fx.push({ x: p.blast.x, y: p.blast.y, t0: now, burst: true });
+    app.fx.push({ x: p.blast.x, y: p.blast.y - 4, t0: now, text: `${SKILLS[k].name}！`, color: col, big: true });
+    if (!reducedMotion() && k !== 'magnet') app.shakeUntil = now + 300;
   }
   // ダメージの数字
   if (p.hits) {
@@ -794,10 +865,11 @@ function playbackBodies(now) {
     let n = 0;
     while (p.hitDone < p.hits.length && t >= p.hits[p.hitDone].f) {
       const h = p.hits[p.hitDone++];
+      if (p.hpNow[h.target] !== undefined) p.hpNow[h.target] = Math.max(0, p.hpNow[h.target] - h.dmg);
       if (h.dmg < 2) continue;
       const tb = bodies.find((b) => b.owner === h.target);
       const bx = tb ? tb.x : h.x, by = tb ? tb.y : h.y;
-      app.fx.push({ x: bx + n * 3, y: by - 4 - n * 4, t0: now + n * 120, text: `-${Math.round(h.dmg)}`, color: h.kind === 'crit' ? '#ffd84a' : '#ff7a6b', small: true });
+      app.fx.push({ x: bx + n * 3, y: by - 4 - n * 4, t0: now + n * 120, text: h.kind === 'counter' ? `反撃 -${Math.round(h.dmg)}` : `-${Math.round(h.dmg)}`, color: h.kind === 'crit' ? '#ffd84a' : h.kind === 'counter' ? '#fd9644' : '#ff7a6b', small: true });
       n++;
     }
   }
@@ -841,13 +913,15 @@ function frame(now) {
     if (app.aim) {
       const cp = contactWorld(app.aim.b, app.aim.lx, app.aim.ly);
       const sk = app.skillArmed ? skillOf(app.aim.b) : null;
-      aim = { cx: cp.x, cy: cp.y, px: app.aim.px, py: app.aim.py, skill: sk && SKILLS[sk] };
+      aim = { cx: cp.x, cy: cp.y, px: app.aim.px, py: app.aim.py, skill: sk && SKILLS[sk], owner: app.aim.b.owner };
     }
     app.fx = app.fx.filter((f) => now - f.t0 < 1600);
     const active = !app.playing && app.state.phase === 'aim' ? g.turn : -1;
     // 残っている机と、消える予告の机（再生中は、はじく前の状態のまま見せる）
     const desks = app.playing?.deskView || { left: g.desks || null, warn: app.state.phase === 'aim' ? g.vanish ?? null : null, warnIn: g.vanishIn ?? 1 };
     desks.event = app.state.phase === 'aim' ? g.event : null;
+    desks.icy = app.state.phase === 'aim' && g.icy > 0;
+    desks.walls = app.state.phase === 'aim' ? (g.walls || []).map((w) => w.wall) : [];
     board.draw({ bodies, active, aim, fx: app.fx, now, desks });
     // クリティカルの瞬間だけ、盤面を小さく揺らす
     const cv = $('board');
@@ -881,5 +955,10 @@ if (!app.me) {
 }
 window.addEventListener('resize', () => { if (!$('login').hidden) drawLoginArt(); });
 document.fonts?.ready?.then(() => { if (!$('game').hidden) board.layout(); });
+// 盤面に筆で書く字（クリティカル・必殺技の名前など）は、先に読み込んでおく（その字の分だけ）
+try {
+  const brush = ['クリティカル！机が消えた落ちた自滅セーフ', ...Object.values(SKILLS).map((s) => s.name), ...PLAYERS.map((p) => p.name)].join('');
+  document.fonts?.load?.('30px "Yuji Mai"', brush).catch(() => {});
+} catch { /* 読み込めなくても、ほかの字で書く */ }
 // 名前の札などの高さが変わったら、盤面の大きさを合わせ直す
 if (window.ResizeObserver) new ResizeObserver(() => { if (!$('game').hidden) board.layout(); }).observe($('players'));

@@ -1,38 +1,41 @@
-/* 方眼ノートを地にして、紺のボールペンで書き、いま大事なところだけ蛍光マーカーを引く。
-   見出しは教科書体ふうの手書き（Klee One）、本文は学校の教材でも使われるUDゴシック（BIZ UDPゴシック）。
-   夜は紺色のノートに切り替わる。盤面の木の机はそのまま。 */
+/* 和モダン：白練（しろねり）の紙に青海波をうっすら敷き、墨で書き、藍で示し、朱で知らせる。
+   見出しは筆文字（Yuji Syuku）、必殺技のカットインと盤面の大きな文字は行書ふうの筆文字（Yuji Mai）、
+   本文は読みやすいUDゴシック（BIZ UDPゴシック）。夜は藍の夜空に金の差し色。盤面の木の机はそのまま。 */
 :root {
-  --paper: #f7f9fc;               /* ノートの紙 */
-  --grid: rgba(52, 104, 178, 0.085); /* 方眼（5mm） */
-  --card: #ffffff;                /* 付箋・カード */
-  --ink: #1c2747;                 /* 紺のボールペン */
-  --ink-soft: #5a6582;
-  --line: #d9e1ee;                /* 罫線 */
-  --line-strong: #b4c1d8;
-  --pen: #2b59c3;                 /* 青ペン：リンク・数値 */
-  --red-pen: #d33a35;             /* 赤ペン：エラー・注意 */
-  --marker: rgba(255, 228, 0, 0.62); /* 蛍光マーカー */
-  --marker-top: 56%;              /* マーカーを引く高さ（暗い画面では文字の下だけに引く） */
-  --btn-bg: #1c2747;
+  --paper: #f3f3ee;               /* 白練の紙 */
+  --pattern: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='28' viewBox='0 0 40 20'><defs><g id='s' fill='%23f3f3ee' stroke='%231f4e8c' stroke-opacity='.09' stroke-width='.7'><circle r='19.6'/><circle r='14.5' fill='none'/><circle r='9.5' fill='none'/><circle r='4.5' fill='none'/></g></defs><use href='%23s' x='20' y='-10'/><use href='%23s' x='0' y='0'/><use href='%23s' x='40' y='0'/><use href='%23s' x='20' y='10'/><use href='%23s' x='0' y='20'/><use href='%23s' x='40' y='20'/><use href='%23s' x='20' y='30'/></svg>"); /* 青海波 */
+  --card: #fcfcf9;                /* 胡粉の白 */
+  --ink: #1e2230;                 /* 墨 */
+  --ink-soft: #5d6274;
+  --line: #dddcd3;                /* 罫 */
+  --line-strong: #b9b7aa;
+  --pen: #1f4e8c;                 /* 藍：リンク・数値 */
+  --red-pen: #c73e2b;             /* 朱：エラー・注意 */
+  --gold: #a8802a;                /* 金茶：差し色 */
+  --marker: rgba(236, 178, 36, 0.42); /* 山吹の引き線 */
+  --marker-top: 58%;              /* 線を引く高さ（暗い画面では文字の下だけに引く） */
+  --btn-bg: #1b3a6b;              /* 藍染めのボタン */
   --btn-fg: #ffffff;
-  --btn-shadow: #0b1330;
-  --focus: rgba(43, 89, 195, 0.45);
-  --overlay: rgba(247, 249, 252, 0.88);
-  --shadow: 0 1px 0 rgba(28, 39, 71, 0.05), 0 6px 18px -10px rgba(28, 39, 71, 0.25);
-  --seat-0: #cf3a2e;
-  --seat-1: #1f6fc5;
-  --seat-2: #1d8746;
-  --seat-3: #a87900;
-  --floor: #c9d0db;               /* 教室の床（盤面のまわり） */
-  --floor-line: rgba(28, 39, 71, 0.12);
-  --floor-ink: #2d3756;
+  --btn-shadow: #0d2144;
+  --focus: rgba(31, 78, 140, 0.42);
+  --overlay: rgba(243, 243, 238, 0.88);
+  --shadow: 0 1px 0 rgba(30, 34, 48, 0.05), 0 6px 18px -10px rgba(30, 34, 48, 0.28);
+  --seat-0: #c73e2b;              /* 朱 */
+  --seat-1: #2160b0;              /* 藍 */
+  --seat-2: #2e8550;              /* 若竹 */
+  --seat-3: #a87a00;              /* 山吹 */
+  --floor: #d3d0c4;               /* 板の間（盤面のまわり） */
+  --floor-line: rgba(30, 34, 48, 0.1);
+  --floor-ink: #2e3242;
   --mat-acrylic: #1d7fb8;         /* 属性の色 */
   --mat-metal: #8a6510;
   --mat-rubber: #b8306b;
-  --xp: #2b59c3;                  /* 経験値のバー */
-  --warn: #c62d24;                /* 机が消える予告 */
+  --xp: #1f4e8c;                  /* 経験値のバー */
+  --warn: #c0281e;                /* 机が消える予告 */
+  --sumi: #17181d;                /* カットインの墨の帯（明暗共通） */
 
-  --font-display: "Klee One", "Hiragino Maru Gothic ProN", "BIZ UDPGothic", sans-serif;
+  --font-display: "Yuji Syuku", "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", serif;
+  --font-brush: "Yuji Mai", "Yuji Syuku", "Hiragino Mincho ProN", "Yu Mincho", serif;
   --font-body: "BIZ UDPGothic", "Hiragino Sans", "Noto Sans JP", system-ui, sans-serif;
 
   /* 以前の名前（設定画面などのページ内スタイル用） */
@@ -45,29 +48,29 @@
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --paper: #131a2c; --grid: rgba(140, 170, 230, 0.07); --card: #1b2440;
-    --ink: #e8ecf6; --ink-soft: #9ba7c3; --line: #2a3555; --line-strong: #3f4c73;
-    --pen: #8fb4ff; --red-pen: #ff7d75; --marker: rgba(255, 222, 40, 0.8); --marker-top: 80%;
-    --btn-bg: #ffe45c; --btn-fg: #131a2c; --btn-shadow: #a8920f;
-    --focus: rgba(143, 180, 255, 0.5); --overlay: rgba(19, 26, 44, 0.88);
+    --paper: #10172a; --pattern: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='28' viewBox='0 0 40 20'><defs><g id='s' fill='%2310172a' stroke='%238fbbe8' stroke-opacity='.07' stroke-width='.7'><circle r='19.6'/><circle r='14.5' fill='none'/><circle r='9.5' fill='none'/><circle r='4.5' fill='none'/></g></defs><use href='%23s' x='20' y='-10'/><use href='%23s' x='0' y='0'/><use href='%23s' x='40' y='0'/><use href='%23s' x='20' y='10'/><use href='%23s' x='0' y='20'/><use href='%23s' x='40' y='20'/><use href='%23s' x='20' y='30'/></svg>"); --card: #182139;
+    --ink: #ece9e0; --ink-soft: #a3a9bb; --line: #263150; --line-strong: #3a4670;
+    --pen: #8fbbe8; --red-pen: #ff8a70; --gold: #e2bd62; --marker: rgba(236, 186, 60, 0.75); --marker-top: 80%;
+    --btn-bg: #e2bd62; --btn-fg: #10172a; --btn-shadow: #8f7228;
+    --focus: rgba(143, 187, 232, 0.5); --overlay: rgba(16, 23, 42, 0.88);
     --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 8px 22px -12px rgba(0, 0, 0, 0.6);
-    --seat-0: #ff8a7a; --seat-1: #7cc4ff; --seat-2: #86e09a; --seat-3: #f6d55c;
-    --floor: #232c47; --floor-line: rgba(255, 255, 255, 0.06); --floor-ink: #b9c3da;
-    --mat-acrylic: #7fd0ff; --mat-metal: #ffd36b; --mat-rubber: #ff8cc0; --xp: #8fb4ff; --warn: #ff8a7a;
+    --seat-0: #ff8a70; --seat-1: #7fb8ff; --seat-2: #86d89c; --seat-3: #f2cd5c;
+    --floor: #18203a; --floor-line: rgba(255, 255, 255, 0.06); --floor-ink: #b9c0d4;
+    --mat-acrylic: #7fd0ff; --mat-metal: #ffd36b; --mat-rubber: #ff8cc0; --xp: #8fbbe8; --warn: #ff8a70;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --paper: #131a2c; --grid: rgba(140, 170, 230, 0.07); --card: #1b2440;
-  --ink: #e8ecf6; --ink-soft: #9ba7c3; --line: #2a3555; --line-strong: #3f4c73;
-  --pen: #8fb4ff; --red-pen: #ff7d75; --marker: rgba(255, 222, 40, 0.8); --marker-top: 80%;
-  --btn-bg: #ffe45c; --btn-fg: #131a2c; --btn-shadow: #a8920f;
-  --focus: rgba(143, 180, 255, 0.5); --overlay: rgba(19, 26, 44, 0.88);
-  --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 8px 22px -12px rgba(0, 0, 0, 0.6);
-  --seat-0: #ff8a7a; --seat-1: #7cc4ff; --seat-2: #86e09a; --seat-3: #f6d55c;
-  --floor: #232c47; --floor-line: rgba(255, 255, 255, 0.06); --floor-ink: #b9c3da;
-  --mat-acrylic: #7fd0ff; --mat-metal: #ffd36b; --mat-rubber: #ff8cc0; --xp: #8fb4ff; --warn: #ff8a7a;
-  color-scheme: dark;
+    --paper: #10172a; --pattern: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='56' height='28' viewBox='0 0 40 20'><defs><g id='s' fill='%2310172a' stroke='%238fbbe8' stroke-opacity='.07' stroke-width='.7'><circle r='19.6'/><circle r='14.5' fill='none'/><circle r='9.5' fill='none'/><circle r='4.5' fill='none'/></g></defs><use href='%23s' x='20' y='-10'/><use href='%23s' x='0' y='0'/><use href='%23s' x='40' y='0'/><use href='%23s' x='20' y='10'/><use href='%23s' x='0' y='20'/><use href='%23s' x='40' y='20'/><use href='%23s' x='20' y='30'/></svg>"); --card: #182139;
+    --ink: #ece9e0; --ink-soft: #a3a9bb; --line: #263150; --line-strong: #3a4670;
+    --pen: #8fbbe8; --red-pen: #ff8a70; --gold: #e2bd62; --marker: rgba(236, 186, 60, 0.75); --marker-top: 80%;
+    --btn-bg: #e2bd62; --btn-fg: #10172a; --btn-shadow: #8f7228;
+    --focus: rgba(143, 187, 232, 0.5); --overlay: rgba(16, 23, 42, 0.88);
+    --shadow: 0 1px 0 rgba(0, 0, 0, 0.3), 0 8px 22px -12px rgba(0, 0, 0, 0.6);
+    --seat-0: #ff8a70; --seat-1: #7fb8ff; --seat-2: #86d89c; --seat-3: #f2cd5c;
+    --floor: #18203a; --floor-line: rgba(255, 255, 255, 0.06); --floor-ink: #b9c0d4;
+    --mat-acrylic: #7fd0ff; --mat-metal: #ffd36b; --mat-rubber: #ff8cc0; --xp: #8fbbe8; --warn: #ff8a70;
+    color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -81,34 +84,31 @@ body {
   padding-bottom: max(40px, env(safe-area-inset-bottom, 0px));
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
-  background-image:
-    linear-gradient(var(--grid) 1px, transparent 1px),
-    linear-gradient(90deg, var(--grid) 1px, transparent 1px);
-  background-size: 20px 20px;
-  background-position: -1px -1px;
+  background-image: var(--pattern);
+  background-size: 56px 28px;
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
 }
 .page { max-width: 980px; margin: 0 auto; display: grid; gap: 20px; }
 .screen { display: grid; gap: 18px; }
 
-/* 蛍光マーカー：いま大事なところだけに引く */
+/* 山吹の引き線：いま大事なところだけに引く */
 .mark, h1 .mark, .msg b.mine, .result h2, .history .res.win, .badge.you {
   background-image: linear-gradient(transparent var(--marker-top), var(--marker) var(--marker-top), var(--marker) 94%, transparent 94%);
   -webkit-box-decoration-break: clone; box-decoration-break: clone;
 }
 
-/* ---- ヘッダー（ノートの上の太い罫線） ---- */
+/* ---- ヘッダー（二重の罫） ---- */
 header {
   display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
-  padding-bottom: 12px; border-bottom: 2px solid var(--line-strong);
+  padding-bottom: 12px; border-bottom: 3px double var(--line-strong);
 }
 h1 {
-  font-family: var(--font-display); font-weight: 600;
+  font-family: var(--font-display); font-weight: 400;
   font-size: clamp(28px, 5.5vw, 38px); letter-spacing: 0.04em; margin: 0; line-height: 1.15;
 }
 h1 a { color: inherit; text-decoration: none; }
-h2 { font-family: var(--font-display); font-weight: 600; font-size: 20px; margin: 0 0 10px; letter-spacing: 0.03em; line-height: 1.4; text-wrap: balance; }
+h2 { font-family: var(--font-display); font-weight: 400; font-size: 20px; margin: 0 0 10px; letter-spacing: 0.03em; line-height: 1.4; text-wrap: balance; }
 h2 small { font-family: var(--font-body); font-weight: 400; font-size: 13px; color: var(--ink-soft); letter-spacing: 0; margin-left: 4px; }
 .mt { margin-top: 22px; }
 .conn { font-size: 12px; color: var(--red-pen); border: 1px dashed var(--red-pen); border-radius: 999px; padding: 2px 10px; background: var(--card); }
@@ -161,7 +161,7 @@ input:focus { border-color: var(--pen); }
 /* ---- 待合室 ---- */
 .room-head { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: end; justify-content: space-between; }
 .label { font-size: 12px; color: var(--ink-soft); letter-spacing: 0.06em; }
-.code { font-family: var(--font-display); font-weight: 600; font-size: clamp(40px, 10vw, 56px); letter-spacing: 0.16em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+.code { font-family: var(--font-body); font-weight: 700; font-size: clamp(40px, 10vw, 56px); letter-spacing: 0.16em; line-height: 1.05; font-variant-numeric: tabular-nums; }
 .invite { display: flex; gap: 8px; flex-wrap: wrap; min-width: 0; flex: 1 1 320px; max-width: 520px; }
 .invite input { flex: 1 1 200px; min-width: 0; font-size: 13px; color: var(--ink-soft); }
 .lobby-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
@@ -172,7 +172,7 @@ input:focus { border-color: var(--pen); }
 .members li:first-child { border-top: 1px solid var(--line); }
 .members li.empty { color: var(--ink-soft); }
 .members li.empty .seat { opacity: 0.45; }
-.members .seat { font-family: var(--font-display); font-weight: 600; font-size: 22px; line-height: 1; }
+.members .seat { font-family: var(--font-display); font-weight: 400; font-size: 22px; line-height: 1; }
 .members .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .members .sub { display: block; font-size: 12px; color: var(--ink-soft); }
 .badge { font-size: 11px; border-radius: 4px; padding: 1px 6px; margin-left: 6px; white-space: nowrap; border: 1px solid var(--line-strong); color: var(--ink-soft); }
@@ -199,7 +199,7 @@ input:focus { border-color: var(--pen); }
   display: grid; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; column-gap: 10px; align-items: center;
   transition: border-color .2s, box-shadow .2s;
 }
-.player .seat { font-family: var(--font-display); font-weight: 600; font-size: 24px; line-height: 1; grid-row: span 4; }
+.player .seat { font-family: var(--font-display); font-weight: 400; font-size: 24px; line-height: 1; grid-row: span 4; }
 .player .sp { display: flex; align-items: center; gap: 6px; min-width: 0; margin-top: 3px; font-size: 11px; color: var(--ink-soft); }
 .player .sp .gauge { flex: 0 1 72px; min-width: 36px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
 .player .sp .gauge i { display: block; height: 100%; background: var(--sk); border-radius: 3px; transition: width .4s; }
@@ -233,7 +233,7 @@ input:focus { border-color: var(--pen); }
 :root[data-theme="dark"] .tags .ev.ice { color: #8fd8ff; }
 :root[data-theme="dark"] .tags .ev.chair { color: #f2c14e; }
 .tags .first { font-size: 12px; padding: 0 9px; border-radius: 999px; border: 1px dashed var(--pen); color: var(--pen); background: var(--card); line-height: 19px; }
-.msg b { font-family: var(--font-display); font-weight: 600; font-size: 21px; }
+.msg b { font-family: var(--font-display); font-weight: 400; font-size: 21px; }
 .msg .vanish { font-size: 12px; font-weight: 700; padding: 1px 9px; border-radius: 999px; border: 1.5px solid var(--warn); color: var(--warn); background: var(--card); }
 .msg .first { font-size: 12px; padding: 1px 9px; border-radius: 999px; border: 1px dashed var(--pen); color: var(--pen); white-space: nowrap; background: var(--card); }
 .board-wrap {
@@ -321,14 +321,14 @@ canvas.can-aim:active { cursor: grabbing; }
 .mat-acrylic { color: var(--mat-acrylic); }
 .mat-metal { color: var(--mat-metal); }
 .mat-rubber { color: var(--mat-rubber); }
-.lv { font-family: var(--font-display); font-weight: 600; font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.lv { font-family: var(--font-display); font-weight: 400; font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .lv.max { background-image: linear-gradient(transparent var(--marker-top), var(--marker) var(--marker-top), var(--marker) 92%, transparent 92%); }
 .xp { display: inline-block; width: 64px; height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; vertical-align: middle; }
 .xp i { display: block; height: 100%; background: var(--xp); border-radius: 3px; }
 .ruler-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
 .reward .lvup { display: inline-block; margin-left: 6px; padding: 0 6px; font-family: var(--font-display); color: var(--ink); background-image: linear-gradient(transparent var(--marker-top), var(--marker) var(--marker-top), var(--marker) 92%, transparent 92%); }
 .reward small { display: block; font-weight: 400; color: var(--ink-soft); font-size: 13px; }
-.rar { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 0 6px; color: #1c2747; white-space: nowrap; }
+.rar { font-size: 11px; font-weight: 700; border-radius: 4px; padding: 0 6px; color: #1e2230; white-space: nowrap; }
 .editor { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 18px; align-items: start; border-bottom: 1px dashed var(--line-strong); padding-bottom: 18px; }
 .preview-big { width: 100%; height: 190px; background: #d9bb8f; border-radius: 12px; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.15); }
 .editor-fields { display: grid; gap: 12px; }
@@ -351,7 +351,7 @@ canvas.can-aim:active { cursor: grabbing; }
 .dome span:nth-child(5) { left: 70px; bottom: 38px; background: linear-gradient(#d69cff 50%, #fff 50%); }
 .dome.spin span { animation: shake 0.5s ease-in-out 2; }
 @keyframes shake { 25% { transform: translate(3px, -6px) rotate(20deg); } 75% { transform: translate(-3px, -2px) rotate(-15deg); } }
-.base { width: 170px; background: #d33a35; color: #fff; text-align: center; border-radius: 6px 6px 12px 12px; padding: 14px 0 18px; font-family: var(--font-display); font-weight: 600; font-size: 20px; letter-spacing: 0.08em; box-shadow: inset 0 -6px 0 rgba(0, 0, 0, 0.18); }
+.base { width: 170px; background: #c73e2b; color: #fff; text-align: center; border-radius: 6px 6px 12px 12px; padding: 14px 0 18px; font-family: var(--font-display); font-weight: 400; font-size: 20px; letter-spacing: 0.08em; box-shadow: inset 0 -6px 0 rgba(0, 0, 0, 0.18); }
 .gacha-side { display: grid; gap: 12px; }
 .gacha-buttons { display: flex; flex-wrap: wrap; gap: 10px; }
 .gacha-note { margin: 0; font-size: 13px; color: var(--red-pen); min-height: 1.4em; max-width: 36em; }
@@ -370,7 +370,7 @@ canvas.can-aim:active { cursor: grabbing; }
 .stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 10px; }
 .tile { padding: 10px 14px; }
 .tile .k { font-size: 12px; color: var(--ink-soft); }
-.tile .v { font-family: var(--font-display); font-weight: 600; font-size: 30px; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.tile .v { font-family: var(--font-display); font-weight: 400; font-size: 30px; line-height: 1.2; font-variant-numeric: tabular-nums; }
 .table-wrap { overflow-x: auto; }
 .mode-table { border-collapse: collapse; font-size: 14px; min-width: 320px; }
 .mode-table th, .mode-table td { padding: 7px 14px; border-bottom: 1px solid var(--line); text-align: left; font-variant-numeric: tabular-nums; }
@@ -378,7 +378,7 @@ canvas.can-aim:active { cursor: grabbing; }
 .history { list-style: none; margin: 0; padding: 0; display: grid; }
 .history li { display: grid; grid-template-columns: 4.2em minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
 .history li:first-child { border-top: 1px solid var(--line); }
-.history .res { font-family: var(--font-display); font-weight: 600; font-size: 18px; justify-self: start; color: var(--ink-soft); }
+.history .res { font-family: var(--font-display); font-weight: 400; font-size: 18px; justify-self: start; color: var(--ink-soft); }
 .history .res.win { color: var(--ink); }
 .history .detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history .detail small { display: block; color: var(--ink-soft); font-size: 12px; }
@@ -426,7 +426,7 @@ code { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size:
   padding: 12px 14px; border-radius: 12px; background: var(--card); box-shadow: 0 2px 0 var(--line);
 }
 .mode-opt[aria-checked="true"] { border-color: var(--ink); box-shadow: 0 0 0 1px var(--ink); }
-.mode-opt .mo-name { font-family: var(--font-display); font-weight: 600; font-size: 19px; line-height: 1.3; }
+.mode-opt .mo-name { font-family: var(--font-display); font-weight: 400; font-size: 19px; line-height: 1.3; }
 .mode-opt[aria-checked="true"] .mo-name { background-image: linear-gradient(transparent var(--marker-top), var(--marker) var(--marker-top), var(--marker) 94%, transparent 94%); justify-self: start; }
 .mode-opt .mo-sub { grid-column: 2; font-size: 12px; color: var(--ink-soft); line-height: 1.5; }
 /* 机の並べ方の小さな図（1台・2台・4台） */
@@ -448,7 +448,7 @@ code { font-family: ui-monospace, "SFMono-Regular", Menlo, monospace; font-size:
   padding: 12px 16px;
 }
 .countdown.waiting { border-left-color: var(--line-strong); }
-.countdown .cd-time { font-family: var(--font-display); font-weight: 600; font-size: 34px; line-height: 1; font-variant-numeric: tabular-nums; min-width: 3.2ch; }
+.countdown .cd-time { font-family: var(--font-display); font-weight: 400; font-size: 34px; line-height: 1; font-variant-numeric: tabular-nums; min-width: 3.2ch; }
 .countdown.waiting .cd-time { display: none; }
 .countdown .cd-text { font-size: 14px; min-width: 0; }
 .countdown.soon .cd-time { color: var(--red-pen); }
@@ -557,7 +557,7 @@ body.in-game .site-foot { display: none; }
   padding: 3px 10px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--seat);
   font-size: 13px; transition: padding .2s;
 }
-.orow .seat { font-family: var(--font-display); font-weight: 600; color: var(--seat); font-size: 15px; line-height: 1; }
+.orow .seat { font-family: var(--font-display); font-weight: 400; color: var(--seat); font-size: 15px; line-height: 1; }
 .orow .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 700; }
 .orow .who small { font-weight: 400; color: var(--ink-soft); font-size: 11px; margin-left: 6px; }
 .orow .hpbar { height: 9px; margin: 0; }
@@ -600,7 +600,7 @@ body.in-game .site-foot { display: none; }
 .me-panel.is-turn { border: 2px solid var(--ink); border-left: 6px solid var(--seat); }
 .me-panel.is-out { opacity: .5; }
 .me-line { display: flex; align-items: baseline; gap: 8px; min-width: 0; white-space: nowrap; }
-.me-line .seat { font-family: var(--font-display); font-weight: 600; color: var(--seat); font-size: 18px; line-height: 1; }
+.me-line .seat { font-family: var(--font-display); font-weight: 400; color: var(--seat); font-size: 18px; line-height: 1; }
 .me-line .who { font-weight: 700; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .me-line small { color: var(--ink-soft); font-size: 11px; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .me-hp .hpbar { height: 24px; border-radius: 12px; margin: 0; }
@@ -637,3 +637,71 @@ body.in-game .site-foot { display: none; }
 .me-panel.is-turn { border: 1px solid var(--line); border-left: 6px solid var(--seat); box-shadow: 0 0 0 2px var(--ink); }
 @media (max-width: 640px) { #game { --rowS: 28px; --rowL: 48px; } }
 @media (max-height: 520px) { #game { --rowS: 24px; --rowL: 32px; } }
+
+/* 続いている必殺技の効果（不動・反撃の構え・身代わり・インク） */
+.fx-chip { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 999px; font-style: normal; font-size: 10px; font-weight: 700; line-height: 16px; background: var(--ink); color: var(--card); vertical-align: 1px; }
+
+/* ==== 必殺技のカットイン（盤面の上を、墨の一筆が横切り、そこに技の名前を筆で書く） ==== */
+.cutin { position: absolute; inset: 0; z-index: 6; display: grid; place-items: center; pointer-events: none; overflow: hidden; border-radius: inherit; --brush: url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 100' preserveAspectRatio='none'><path d='M6 24C40 12 90 17 140 11S240 8 300 13C330 14 358 9 380 15L392 21L379 27L398 35L384 41L396 50L381 57L395 66L377 73L387 82C350 90 300 86 250 92S140 88 90 94C60 96 30 91 10 86L3 74L12 62L2 50L10 38Z'/></svg>"); }
+.cutin::before { content: ''; position: absolute; inset: 0; background: rgba(10, 12, 24, 0.45); opacity: 0; }
+.cutin-band {
+  position: relative; width: 118%; min-height: 36%; max-height: 200px; padding: 18px 13% 22px;
+  display: grid; grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.5fr); align-items: center; gap: 3%;
+  transform: rotate(-4deg); filter: drop-shadow(0 10px 18px rgba(0, 0, 0, 0.4));
+}
+/* 墨の帯（かすれた筆の跡つき） */
+.cutin-band::before {
+  content: ''; position: absolute; inset: 0; z-index: -1;
+  background:
+    repeating-linear-gradient(178deg, rgba(255, 255, 255, 0.05) 0 2px, transparent 2px 7px, rgba(255, 255, 255, 0.08) 7px 8px, transparent 8px 15px),
+    linear-gradient(90deg, var(--sumi) 0%, var(--sumi) 70%, #2a2c33 100%);
+  -webkit-mask: var(--brush) center / 100% 100% no-repeat; mask: var(--brush) center / 100% 100% no-repeat;
+}
+/* その人の色の、もう一筆（帯の下にのぞく） */
+.cutin-band::after {
+  content: ''; position: absolute; left: 6%; right: 3%; bottom: -9%; height: 30%; z-index: -2;
+  background: var(--seat); transform: rotate(1.2deg);
+  -webkit-mask: var(--brush) center / 100% 100% no-repeat; mask: var(--brush) center / 100% 100% no-repeat;
+}
+.cutin-ruler { width: 100%; height: 120px; transform: rotate(-6deg); filter: drop-shadow(0 6px 10px rgba(0,0,0,.5)); }
+.cutin-text { display: grid; gap: 2px; color: #fff; min-width: 0; }
+.cutin-who { font-size: 13px; font-weight: 700; letter-spacing: .06em; color: rgba(255, 255, 255, 0.82); }
+.cutin-title { display: flex; align-items: center; gap: 0.35em; min-width: 0; }
+.cutin-name {
+  font-family: var(--font-brush); font-weight: 400; font-size: clamp(40px, 10vw, 76px); line-height: 1.1; white-space: nowrap;
+  text-shadow: 0 0 1px rgba(255, 255, 255, 0.6), 0 3px 0 rgba(0, 0, 0, 0.45);
+}
+/* 朱の落款 */
+.cutin-seal {
+  flex: none; display: grid; place-items: center; width: 2.3em; height: 2.3em; border-radius: 3px;
+  font-family: var(--font-display); font-size: clamp(11px, 2.4vw, 15px); line-height: 1; writing-mode: vertical-rl; letter-spacing: 0.05em;
+  color: #fff; background: #c73e2b; box-shadow: inset 0 0 0 2px #c73e2b, inset 0 0 0 3px rgba(255, 255, 255, 0.7);
+  transform: rotate(6deg); opacity: 0;
+}
+.cutin-desc { font-size: 12px; color: rgba(255, 255, 255, 0.86); max-width: 30em; }
+.cutin.play::before { animation: cutin-dim 1.15s ease forwards; }
+.cutin.play .cutin-band { animation: cutin-band 1.15s cubic-bezier(.25, .8, .25, 1) forwards; }
+.cutin.play .cutin-name { animation: cutin-name 1.15s ease forwards; }
+.cutin.play .cutin-seal { animation: cutin-seal 1.15s ease forwards; }
+@keyframes cutin-dim { 0% { opacity: 0; } 15%, 80% { opacity: 1; } 100% { opacity: 0; } }
+/* 筆を左から右へ走らせるように見せ、最後はすっと消える */
+@keyframes cutin-band {
+  0% { clip-path: inset(-40% 100% -40% -5%); opacity: 1; transform: rotate(-4deg) translateX(-2%); }
+  20% { clip-path: inset(-40% -5% -40% -5%); opacity: 1; transform: rotate(-4deg) translateX(0); }
+  80% { clip-path: inset(-40% -5% -40% -5%); opacity: 1; transform: rotate(-4deg) translateX(1.5%); }
+  100% { clip-path: inset(-40% -5% -40% -5%); opacity: 0; transform: rotate(-4deg) translateX(6%); }
+}
+@keyframes cutin-name { 0%, 14% { opacity: 0; transform: translateY(6px); filter: blur(3px); } 32%, 100% { opacity: 1; transform: none; filter: none; } }
+@keyframes cutin-seal { 0%, 30% { opacity: 0; transform: rotate(6deg) scale(1.8); } 40%, 100% { opacity: 1; transform: rotate(6deg) scale(1); } }
+@media (max-width: 640px) {
+  .cutin-band { padding: 12px 10% 16px; grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.6fr); }
+  .cutin-ruler { height: 80px; }
+  .cutin-who { font-size: 11px; }
+  .cutin-desc { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cutin.play .cutin-band { animation: cutin-fade 1.15s ease forwards; }
+  .cutin.play .cutin-name { animation: none; }
+  .cutin.play .cutin-seal { animation: none; opacity: 1; }
+  @keyframes cutin-fade { 0% { opacity: 0; } 15%, 80% { opacity: 1; } 100% { opacity: 0; } }
+}

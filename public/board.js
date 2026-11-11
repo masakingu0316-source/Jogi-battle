@@ -1,6 +1,7 @@
 // 盤面（机・定規・狙いの矢印・落下の文字）を canvas に描く
 import { paintRuler } from './ruler-paint.js';
 import { DESKS, PLAYERS } from './shared/rules.js';
+import Physics from './shared/physics.js';
 
 const MARGIN = 9; // 机のまわりに見せる床（cm）
 export const MAX_DRAG = 11; // これ以上引っぱっても力は最大のまま（cm）
@@ -186,8 +187,9 @@ export function createBoard(canvas, wrap, opt = {}) {
     }
 
     // 場のイベント：こおり（机が凍る）・いす（辺に椅子が並ぶ）
-    if (desks.event?.type === 'ice') drawIce(shown.map((x) => x.pn), now);
+    if (desks.event?.type === 'ice' || desks.icy) drawIce(shown.map((x) => x.pn), now);
     if (desks.event?.type === 'chair') drawChairs(desks.event.wall, now);
+    for (const w of desks.walls || []) drawChairs(w, now);
 
     // 予告の机に「消える」の札（画面の向きに合わせて文字は立てる）
     if (desks.warn !== null && desks.warn !== undefined && panels[desks.warn]) {
@@ -199,10 +201,10 @@ export function createBoard(canvas, wrap, opt = {}) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.font = '700 15px "BIZ UDPGothic", system-ui, sans-serif';
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      const txt = (desks.warnIn ?? 1) <= 1 ? 'この番のあと消える' : `あと${desks.warnIn}回で消える`;
+      const txt = (desks.warnIn ?? 1) <= 1 ? 'この番のあと消える' : `あと${desks.warnIn}人の番で消える`;
       const tw = ctx.measureText(txt).width + 18;
       ctx.globalAlpha = 0.85;
-      ctx.fillStyle = '#d8342a';
+      ctx.fillStyle = '#c73e2b';
       roundRect(sp.x - tw / 2, sp.y - 13, tw, 26, 13);
       ctx.fill();
       ctx.fillStyle = '#fff';
@@ -243,6 +245,9 @@ export function createBoard(canvas, wrap, opt = {}) {
     ctx.fillStyle = theme.ink; ctx.fillText(label, 0, 0);
     ctx.restore();
 
+    // 盤面の定規ごとの体力（画面の向きに関係なく、定規のすぐ上に横向きで）
+    drawHpTags(bodies, aim, now);
+
     for (const f of fx) {
       const t = (now - f.t0) / 1600;
       if (t < 0 || t > 1) continue;
@@ -257,7 +262,8 @@ export function createBoard(canvas, wrap, opt = {}) {
           ctx.globalAlpha = (1 - rt) * w;
           ctx.strokeStyle = f.color;
           ctx.lineWidth = Math.max(0.25, 5 / view.s) * (1.4 - rt);
-          ctx.beginPath(); ctx.arc(f.x, f.y, Math.max(0.1, f.ring * k * (0.25 + 0.75 * Math.sqrt(rt))), 0, Math.PI * 2); ctx.stroke();
+          const grow = f.inward ? 1 - 0.75 * Math.sqrt(rt) : 0.25 + 0.75 * Math.sqrt(rt);
+        ctx.beginPath(); ctx.arc(f.x, f.y, Math.max(0.1, f.ring * k * grow), 0, Math.PI * 2); ctx.stroke();
         }
         // 風の筋
         ctx.globalAlpha = (1 - rt) * 0.8;
@@ -299,7 +305,7 @@ export function createBoard(canvas, wrap, opt = {}) {
       }
       // 画面からはみ出さないよう、文字の幅に合わせて寄せる
       const size = f.big ? Math.min(36, view.w / 9) : f.small ? Math.min(22, view.w / 14) : Math.min(28, view.w / 11);
-      ctx.font = `600 ${size}px "Klee One", "BIZ UDPGothic", sans-serif`;
+      ctx.font = `400 ${size}px "Yuji Mai", "Yuji Syuku", "BIZ UDPGothic", serif`;
       const half = ctx.measureText(f.text).width / 2 + 8;
       const x = Math.max(half, Math.min(view.w - half, p.x));
       const y = Math.max(24, Math.min(view.h - 24, p.y)) - t * 18;
@@ -312,6 +318,83 @@ export function createBoard(canvas, wrap, opt = {}) {
   }
 
   function drawRuler(b, px, active, now) { paintRuler(ctx, b, px, active, now); }
+
+  // 体力の札：[席の色の印｜バー｜数字] の小さな札を、定規の画面上の外枠のすぐ上（上が狭ければ下）に置く
+  // 盤面を隠しすぎないよう小さく半透明にし、狙っている自分の定規の札はさらに薄くする
+  const tagSide = new Map();
+  function drawHpTags(bodies, aim, now) {
+    const small = view.w < 520;
+    const W = small ? 64 : 72, H = small ? 15 : 16, barW = small ? 24 : 30;
+    // まず全部の定規の画面上の外枠を出す
+    const items = [];
+    for (const b of bodies) {
+      if ((b.alpha ?? 1) < 0.35 || b.hp === undefined) continue;
+      const spec = Physics.RULERS[b.specKey];
+      const sh = spec && Physics.SHAPES[spec.shape];
+      if (!sh) continue;
+      const c = Math.cos(b.a), sn = Math.sin(b.a), k = b.scale ?? 1;
+      let top = Infinity, bottom = -Infinity, left = Infinity, right = -Infinity;
+      for (const v of sh.verts) {
+        const p = toScreen(b.x + (v.x * c - v.y * sn) * k, b.y + (v.x * sn + v.y * c) * k);
+        top = Math.min(top, p.y); bottom = Math.max(bottom, p.y); left = Math.min(left, p.x); right = Math.max(right, p.x);
+      }
+      items.push({ b, box: { x0: left, y0: top, x1: right, y1: bottom } });
+    }
+    // 札の置き場所：上・下・左・右の候補から、ほかの札や定規と重なりにくく、画面からはみ出さない所を選ぶ
+    const overlap = (a, q) => Math.max(0, Math.min(a.x1, q.x1) - Math.max(a.x0, q.x0)) * Math.max(0, Math.min(a.y1, q.y1) - Math.max(a.y0, q.y0));
+    const placed = [];
+    for (const { b, box } of items) {
+      const cx = (box.x0 + box.x1) / 2, cy = (box.y0 + box.y1) / 2;
+      const cands = [
+        { x: cx - W / 2, y: box.y0 - H - 5, pref: 0 },
+        { x: cx - W / 2, y: box.y1 + 5, pref: 1 },
+        { x: box.x1 + 6, y: cy - H / 2, pref: 2 },
+        { x: box.x0 - W - 6, y: cy - H / 2, pref: 2 },
+      ];
+      let best = null, bestScore = Infinity, bestK = 0;
+      for (const [k, cd] of cands.entries()) {
+        const r = { x0: cd.x, y0: cd.y, x1: cd.x + W, y1: cd.y + H };
+        // 前のコマと同じ場所を少しひいきして、動いている間に札がぱたぱた移らないようにする
+        let sc = cd.pref * 40 - (tagSide.get(b.owner) === k ? 60 : 0);
+        if (r.x0 < 4 || r.y0 < 4 || r.x1 > view.w - 4 || r.y1 > view.h - 4) sc += 5000;
+        for (const q of placed) sc += overlap(r, q) * 10;
+        for (const it of items) sc += overlap(r, it.box) * (it.b === b ? 3 : 1);
+        if (sc < bestScore) { bestScore = sc; best = r; bestK = k; }
+      }
+      tagSide.set(b.owner, bestK);
+      const x = Math.max(4, Math.min(view.w - W - 4, best.x0));
+      const y = Math.max(4, Math.min(view.h - H - 4, best.y0));
+      placed.push({ x0: x, y0: y, x1: x + W, y1: y + H });
+      const hp = Math.max(0, Math.round(b.hp));
+      const mine = aim && b.owner === aim.owner;
+      ctx.save();
+      ctx.globalAlpha = (b.alpha ?? 1) * (mine ? 0.45 : 0.92);
+      // 台
+      ctx.fillStyle = 'rgba(22, 26, 44, 0.78)';
+      roundRect(x, y, W, H, H / 2);
+      ctx.fill();
+      if (hp <= 30) {
+        ctx.strokeStyle = `rgba(255, 110, 90, ${0.55 + 0.45 * Math.sin(now / 200)})`;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+      // 席の色の印
+      ctx.fillStyle = PLAYERS[b.owner]?.color || '#fff';
+      ctx.beginPath(); ctx.arc(x + H / 2, y + H / 2, H / 2 - 4, 0, Math.PI * 2); ctx.fill();
+      // バー
+      const bx = x + H - 1, by = y + H / 2 - 3;
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+      roundRect(bx, by, barW, 6, 3); ctx.fill();
+      ctx.fillStyle = hp > 60 ? '#4cd17c' : hp > 30 ? '#f2c14e' : '#ff6a55';
+      if (hp > 0) { roundRect(bx, by, Math.max(4, barW * hp / 100), 6, 3); ctx.fill(); }
+      // 数字
+      ctx.fillStyle = '#fff';
+      ctx.font = `700 ${small ? 10 : 11}px "BIZ UDPGothic", system-ui, sans-serif`;
+      ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(hp), x + W - 5, y + H / 2 + 0.5);
+      ctx.restore();
+    }
+  }
 
   // こおり：天板に薄い氷の膜と、光の筋・霜の粒
   function drawIce(list, now) {

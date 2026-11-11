@@ -2,14 +2,14 @@
 // 画面には、オンラインの部屋と同じ形のメッセージを渡すので、画面側はほとんど同じ作りで動く。
 // 練習なので、えんぴつ・経験値・戦績は増えない。
 import { RoomCore } from './shared/core.js';
-import { planShot, CPU_LEVELS } from './shared/cpu.js';
+import { planShot, decideNow, CPU_LEVELS } from './shared/cpu.js';
 import { ITEMS, resolveLoadout } from './shared/catalog.js';
 
 const RULER_IDS = Object.values(ITEMS).filter((it) => it.kind === 'ruler').map((it) => it.id);
 
 // mode: 遊び方、cpus: コンピュータの人数、level: 強さ
 // loadout: 自分の定規、loadoutFor(rulerId): 部屋で定規を替えたとき、onMessage: 画面へ、busy(): 動きの再生中か
-export function createPractice({ mode, cpus, level, name, loadout, loadoutFor, onMessage, busy }) {
+export function createPractice({ mode, cpus, level, name, loadout, loadoutFor, onMessage, busy, cfg }) {
   const core = new RoomCore('PRACT', mode);
   const lv = CPU_LEVELS[level] ? level : 'normal';
   const me = core.join(name, null, null).member;
@@ -18,7 +18,7 @@ export function createPractice({ mode, cpus, level, name, loadout, loadoutFor, o
   for (let i = 0; i < cpus; i++) {
     const m = core.join(`CPU${i + 1}`, null, null).member;
     const ruler = RULER_IDS[Math.floor(Math.random() * RULER_IDS.length)];
-    core.setLoadout(m.id, resolveLoadout({ ruler }, undefined, CPU_LEVELS[lv].level));
+    core.setLoadout(m.id, resolveLoadout({ ruler }, cfg, CPU_LEVELS[lv].level));
     cpuIds.push(m.id);
   }
   let closed = false, thinking = false;
@@ -39,6 +39,12 @@ export function createPractice({ mode, cpus, level, name, loadout, loadoutFor, o
     thinking = true;
     try {
       const id = g.order[g.turn];
+      // その場で使う必殺技なら、先に使ってから考える
+      if (decideNow(core, lv)) {
+        while (!closed && busy()) await new Promise((r) => setTimeout(r, 120));
+        out(core.handle(id, { t: 'skill' }));
+        await new Promise((r) => setTimeout(r, 900));
+      }
       const shot = await planShot(core, lv);
       // 動きの再生が終わってから、少し考えるふりをしてはじく
       const t0 = Date.now();
