@@ -19,12 +19,36 @@ const Physics = (() => {
     }
     return v;
   }
+  // 多角形（n角形）で円や角の丸い四角を近似する
+  function poly(rx, ry, n, rot = 0) {
+    const v = [];
+    for (let i = 0; i < n; i++) { const t = rot + (i / n) * Math.PI * 2; v.push([rx * Math.cos(t), ry * Math.sin(t)]); }
+    return v;
+  }
+  // 角を落とした四角（面取り c）
+  function chamfer(L, W, c) {
+    const x = L / 2, y = W / 2;
+    return [[-x + c, -y], [x - c, -y], [x, -y + c], [x, y - c], [x - c, y], [-x + c, y], [-x, y - c], [-x, -y + c]];
+  }
   const SHAPE_DEFS = {
     straight30: { name: '30cm定規', kind: 'rect', nominal: 30, L: 32, W: 3.4, verts: rect(32, 3.4), fill: 1 },
     straight15: { name: '15cm定規', kind: 'rect', nominal: 15, L: 17, W: 2.6, verts: rect(17, 2.6), fill: 1.5 },
     tri45: { name: '三角定規（45°）', kind: 'tri', nominal: 12, hole: 2.4, legs: [15, 15], verts: [[0, 0], [15, 0], [0, -15]], fill: 0.8, hollow: true },
     tri60: { name: '三角定規（30°・60°）', kind: 'tri', nominal: 15, hole: 2.2, legs: [18, 10.4], verts: [[0, 0], [18, 0], [0, -10.4]], fill: 0.88, hollow: true },
     protractor: { name: '分度器', kind: 'protractor', nominal: 180, hole: 1.7, R: 7.5, strip: 0.9, verts: semicircle(7.5, 0.9), fill: 0.82, hollow: true },
+    // 折りたたみ定規（50cm）：たたんだ形 → 半分開いた形 → 全開。体力で形が変わる（重さは同じ）
+    folding1: { name: '折りたたみ定規', kind: 'rect', nominal: 50, L: 17.6, W: 3.3, verts: rect(17.6, 3.3), fill: 1, special: true, folds: 3 },
+    folding2: { name: '折りたたみ定規', kind: 'rect', nominal: 50, L: 34.6, W: 3.1, verts: rect(34.6, 3.1), fill: 1, special: true, folds: 2 },
+    folding3: { name: '折りたたみ定規', kind: 'rect', nominal: 50, L: 51.6, W: 3.1, verts: rect(51.6, 3.1), fill: 1, special: true, folds: 1 },
+    // ステージの敵（文房具）
+    eraser: { name: '消しゴム', kind: 'rect', L: 5.6, W: 2.4, verts: chamfer(5.6, 2.4, 0.25), fill: 1, special: true },
+    pencil: { name: '鉛筆', kind: 'rect', L: 17.6, W: 0.8, verts: [[-8.8, -0.4], [6.6, -0.4], [8.8, 0], [6.6, 0.4], [-8.8, 0.4]], fill: 1, special: true },
+    clip: { name: 'クリップ', kind: 'rect', L: 3.4, W: 1.0, verts: chamfer(3.4, 1.0, 0.3), fill: 1, special: true },
+    stapler: { name: 'ホチキス', kind: 'box', L: 10.4, W: 3.4, verts: chamfer(10.4, 3.4, 0.8), fill: 1, special: true },
+    tack: { name: '画びょう', kind: 'round', R: 1.0, verts: poly(1.0, 1.0, 10), fill: 1, special: true },
+    glue: { name: 'スティックのり', kind: 'rect', L: 9.6, W: 2.6, verts: chamfer(9.6, 2.6, 0.6), fill: 1, special: true },
+    tape: { name: '修正テープ', kind: 'box', L: 8.6, W: 3.4, verts: chamfer(8.6, 3.4, 1.0), fill: 1, special: true },
+    compass: { name: 'コンパス', kind: 'round', R: 1.9, verts: poly(1.9, 1.9, 10), fill: 1, special: true },
   };
 
   // ---- 素材 ----
@@ -73,7 +97,8 @@ const Physics = (() => {
     // 摩擦をかける点：まっすぐな定規は長さ方向に8点、ほかは面の中に格子状に
     let samples = [];
     if (def.kind === 'rect') {
-      for (let i = 0; i < 8; i++) samples.push({ x: -def.L / 2 + (i + 0.5) * (def.L / 8), y: 0 });
+      const k = def.L > 30 ? 12 : 8;
+      for (let i = 0; i < k; i++) samples.push({ x: -def.L / 2 + (i + 0.5) * (def.L / k), y: 0 });
     } else {
       const xs = v.map((p) => p.x), ys = v.map((p) => p.y);
       const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
@@ -94,6 +119,7 @@ const Physics = (() => {
   // 定規の仕様（形×素材）。キーは "straight30-acrylic" のような形
   const RULERS = {};
   for (const [sk, sh] of Object.entries(SHAPES)) {
+    if (sh.special) continue;
     for (const [mk, mt] of Object.entries(MATERIALS)) {
       RULERS[`${sk}-${mk}`] = {
         name: `${sh.name}（${mt.name}）`, shape: sk, mat: mk, kind: mk, nominal: sh.nominal,
@@ -102,10 +128,40 @@ const Physics = (() => {
     }
   }
 
+  // 折りたたみ定規（ステージの報酬）。forms：体力が多い順の形
+  RULERS['folding-acrylic'] = {
+    name: '折りたたみ定規（アクリル）', shape: 'folding1', forms: ['folding1', 'folding2', 'folding3'], mat: 'acrylic', kind: 'acrylic', nominal: 50,
+    mass: 30, mu: 0.38, e: 0.5,
+  };
+  // ステージの敵。pinned：机に刺さって動かない
+  const ENEMY_SPECS = {
+    'en-eraser': { name: '消しゴム', shape: 'eraser', mat: 'rubber', mass: 18, mu: 1.5, e: 0.05 },
+    'en-pencil': { name: '鉛筆', shape: 'pencil', mat: 'wood', mass: 6, mu: 0.26, e: 0.45 },
+    'en-clip': { name: 'クリップ', shape: 'clip', mat: 'metal', mass: 9, mu: 0.34, e: 0.3 },
+    'en-stapler': { name: 'ホチキス', shape: 'stapler', mat: 'metal', mass: 44, mu: 0.62, e: 0.2 },
+    'en-tack': { name: '画びょう', shape: 'tack', mat: 'metal', mass: 3, mu: 1, e: 0.3 },
+    'en-glue': { name: 'スティックのり', shape: 'glue', mat: 'plastic', mass: 16, mu: 0.75, e: 0.25 },
+    'en-tape': { name: '修正テープ', shape: 'tape', mat: 'plastic', mass: 14, mu: 0.6, e: 0.3 },
+    'en-compass': { name: 'コンパス', shape: 'compass', mat: 'metal', mass: 20, mu: 1, e: 0.3 },
+    'boss-folding': { name: '折りたたみ定規', shape: 'folding1', forms: ['folding1', 'folding2', 'folding3'], mat: 'acrylic', mass: 40, mu: 0.42, e: 0.45 },
+  };
+  for (const [k, v] of Object.entries(ENEMY_SPECS)) RULERS[k] = { ...v, kind: v.mat, nominal: SHAPES[v.shape].nominal || 0, enemy: true };
+
+  // 体力で形が変わる定規の、いまの形。体力の割合が 2/3 より多い→たたんだ形、1/3 より多い→半分、それ以下→全開
+  function formIndex(hp, maxHp = 100) {
+    const r = (hp ?? maxHp) / (maxHp || 100);
+    return r > 2 / 3 ? 0 : r > 1 / 3 ? 1 : 2;
+  }
+  function shapeOf(specKey, hp, maxHp, forced) {
+    const s = RULERS[specKey];
+    if (!s) return 'straight30';
+    if (!s.forms) return s.shape;
+    return s.forms[forced ?? formIndex(hp, maxHp)];
+  }
+
   // アクセサリの効果の上限（±5%）。レベルの分と合わせた上限は ±10%
   const MOD_LIMIT = 0.05;
   const MOD_TOTAL_LIMIT = 0.1;
-  const clampMod = (v) => Math.max(1 - MOD_TOTAL_LIMIT, Math.min(1 + MOD_TOTAL_LIMIT, Number.isFinite(v) ? v : 1));
 
   // ---- 体力 ----
   // 押されたときにすべる距離の倍率：体力が満タンで kbMin、0で kbMax（はじいた本人には効かない）
@@ -115,8 +171,9 @@ const Physics = (() => {
   // 体力から、押されたときのすべりにくさ（摩擦の倍率）を決める。すべる距離は摩擦に反比例する
   // 体力から「押されたときの飛びやすさ」kb を出し、すべりにくさ（摩擦）と、ぶつかったときの重さの両方に分けて効かせる
   function setHp(b, hp) {
-    b.hp = Math.max(0, Math.min(HP.max, hp));
-    const kb = b.shooter ? 1 : HP.kbMin + (HP.kbMax - HP.kbMin) * (1 - b.hp / HP.max);
+    const max = b.maxHp || HP.max;
+    b.hp = Math.max(0, Math.min(max, hp));
+    const kb = b.shooter ? 1 : HP.kbMin + (HP.kbMax - HP.kbMin) * (1 - b.hp / max);
     b.grip = Math.pow(kb, -HP.gripExp);
     const mk = Math.pow(kb, HP.massExp);
     b.cM = b.invM * mk; b.cI = b.invI * mk;
@@ -142,20 +199,28 @@ const Physics = (() => {
 
   // mods: アクセサリとレベルの効果 { mass, mu, power }（倍率。1.0 が効果なし）
   // tune：設定画面で変えた定規の性能 { mass（g）, mu, e, power（%） }。無ければ素材と形から決まる値
-  function createBody(id, owner, specKey, x, y, a, mods, tune) {
+  // opt：shape（形を変える定規のいまの形）、modLimit（倍率の上限。ステージではレベルの分が大きい）、
+  //      maxHp（体力の最大）、pinned（机に刺さって動かない）、thorns（ぶつかった相手へのトゲのダメージ）、zone（周りのねばり { r, mul }）
+  function createBody(id, owner, specKey, x, y, a, mods, tune, opt = {}) {
     const s = RULERS[specKey] || RULERS['straight30-acrylic'];
-    const sh = SHAPES[s.shape];
-    const mm = clampMod(mods?.mass ?? 1), mu = clampMod(mods?.mu ?? 1), pw = clampMod(mods?.power ?? 1);
+    const shapeKey = SHAPES[opt.shape] ? opt.shape : s.shape;
+    const sh = SHAPES[shapeKey];
+    const lim = opt.modLimit ?? MOD_TOTAL_LIMIT;
+    const cl = (v) => Math.max(1 - lim, Math.min(1 + lim, Number.isFinite(v) ? v : 1));
+    const mm = cl(mods?.mass ?? 1), mu = cl(mods?.mu ?? 1), pw = cl(mods?.power ?? 1);
     const baseMass = tune?.mass ?? s.mass, baseMu = tune?.mu ?? s.mu, baseE = tune?.e ?? s.e, basePow = (tune?.power ?? 100) / 100;
     const m = baseMass * mm;
     const I = m * sh.inertiaPerMass;
+    const pin = !!opt.pinned;
+    const maxHp = opt.maxHp || HP.max;
     return {
-      id, owner, specKey, spec: s, shape: sh, mat: s.mat,
+      id, owner, specKey, spec: s, shape: sh, shapeKey, mat: s.mat,
       x, y, a, vx: 0, vy: 0, w: 0,
-      m, invM: 1 / m, I, invI: 1 / I, cM: 1 / m, cI: 1 / I, // cM・cI：ぶつかったときに使う重さ（体力で変わる）
+      m, invM: pin ? 0 : 1 / m, I, invI: pin ? 0 : 1 / I, cM: pin ? 0 : 1 / m, cI: pin ? 0 : 1 / I, // cM・cI：ぶつかったときに使う重さ（体力で変わる）
       mu: baseMu * mu, e: baseE, powerMul: pw * basePow,
       state: 'desk', fallAt: 0,
-      hp: HP.max, grip: 1, // 体力と、押されたときのすべりにくさ（体力が多いほど止まりやすい）
+      maxHp, hp: maxHp, grip: 1, // 体力と、押されたときのすべりにくさ（体力が多いほど止まりやすい）
+      pinned: pin, thorns: opt.thorns || 0, zone: opt.zone || null,
     };
   }
 
@@ -179,6 +244,7 @@ const Physics = (() => {
 
   // 机との摩擦：定規の面に散らばる点ごとに、滑り速度と逆向きに摩擦力をかける
   function applyDeskFriction(b, dt, scale) {
+    if (b.pinned) return;
     const mu = b.mu * scale * (b.grip ?? 1);
     const pts = b.shape.samples;
     const fPer = mu * (b.m / pts.length) * G;
@@ -382,7 +448,13 @@ const Physics = (() => {
     const P = world.params;
     const live = world.bodies.filter((b) => b.state === 'desk');
     for (const b of live) { b.vx0 = b.vx; b.vy0 = b.vy; }
-    for (const b of live) applyDeskFriction(b, dt, P.friction);
+    // スティックのり：のりの周りでは、ほかの定規が止まりやすい
+    const zones = live.filter((z) => z.zone);
+    for (const b of live) {
+      let k = P.friction;
+      for (const z of zones) if (z !== b && Math.hypot(b.x - z.x, b.y - z.y) < z.zone.r) k *= z.zone.mul;
+      applyDeskFriction(b, dt, k);
+    }
     const contacts = [];
     for (let i = 0; i < live.length; i++)
       for (let j = i + 1; j < live.length; j++) {
@@ -402,6 +474,12 @@ const Physics = (() => {
       if (world.time - (last.get(key) ?? -1) < 0.25) continue;
       last.set(key, world.time);
       const speed = -(c.vn0 ?? 0);
+      // 画びょう：ぶつかった相手もトゲでダメージを受ける（ゆっくり触れただけでも）
+      if (speed > 3) {
+        const pt0 = c.points[0];
+        if (c.A.thorns && !c.B.thorns) damage(world, c.B, c.A.thorns, c.A, pt0.x, pt0.y, 'thorn');
+        if (c.B.thorns && !c.A.thorns) damage(world, c.A, c.B.thorns, c.B, pt0.x, pt0.y, 'thorn');
+      }
       if (speed <= HP.dmgFloor) continue;
       // 相手へ向かって速く動いていた方が「当てた側」
       const sA = c.A.vx0 * c.nx + c.A.vy0 * c.ny, sB = -(c.B.vx0 * c.nx + c.B.vy0 * c.ny);
@@ -415,6 +493,7 @@ const Physics = (() => {
     const fell = [];
     for (const b of world.bodies) {
       if (b.state === 'gone') continue;
+      if (b.pinned) { b.vx = 0; b.vy = 0; b.w = 0; continue; }
       b.x += b.vx * dt; b.y += b.vy * dt; b.a += b.w * dt;
       if (b.state === 'desk' && world.desk.walls) for (const wl of world.desk.walls) hitWall(b, wl);
       if (b.state === 'falling') {
@@ -468,10 +547,12 @@ const Physics = (() => {
       const d = Math.min(best, dc);
       const ux = (b.x - src.x) / (dc || 1), uy = (b.y - src.y) / (dc || 1);
       const v = speed * Math.pow(1 - d / radius, 0.5) * Math.sqrt(26 / b.m);
-      b.vx += ux * v; b.vy += uy * v;
-      // 近い端が強く押されるので、少し回る
-      const rx = bx - b.x, ry = by - b.y;
-      b.w += (rx * uy - ry * ux) * v * b.m * b.invI * 0.15;
+      if (!b.pinned) {
+        b.vx += ux * v; b.vy += uy * v;
+        // 近い端が強く押されるので、少し回る
+        const rx = bx - b.x, ry = by - b.y;
+        b.w += (rx * uy - ry * ux) * v * b.m * b.invI * 0.15;
+      }
       hit.push(b.owner);
       if (dmg > 0) damage(world, b, dmg * Math.pow(1 - d / radius, 0.5), src, bx, by, kind);
     }
@@ -498,6 +579,7 @@ const Physics = (() => {
   return {
     G, DESK, SHAPES, MATERIALS, BEATS, AFFINITY_BONUS, RULERS, DEFAULT_PARAMS, MAX_IMPULSE, MOD_LIMIT, MOD_TOTAL_LIMIT,
     createBody, createWorld, step, atRest, flick, blast, collide, nearestOnShape, worldVerts, HP, setHp, damage,
+    formIndex, shapeOf, ENEMY_SPECS,
   };
 })();
 export default Physics;

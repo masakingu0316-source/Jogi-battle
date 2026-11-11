@@ -1,5 +1,6 @@
 // アカウントまわりのデータベース操作（Cloudflare D1）
-import { ITEMS, BASIC_RULERS, DEFAULT_RULER, ECONOMY, rollOnce, resolveLoadout, sanitizeConfig, levelInfo } from '../public/shared/catalog.js';
+import { ITEMS, BASIC_RULERS, DEFAULT_RULER, ECONOMY, rollOnce, resolveLoadout, sanitizeConfig, levelInfo, LEVEL_MAX, STAGE_LEVEL_MAX } from '../public/shared/catalog.js';
+import { STAGES, REWARD } from '../public/shared/stage.js';
 import { cleanName } from '../public/shared/core.js';
 
 const SCHEMA = [
@@ -26,6 +27,10 @@ const SCHEMA = [
     id INTEGER PRIMARY KEY AUTOINCREMENT, user_id TEXT NOT NULL, item_id TEXT NOT NULL, dup INTEGER NOT NULL, pulled_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS ruler_exp (
     user_id TEXT NOT NULL, ruler_id TEXT NOT NULL, exp INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (user_id, ruler_id))`,
+  // ステージ：マップごとのクリア回数・初めてクリアした時刻・いちばん少ない打った回数
+  `CREATE TABLE IF NOT EXISTS stage_clears (
+    user_id TEXT NOT NULL, stage_id TEXT NOT NULL, map INTEGER NOT NULL, clears INTEGER NOT NULL DEFAULT 0,
+    first_at INTEGER NOT NULL, best_shots INTEGER, PRIMARY KEY (user_id, stage_id, map))`,
 ];
 
 // 定規を「形×素材」に作り直したので、前の定規（今の一覧にないもの）は片付ける。柄・シール・アクセサリはそのまま
@@ -163,11 +168,11 @@ export async function recentMatches(db, userId, limit = 20) {
 }
 
 export async function profile(db, user) {
-  const [owned, setups, stats, exp] = await Promise.all([ownedSet(db, user.id), setupsOf(db, user.id), statsOf(db, user.id), expOf(db, user.id)]);
+  const [owned, setups, stats, exp, stage] = await Promise.all([ownedSet(db, user.id), setupsOf(db, user.id), statsOf(db, user.id), expOf(db, user.id), stageProgress(db, user.id)]);
   const selected = owned.has(user.selected_ruler) && ITEMS[user.selected_ruler]?.kind === 'ruler' ? user.selected_ruler : DEFAULT_RULER;
   return {
     id: user.id, name: user.name, coins: user.coins, selectedRuler: selected,
-    owned: [...owned].filter((id) => ITEMS[id]), setups, stats, exp,
+    owned: [...owned].filter((id) => ITEMS[id]), setups, stats, exp, stage,
   };
 }
 
@@ -194,7 +199,8 @@ export async function saveSetup(db, userId, input) {
 }
 
 // 対戦で使う定規（所持を確かめたうえで）。rulerId を省くと「使う定規」
-export async function loadoutFor(db, userId, rulerId) {
+// cap：レベルの上限（対人10・ステージ50）
+export async function loadoutFor(db, userId, rulerId, cap = LEVEL_MAX) {
   const user = await db.prepare('SELECT selected_ruler FROM users WHERE id = ?').bind(userId).first();
   const owned = await ownedSet(db, userId);
   let ruler = rulerId || user?.selected_ruler || DEFAULT_RULER;
@@ -209,8 +215,8 @@ export async function loadoutFor(db, userId, rulerId) {
   }
   const cfg = await getConfig(db);
   const row = await db.prepare('SELECT exp FROM ruler_exp WHERE user_id = ? AND ruler_id = ?').bind(userId, ruler).first();
-  const { level } = levelInfo(row?.exp ?? 0);
-  return { loadout: resolveLoadout({ ruler, pattern: keep(s.pattern), sticker: keep(s.sticker), acc: keep(s.acc) }, cfg, level) };
+  const { level } = levelInfo(row?.exp ?? 0, cap);
+  return { loadout: resolveLoadout({ ruler, pattern: keep(s.pattern), sticker: keep(s.sticker), acc: keep(s.acc) }, cfg, level, cap) };
 }
 
 // ---- ガチャ ----
@@ -303,4 +309,60 @@ export async function giftCoins(db, userId, amount) {
   const r = await db.prepare('UPDATE users SET coins = MAX(0, coins + ?) WHERE id = ?').bind(n, userId).run();
   if (!r.meta.changes) return { error: 'そのユーザーが見つかりません' };
   return { coins: (await db.prepare('SELECT coins FROM users WHERE id = ?').bind(userId).first()).coins };
+}
+
+// ---- ステージ ----
+// { [stageId]: { cleared: いちばん先にクリアしたマップの番号, maps: { [map]: { clears, best } } } }
+export async function stageProgress(db, userId) {
+  const rows = (await db.prepare('SELECT stage_id, map, clears, best_shots FROM stage_clears WHERE user_id = ?').bind(userId).all()).results;
+  const out = {};
+  for (const id of Object.keys(STAGES)) out[id] = { cleared: 0, maps: {} };
+  for (const r of rows) {
+    const p = out[r.stage_id];
+    if (!p) continue;
+    p.maps[r.map] = { clears: r.clears, best: r.best_shots };
+    // 順に開放されるので、続けてクリアしているところまで
+  }
+  for (const p of Object.values(out)) {
+    let n = 0;
+    while (p.maps[n + 1]?.clears > 0) n++;
+    p.cleared = n;
+  }
+  return out;
+}
+
+// マップをクリアした記録と報酬。rec: { userId, stage, map, ruler, shots }
+// 経験値はクリアのたび、えんぴつは初クリアのときだけ。最後のマップの初クリアで報酬の定規
+export async function recordStageClear(db, rec, now = Date.now()) {
+  const st = STAGES[rec.stage];
+  if (!st || !rec.userId) return null;
+  const prev = await db.prepare('SELECT clears, best_shots FROM stage_clears WHERE user_id = ? AND stage_id = ? AND map = ?')
+    .bind(rec.userId, rec.stage, rec.map).first();
+  const first = !prev;
+  const coins = first ? REWARD.coins(rec.map) : 0;
+  const gain = REWARD.exp(rec.map);
+  const stmts = [db.prepare(`INSERT INTO stage_clears (user_id, stage_id, map, clears, first_at, best_shots) VALUES (?, ?, ?, 1, ?, ?)
+    ON CONFLICT (user_id, stage_id, map) DO UPDATE SET clears = clears + 1, best_shots = MIN(COALESCE(best_shots, excluded.best_shots), excluded.best_shots)`)
+    .bind(rec.userId, rec.stage, rec.map, now, rec.shots ?? null)];
+  if (coins) stmts.push(db.prepare('UPDATE users SET coins = coins + ? WHERE id = ?').bind(coins, rec.userId));
+  let exp = null;
+  if (ITEMS[rec.ruler]?.kind === 'ruler') {
+    const before = (await db.prepare('SELECT exp FROM ruler_exp WHERE user_id = ? AND ruler_id = ?').bind(rec.userId, rec.ruler).first())?.exp ?? 0;
+    const a = levelInfo(before, STAGE_LEVEL_MAX), b = levelInfo(before + gain, STAGE_LEVEL_MAX);
+    exp = { ruler: rec.ruler, gain, ...b, levelUp: b.level > a.level, stage: true };
+    stmts.push(db.prepare(`INSERT INTO ruler_exp (user_id, ruler_id, exp) VALUES (?, ?, ?)
+      ON CONFLICT (user_id, ruler_id) DO UPDATE SET exp = exp + excluded.exp`).bind(rec.userId, rec.ruler, gain));
+  }
+  // 最後のマップの初クリア：報酬の定規
+  let item = null;
+  if (first && rec.map === st.maps.length && st.reward) {
+    const has = await db.prepare('SELECT 1 FROM items WHERE user_id = ? AND item_id = ?').bind(rec.userId, st.reward).first();
+    if (!has) {
+      item = st.reward;
+      stmts.push(db.prepare('INSERT OR IGNORE INTO items (user_id, item_id, acquired_at) VALUES (?, ?, ?)').bind(rec.userId, st.reward, now));
+    }
+  }
+  await db.batch(stmts);
+  const total = (await db.prepare('SELECT coins FROM users WHERE id = ?').bind(rec.userId).first())?.coins ?? 0;
+  return { first, coins, total, exp, item, map: rec.map, stage: rec.stage };
 }

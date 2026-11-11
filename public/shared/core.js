@@ -4,9 +4,9 @@ import Physics from './physics.js';
 import { DESKS, MODES, PLAYERS, TEAMS, teamOf, seats, playableReason, deskTiles, onTile, pickVanish, SHRINK_FROM_PLAYERS, CRIT, SKILLS, skillFor, SKILL_TUNE, GAUGE, EVENTS, chairSides } from './rules.js';
 import { resolveLoadout, DEFAULT_RULER } from './catalog.js';
 
-const FPS = 30;
-const STEP = 1 / 600;
-const MAX_SIM_SECONDS = 12;
+export const FPS = 30;
+export const STEP = 1 / 600;
+export const MAX_SIM_SECONDS = 12;
 const NAME_MAX = 10;
 
 function randomHex(bytes) {
@@ -260,9 +260,31 @@ export class RoomCore {
     s.phase = 'aim';
   }
 
+  // 対戦で使う机の並べ方（ステージでは盤面ごとに変わる）
+  deskDef() {
+    return DESKS[MODES[this.s.game?.mode]?.desk] || DESKS.pair;
+  }
+
+  // 盤面の定規1本を、物理エンジンの体にする（ステージでは敵の性質を足す）
+  makeBody(b, opt = {}) {
+    const body = Physics.createBody('p' + b.owner, b.owner, b.specKey, b.x, b.y, b.a, b.mods, b.tune, {
+      shape: Physics.shapeOf(b.specKey, b.hp ?? Physics.HP.max, b.maxHp, opt.form), ...this.bodyExtra(b),
+    });
+    body.state = b.state === 'desk' ? 'desk' : 'gone';
+    if (b.anchor) {
+      // 不動：重くして押されにくくする（机との摩擦も重さに比例するので、すべり方は変わらない）
+      const k = SKILL_TUNE.anchorMass;
+      body.m *= k; body.invM /= k; body.I *= k; body.invI /= k;
+    }
+    if (b.dmgMul) body.dmgMul = b.dmgMul;
+    Physics.setHp(body, b.hp ?? body.maxHp);
+    return body;
+  }
+  bodyExtra() { return {}; }
+
   buildWorld() {
     const g = this.s.game;
-    const desk = DESKS[MODES[g.mode].desk];
+    const desk = this.deskDef();
     const all = deskTiles(desk);
     const left = g.desks || all.map((t) => t.i);
     const ev = g.event;
@@ -272,17 +294,7 @@ export class RoomCore {
       { friction: icy ? EVENTS.ice.friction : 1 },
       { w: desk.w, h: desk.h, tiles: left.length < all.length ? all.filter((t) => left.includes(t.i)) : null, walls: walls.length ? walls : null },
     );
-    for (const b of g.bodies) {
-      const body = Physics.createBody('p' + b.owner, b.owner, b.specKey, b.x, b.y, b.a, b.mods, b.tune);
-      body.state = b.state === 'desk' ? 'desk' : 'gone';
-      if (b.anchor) {
-        // 不動：重くして押されにくくする（机との摩擦も重さに比例するので、すべり方は変わらない）
-        const k = SKILL_TUNE.anchorMass;
-        body.m *= k; body.invM /= k; body.I *= k; body.invI /= k;
-      }
-      Physics.setHp(body, b.hp ?? Physics.HP.max);
-      world.bodies.push(body);
-    }
+    for (const b of g.bodies) world.bodies.push(this.makeBody(b));
     return world;
   }
 
@@ -294,12 +306,16 @@ export class RoomCore {
     let lx = num(input.lx), ly = num(input.ly), dx = num(input.dx), dy = num(input.dy), power = num(input.power);
     if ([lx, ly, dx, dy, power].some(Number.isNaN)) return { error: 'はじき方のデータが正しくありません' };
     const world = this.buildWorld();
-    const body = world.bodies[g.turn];
+    let body = world.bodies[g.turn];
+    if (input.skill && !g.extra && (g.gauge?.[g.turn] ?? 0) >= GAUGE.max && this.skillOf(g.turn) === 'fullopen' && Physics.RULERS[body.specKey]?.forms) {
+      // 全開：この1打だけ、いちばん長い形で動く
+      body = world.bodies[g.turn] = this.makeBody(g.bodies[g.turn], { form: 2 });
+    }
     // はじいた本人は、自分の体力に関係なくふつうにすべる
     body.shooter = true;
     Physics.setHp(body, body.hp);
-    // はじく点は定規の上に収める
-    ({ x: lx, y: ly } = Physics.nearestOnShape(body.spec.shape, lx, ly));
+    // はじく点は定規の上に収める（形の変わる定規は、はじく前の形で押さえた点を合わせる）
+    ({ x: lx, y: ly } = Physics.nearestOnShape(body.shapeKey, lx, ly));
     const len = Math.hypot(dx, dy);
     if (len < 1e-6) return { error: 'はじく向きが正しくありません' };
     dx /= len; dy /= len;
@@ -315,7 +331,8 @@ export class RoomCore {
       g.gauge[by] = 0;
     }
     if (skill === 'power') power *= SKILL_TUNE.powerMul;
-    if (skill === 'heavy') body.dmgMul = SKILL_TUNE.heavyDmg;
+    if (skill === 'heavy') body.dmgMul = (body.dmgMul ?? 1) * SKILL_TUNE.heavyDmg;
+    if (skill === 'fullopen') body.dmgMul = (body.dmgMul ?? 1) * SKILL_TUNE.fullopenDmg;
     // クリティカルの抽選（当たっても、相手に当たらなければ何も起きない）
     if (this.rand() < CRIT.rate) body.crit = CRIT.mul;
     Physics.flick(world, body, lx, ly, dx, dy, power);
@@ -407,7 +424,7 @@ export class RoomCore {
     const teams = MODES[g.mode].teams;
     let saved = false;
     if (g.shots <= g.n) {
-      const st = seats(g.n, DESKS[MODES[g.mode].desk]);
+      const st = seats(g.n, this.deskDef());
       for (const b of g.bodies) {
         if (b.state === 'desk') continue;
         Object.assign(b, { x: round2(st[b.owner].x), y: round2(st[b.owner].y), a: round4(st[b.owner].a), state: 'desk' });
@@ -425,7 +442,7 @@ export class RoomCore {
       g.vanishIn = g.vanishWait.length;
     }
     if (!opt.keepTurn && pending && g.desks && g.vanishWait.length === 0) {
-      const desk = DESKS[MODES[g.mode].desk];
+      const desk = this.deskDef();
       const tiles = deskTiles(desk);
       const gone = tiles[g.vanish];
       g.desks = g.desks.filter((i) => i !== g.vanish);
@@ -520,7 +537,7 @@ export class RoomCore {
       if (!had && g.shots >= g.n && this.rand() < EVENTS.rate) this.startEvent(alive.length);
       // 3人以上で始めて残りが2人になったら、机を1台ずつ消していく（予告のあと、2人とも1回ずつ番を終えたら消える）
       if (g.n >= SHRINK_FROM_PLAYERS && g.desks && alive.length === 2 && g.desks.length > 1 && (g.vanish === null || g.vanish === undefined)) {
-        g.vanish = pickVanish(DESKS[MODES[g.mode].desk], g.desks, this.rand);
+        g.vanish = pickVanish(this.deskDef(), g.desks, this.rand);
         g.vanishWait = alive.slice();
         g.vanishIn = alive.length;
       }
@@ -544,7 +561,7 @@ export class RoomCore {
   // 机の真ん中に近く、ほかの定規とぶつからない場所
   freeSpot(i) {
     const g = this.s.game;
-    const desk = DESKS[MODES[g.mode].desk];
+    const desk = this.deskDef();
     const tiles = deskTiles(desk).filter((t) => !g.desks || g.desks.includes(t.i));
     const rOf = (b) => Physics.SHAPES[(Physics.RULERS[b.specKey] || Physics.RULERS['straight30-acrylic']).shape].radius;
     const me = g.bodies[i];
@@ -566,7 +583,7 @@ export class RoomCore {
     const alive = g.players.filter((p) => p.alive).length;
     if (k === 'heal') {
       const before = b.hp ?? 100;
-      b.hp = Math.min(Physics.HP.max, before + SKILL_TUNE.heal);
+      b.hp = Math.min(b.maxHp || Physics.HP.max, before + SKILL_TUNE.heal);
       this.pushFx({ kind: 'heal', owner: i, x: b.x, y: b.y, amount: Math.round(b.hp - before) });
     } else if (k === 'sub') {
       b.sub = true;
@@ -579,7 +596,7 @@ export class RoomCore {
       Object.assign(b, this.freeSpot(i));
       this.pushFx({ kind: 'warp', owner: i, x: b.x, y: b.y, from });
     } else if (k === 'chair') {
-      const sides = chairSides(DESKS[MODES[g.mode].desk], g.desks);
+      const sides = chairSides(this.deskDef(), g.desks);
       const w = sides.reduce((a, c) => ((c.d - (c.nx * b.x + c.ny * b.y)) < (a.d - (a.nx * b.x + a.ny * b.y)) ? c : a));
       g.walls = [...(g.walls || []), { left: alive, side: w.side, wall: { nx: w.nx, ny: w.ny, d: w.d, lo: w.lo, hi: w.hi } }];
       this.pushFx({ kind: 'chair', owner: i, x: b.x, y: b.y, side: w.side });
@@ -595,7 +612,7 @@ export class RoomCore {
     if (this.rand() < 0.5) {
       g.event = { type: 'ice', left: 1, id: g.eventId };
     } else {
-      const sides = chairSides(DESKS[MODES[g.mode].desk], g.desks);
+      const sides = chairSides(this.deskDef(), g.desks);
       const w = sides[Math.floor(this.rand() * sides.length) % sides.length];
       g.event = { type: 'chair', left: aliveCount, id: g.eventId, side: w.side, wall: { nx: w.nx, ny: w.ny, d: w.d, lo: w.lo, hi: w.hi } };
     }
@@ -621,11 +638,11 @@ export class RoomCore {
   }
 }
 
-function round2(v) { return Math.round(v * 100) / 100; }
-function round4(v) { return Math.round(v * 10000) / 10000; }
+export function round2(v) { return Math.round(v * 100) / 100; }
+export function round4(v) { return Math.round(v * 10000) / 10000; }
 
 // 1コマ＝定規ごとに [x, y, 角度, 状態]。x,y は 1/100cm、角度は 1/1000rad の整数。状態 0机上 1落下中 2消えた
-function encodeFrame(world) {
+export function encodeFrame(world) {
   const out = [];
   for (const b of world.bodies) {
     out.push(Math.round(b.x * 100), Math.round(b.y * 100), Math.round(b.a * 1000),

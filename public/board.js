@@ -107,8 +107,8 @@ export function createBoard(canvas, wrap, opt = {}) {
     ctx.strokeStyle = theme.line;
     ctx.lineWidth = 1.2 / px;
     ctx.beginPath();
-    for (let x = -135; x <= 135; x += 30) { ctx.moveTo(x, -135); ctx.lineTo(x, 135); }
-    for (let y = -135; y <= 135; y += 30) { ctx.moveTo(-135, y); ctx.lineTo(135, y); }
+    for (let x = -255; x <= 255; x += 30) { ctx.moveTo(x, -255); ctx.lineTo(x, 255); }
+    for (let y = -255; y <= 255; y += 30) { ctx.moveTo(-255, y); ctx.lineTo(255, y); }
     ctx.stroke();
 
     // 天板（くっつけた机は1台ずつ描き、継ぎ目を見せる）
@@ -234,7 +234,7 @@ export function createBoard(canvas, wrap, opt = {}) {
     // 画面座標で描く文字
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const lp = toScreen(0, dimY);
-    const label = left.length < panels.length ? `机 残り${left.length}台` : `机${desk.name}　${desk.w} × ${desk.h} cm`;
+    const label = desks.label || (left.length < panels.length ? `机 残り${left.length}台` : `机${desk.name}　${desk.w} × ${desk.h} cm`);
     ctx.font = '400 12px "BIZ UDPGothic", system-ui, sans-serif';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     const tw = ctx.measureText(label).width + 10;
@@ -330,7 +330,7 @@ export function createBoard(canvas, wrap, opt = {}) {
     for (const b of bodies) {
       if ((b.alpha ?? 1) < 0.35 || b.hp === undefined) continue;
       const spec = Physics.RULERS[b.specKey];
-      const sh = spec && Physics.SHAPES[spec.shape];
+      const sh = spec && Physics.SHAPES[b.shapeKey || Physics.shapeOf(b.specKey, b.hp, b.maxHp)];
       if (!sh) continue;
       const c = Math.cos(b.a), sn = Math.sin(b.a), k = b.scale ?? 1;
       let top = Infinity, bottom = -Infinity, left = Infinity, right = -Infinity;
@@ -366,6 +366,7 @@ export function createBoard(canvas, wrap, opt = {}) {
       const y = Math.max(4, Math.min(view.h - H - 4, best.y0));
       placed.push({ x0: x, y0: y, x1: x + W, y1: y + H });
       const hp = Math.max(0, Math.round(b.hp));
+      const pct = Math.max(0, Math.min(100, (b.hp / (b.maxHp || 100)) * 100));
       const mine = aim && b.owner === aim.owner;
       ctx.save();
       ctx.globalAlpha = (b.alpha ?? 1) * (mine ? 0.45 : 0.92);
@@ -373,20 +374,20 @@ export function createBoard(canvas, wrap, opt = {}) {
       ctx.fillStyle = 'rgba(22, 26, 44, 0.78)';
       roundRect(x, y, W, H, H / 2);
       ctx.fill();
-      if (hp <= 30) {
+      if (pct <= 30) {
         ctx.strokeStyle = `rgba(255, 110, 90, ${0.55 + 0.45 * Math.sin(now / 200)})`;
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
       // 席の色の印
-      ctx.fillStyle = PLAYERS[b.owner]?.color || '#fff';
+      ctx.fillStyle = b.tagColor || PLAYERS[b.owner]?.color || '#fff';
       ctx.beginPath(); ctx.arc(x + H / 2, y + H / 2, H / 2 - 4, 0, Math.PI * 2); ctx.fill();
       // バー
       const bx = x + H - 1, by = y + H / 2 - 3;
       ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
       roundRect(bx, by, barW, 6, 3); ctx.fill();
-      ctx.fillStyle = hp > 60 ? '#4cd17c' : hp > 30 ? '#f2c14e' : '#ff6a55';
-      if (hp > 0) { roundRect(bx, by, Math.max(4, barW * hp / 100), 6, 3); ctx.fill(); }
+      ctx.fillStyle = pct > 60 ? '#4cd17c' : pct > 30 ? '#f2c14e' : '#ff6a55';
+      if (hp > 0) { roundRect(bx, by, Math.max(4, barW * pct / 100), 6, 3); ctx.fill(); }
       // 数字
       ctx.fillStyle = '#fff';
       ctx.font = `700 ${small ? 10 : 11}px "BIZ UDPGothic", system-ui, sans-serif`;

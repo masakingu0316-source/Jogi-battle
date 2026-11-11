@@ -64,6 +64,11 @@
         </div>
       </section>
       <div class="home-side">
+        <section class="panel stage-panel">
+          <h2>ステージ <small>1人で攻略</small></h2>
+          <p class="stage-home-note" id="stageHomeNote">文房具の敵を倒しながら、マップを順に進みます。</p>
+          <button class="btn-main" id="openStage" type="button">ステージに挑む</button>
+        </section>
         <section class="panel">
           <h2>部屋に入る</h2>
           <form class="join" id="joinForm">
@@ -159,6 +164,44 @@
     </section>
   </main>
 
+  <!-- ステージ選択 -->
+  <main id="stagePick" class="screen" hidden>
+    <div class="my-head">
+      <button class="link" id="stageBack" type="button">← ホームへ</button>
+    </div>
+    <div class="stage-head">
+      <p class="stage-kicker" id="stageKicker"></p>
+      <h2 class="stage-title" id="stageTitle"></h2>
+      <p class="stage-lead" id="stageLead"></p>
+    </div>
+    <div class="stage-resume" id="stageResume" hidden>
+      <span id="stageResumeText"></span>
+      <button class="btn-main" id="resumeBtn" type="button">続きから</button>
+      <button class="link" id="abandonBtn" type="button">この攻略をやめる</button>
+    </div>
+    <div class="stage-grid">
+      <ol class="map-list" id="mapList" aria-label="マップ"></ol>
+      <section class="panel map-detail" id="mapDetail" aria-live="polite">
+        <p class="md-no" id="mdNo"></p>
+        <h3 class="md-title" id="mdTitle"></h3>
+        <p class="note" id="mdNote"></p>
+        <ol class="board-list" id="mdBoards"></ol>
+        <p class="md-reward" id="mdReward"></p>
+        <div class="md-ruler">
+          <canvas class="preview" id="stagePreview" aria-hidden="true"></canvas>
+          <label class="field-col" for="stageRuler"><span>使う定規</span><select id="stageRuler"></select></label>
+          <p class="note" id="stageRulerNote"></p>
+        </div>
+        <button class="btn-main" id="stageStart" type="button">このマップに挑む</button>
+        <p class="error" id="stageError" hidden></p>
+      </section>
+    </div>
+    <details class="foe-book">
+      <summary>敵の図鑑</summary>
+      <ul class="foe-list" id="foeList"></ul>
+    </details>
+  </main>
+
   <!-- 部屋 -->
   <main id="lobby" class="screen" hidden>
     <div class="room-head">
@@ -227,6 +270,9 @@
         <p class="reward" id="resultReward" hidden></p>
         <div class="result-actions">
           <button class="btn-main" id="backToRoom" type="button">部屋に戻る</button>
+          <button class="btn-main" id="stageNext" type="button" hidden>次のマップへ</button>
+          <button id="stageRetry" type="button" hidden>もう一度</button>
+          <button class="link" id="stageExit" type="button" hidden>ステージ選択へ</button>
         </div>
         <p class="wait" id="resultNext"></p>
       </div>

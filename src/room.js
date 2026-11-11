@@ -5,6 +5,7 @@ import { RoomCore } from '../public/shared/core.js';
 import { ensureSchema, loadoutFor, recordMatch } from './db.js';
 import { ITEMS, resolveLoadout } from '../public/shared/catalog.js';
 import { VERSION } from '../public/shared/version.js';
+import { handleStage, stageAlarm } from './stage-host.js';
 
 const IDLE_LIMIT_MS = 6 * 60 * 60 * 1000; // 6時間だれも使わなかった部屋は片付ける
 const MAX_MESSAGE_BYTES = 4096;
@@ -25,6 +26,16 @@ export class Room extends DurableObject {
 
   async fetch(request) {
     const url = new URL(request.url);
+
+    // ステージモード（この Durable Object は「stage:<アカウントID>」の名前で、1人の攻略だけを持つ）
+    if (url.pathname.startsWith('/stage/')) {
+      let user = null;
+      try {
+        const raw = request.headers.get(USER_HEADER);
+        if (raw) user = JSON.parse(decodeURIComponent(raw));
+      } catch { user = null; }
+      return handleStage(this, request, user);
+    }
 
     if (url.pathname === '/create') {
       if (this.core) return new Response('exists', { status: 409 });
@@ -205,6 +216,8 @@ export class Room extends DurableObject {
   }
 
   async alarm() {
+    // ステージ用（部屋を持たない）なら、途中の攻略が残っている間は片付けない
+    if (!this.core && await stageAlarm(this)) return;
     if (this.core && this.core.s.phase === 'lobby' && this.core.s.startAt !== null) {
       // カウントダウンが終わったら、準備OKでなくても全員で始める
       if (this.core.tick(Date.now())) this.broadcast({ t: 'state', state: this.core.snapshot() });

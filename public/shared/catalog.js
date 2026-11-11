@@ -8,6 +8,8 @@ export const RARITIES = {
   R: { name: 'レア', weight: 28, refund: 5, color: '#76c6ff' },
   SR: { name: 'Sレア', weight: 10, refund: 15, color: '#d69cff' },
   SSR: { name: 'SSレア', weight: 2, refund: 40, color: '#f4d35e' },
+  // ガチャには出ない（ステージの報酬）
+  stage: { name: 'ステージ報酬', weight: 0, refund: 0, color: '#8fe0d2' },
 };
 
 // 通貨は「えんぴつ」（本）
@@ -27,18 +29,20 @@ export const ECONOMY = {
 };
 
 // ---- 定規のレベル ----
-// 対戦で使うと経験値がたまる。1つ上がるごとに、重さとはじく力が0.4%ずつ上がる（Lv.10で+3.6%）
+// 対戦・ステージで使うと経験値がたまる。1つ上がるごとに、重さとはじく力が0.4%ずつ上がる（Lv.10で+3.6%）
+// 対人の対戦では Lv.10 まで、ステージでは Lv.50 まで効く（経験値は共通。対人で Lv.10 を超えた分もたまっていく）
 export const LEVEL_MAX = 10;
+export const STAGE_LEVEL_MAX = 50;
 export const LEVEL_STEP = 0.004;
 export const expToNext = (level) => 30 + 20 * (level - 1);
-export function levelInfo(exp) {
+export function levelInfo(exp, cap = LEVEL_MAX) {
   const total = Math.max(0, Math.floor(Number(exp) || 0));
   let level = 1, into = total;
-  while (level < LEVEL_MAX && into >= expToNext(level)) { into -= expToNext(level); level++; }
-  const max = level >= LEVEL_MAX;
+  while (level < cap && into >= expToNext(level)) { into -= expToNext(level); level++; }
+  const max = level >= cap;
   return { level, exp: total, into: max ? 0 : into, need: max ? 0 : expToNext(level), max };
 }
-export const levelBonus = (level) => Math.max(0, Math.min(LEVEL_MAX, level | 0) - 1) * LEVEL_STEP;
+export const levelBonus = (level, cap = LEVEL_MAX) => Math.max(0, Math.min(cap, level | 0) - 1) * LEVEL_STEP;
 
 // stat: mass 重さ / mu 机とのすべりにくさ / power はじく力（エネルギー）
 export const STATS = {
@@ -77,6 +81,12 @@ for (const [shape, info] of Object.entries(SHAPE_INFO)) {
   }
 }
 
+// ステージの報酬でだけ手に入る定規
+rulerItems.push({
+  id: 'ruler:folding-acrylic', kind: 'ruler', rarity: 'stage', name: Physics.RULERS['folding-acrylic'].name, specKey: 'folding-acrylic', shape: 'folding', mat: 'acrylic',
+  desc: `ステージ「可変定規編」をすべてクリアするともらえる50cmの折りたたみ定規。体力が減るほど伸びて長くなる。${MATERIAL_INFO.acrylic.desc}`,
+});
+
 const items = [
   ...rulerItems,
 
@@ -108,7 +118,7 @@ const items = [
 ];
 
 export const ITEMS = Object.fromEntries(items.map((it) => [it.id, it]));
-export const GACHA_POOL = items.filter((it) => it.rarity !== 'basic');
+export const GACHA_POOL = items.filter((it) => it.rarity !== 'basic' && it.rarity !== 'stage');
 export const BASIC_RULERS = items.filter((it) => it.kind === 'ruler' && it.rarity === 'basic').map((it) => it.id);
 export const DEFAULT_RULER = 'ruler:straight30-acrylic';
 
@@ -236,19 +246,19 @@ export function rollOnce(rand, minRarity, cfg = defaultConfig()) {
 
 export const accPct = (id, cfg = defaultConfig()) => cfg.acc?.[id] ?? ITEMS[id]?.pct ?? 0;
 
-// 定規1本ぶんの装備から、対戦で使う情報を作る（所持の確認は呼ぶ側で行う）。level は定規のレベル
-export function resolveLoadout(setup, cfg = defaultConfig(), level = 1) {
+// 定規1本ぶんの装備から、対戦で使う情報を作る（所持の確認は呼ぶ側で行う）。level は定規のレベル、cap はレベルの上限（ステージは50）
+export function resolveLoadout(setup, cfg = defaultConfig(), level = 1, cap = LEVEL_MAX) {
   const ruler = ITEMS[setup?.ruler] && ITEMS[setup.ruler].kind === 'ruler' ? ITEMS[setup.ruler] : ITEMS[DEFAULT_RULER];
   const pattern = ITEMS[setup?.pattern]?.kind === 'pattern' ? setup.pattern : null;
   const sticker = ITEMS[setup?.sticker]?.kind === 'sticker' ? setup.sticker : null;
   const acc = ITEMS[setup?.acc]?.kind === 'acc' ? setup.acc : null;
-  const lv = Math.max(1, Math.min(LEVEL_MAX, Math.floor(Number(level) || 1)));
+  const lv = Math.max(1, Math.min(cap, Math.floor(Number(level) || 1)));
   const mods = { mass: 1, mu: 1, power: 1 };
   if (acc) {
     const a = ITEMS[acc];
     mods[a.stat] = 1 + Math.max(-Physics.MOD_LIMIT, Math.min(Physics.MOD_LIMIT, accPct(acc, cfg) / 100));
   }
-  const bonus = levelBonus(lv);
+  const bonus = levelBonus(lv, cap);
   mods.mass *= 1 + bonus;
   mods.power *= 1 + bonus;
   for (const k of Object.keys(mods)) mods[k] = Math.round(mods[k] * 10000) / 10000;

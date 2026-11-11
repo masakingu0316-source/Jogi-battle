@@ -1,12 +1,12 @@
 // ログイン・マイページ（定規ケース・ガチャ・戦績）
-import { ITEMS, RARITIES, ECONOMY, GACHA_POOL, odds, accText as accTextOf, defaultConfig } from './shared/catalog.js';
+import { ITEMS, RARITIES, ECONOMY, GACHA_POOL, odds, accText as accTextOf, defaultConfig, levelInfo, STAGE_LEVEL_MAX } from './shared/catalog.js';
 import { MODES } from './shared/rules.js';
 import { previewRuler } from './ruler-paint.js';
 import { matChip, levelHtml, levelOfRuler, nextText, specText, skillText } from './ruler-info.js';
 
 const ALL_RULERS = Object.values(ITEMS).filter((it) => it.kind === 'ruler');
 
-const RANK = { basic: 0, N: 1, R: 2, SR: 3, SSR: 4 };
+const RANK = { basic: 0, N: 1, R: 2, SR: 3, SSR: 4, stage: 5 };
 
 export function createAccount(ctx) {
   const { app, $, esc, toast } = ctx;
@@ -93,8 +93,13 @@ export function createAccount(ctx) {
   const owned = () => new Set(app.me?.owned || []);
   const ownedOf = (kind) => [...owned()].map((id) => ITEMS[id]).filter((it) => it && it.kind === kind)
     .sort((a, b) => RANK[b.rarity] - RANK[a.rarity] || a.name.localeCompare(b.name, 'ja'));
-  const rarityTag = (r) => (r === 'basic' ? '' : `<span class="rar" style="background:${RARITIES[r].color}">${r}</span>`);
+  const rarityTag = (r) => (r === 'basic' ? '' : `<span class="rar" style="background:${RARITIES[r]?.color || '#ccc'}">${r === 'stage' ? 'ステージ' : r}</span>`);
   const lookOf = (rulerId, setup) => ({ specKey: ITEMS[rulerId].specKey, level: levelOfRuler(app.me, rulerId).level, pattern: setup?.pattern || null, sticker: setup?.sticker || null });
+  // 対人の上限（Lv.10）を超えたら、ステージでのレベルも見せる
+  const stageLvText = (id) => {
+    const x = levelInfo(app.me?.exp?.[id] || 0, STAGE_LEVEL_MAX);
+    return x.level > 10 ? `<small class="stage-lv">ステージLv.${x.level}</small>` : '';
+  };
   function setupSummary(setup) {
     const bits = [];
     if (setup?.pattern) bits.push(ITEMS[setup.pattern]?.name);
@@ -115,13 +120,13 @@ export function createAccount(ctx) {
         return `<div class="ruler-card locked" aria-label="${esc(r.name)}（まだ持っていません）">
           <canvas data-preview="${r.id}" aria-hidden="true"></canvas>
           <span class="rc-name">${esc(r.name)} ${rarityTag(r.rarity)}</span>
-          <span class="rc-sub">ガチャで出ます</span></div>`;
+          <span class="rc-sub">${r.rarity === 'stage' ? 'ステージ「可変定規編」の全クリア報酬' : 'ガチャで出ます'}</span></div>`;
       }
       const lv = levelOfRuler(me, r.id);
       return `<button type="button" class="ruler-card" data-ruler="${r.id}" aria-pressed="${r.id === editing}">
         <canvas data-preview="${r.id}" aria-hidden="true"></canvas>
         <span class="rc-name">${esc(r.name)} ${rarityTag(r.rarity)}${r.id === me.selectedRuler ? '<span class="badge you">使用中</span>' : ''}</span>
-        <span class="rc-lv">${matChip(r.mat)}${levelHtml(lv)}</span>
+        <span class="rc-lv">${matChip(r.mat)}${levelHtml(lv)}${stageLvText(r.id)}</span>
         <span class="rc-sub">${esc(setupSummary(me.setups[r.id]) || '飾りなし')}</span>
       </button>`;
     }).join('');
@@ -161,7 +166,8 @@ export function createAccount(ctx) {
     previewRuler($('previewBig'), lookOf(e.ruler, e));
     const r = ITEMS[e.ruler], lv = levelOfRuler(app.me, e.ruler);
     $('edTitle').innerHTML = `${esc(r.name)} ${matChip(r.mat)}`;
-    $('edLevel').innerHTML = `${levelHtml(lv)}<span class="xp-note">${nextText(lv)}</span>`;
+    const slv = levelInfo(app.me?.exp?.[e.ruler] || 0, STAGE_LEVEL_MAX);
+    $('edLevel').innerHTML = `${levelHtml(lv)}<span class="xp-note">${lv.max ? `対人は最大レベル・ステージ Lv.${slv.level}${slv.max ? '（最大）' : `（次まで あと${slv.need - slv.into}点）`}` : nextText(lv)}</span>`;
     const base = specText(e.ruler, lv.level, app.game);
     $('accDesc').textContent = (e.acc ? `${base}　アクセサリ：${accText(e.acc)}` : base) + `\n${skillText(e.ruler, app.game)}`;
   }

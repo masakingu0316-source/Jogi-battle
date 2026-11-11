@@ -5,6 +5,10 @@ export const DESKS = {
   single: { name: '1台', w: 65, h: 45, cols: 1, rows: 1 },
   pair: { name: '2台 向かい合わせ', w: 90, h: 65, cols: 2, rows: 1 },
   group: { name: '4台 班の形', w: 130, h: 90, cols: 2, rows: 2 },
+  // ステージで使う並べ方（はじめから一部の机を抜いて L字・ロの字なども作る）
+  row3: { name: '3台 横一列', w: 195, h: 45, cols: 3, rows: 1 },
+  grid6: { name: '6台', w: 195, h: 90, cols: 3, rows: 2 },
+  grid9: { name: '9台', w: 195, h: 135, cols: 3, rows: 3 },
 };
 
 // min/max はそのモードで遊べる人数
@@ -113,6 +117,7 @@ export const SKILLS = {
   warp: { name: 'ワープ', mode: 'now', color: '#00cec9', desc: 'その場で自分の定規を机の真ん中へ移す（そのあとふつうにはじける）' },
   chair: { name: 'いす召喚', mode: 'now', color: '#d39a1c', desc: '自分にいちばん近い辺に椅子を並べ、1周のあいだそこから落ちない' },
   blizzard: { name: '吹雪', mode: 'now', color: '#74b9ff', desc: '次の人の番のあいだ、机が凍ってよくすべる' },
+  fullopen: { name: '全開', mode: 'shot', color: '#22c3b0', desc: 'この1打だけいちばん長い形に伸び、当てた相手へのダメージが1.8倍' },
 };
 // 初期の割り当て（形×素材）。アクリルは攻め、メタルは守り、ラバーはトリックが多め
 export const RULER_SKILL = {
@@ -121,6 +126,7 @@ export const RULER_SKILL = {
   'tri45-acrylic': 'heavy', 'tri45-metal': 'counter', 'tri45-rubber': 'ink',
   'tri60-acrylic': 'wind', 'tri60-metal': 'chair', 'tri60-rubber': 'blizzard',
   'protractor-acrylic': 'bomb', 'protractor-metal': 'sub', 'protractor-rubber': 'magnet',
+  'folding-acrylic': 'fullopen', // ステージ「可変定規編」の報酬
 };
 // 定規（specKey）の必殺技。cfgSkills は設定画面での割り当て { specKey: skillKey }
 export function skillFor(specKey, cfgSkills) {
@@ -138,6 +144,7 @@ export const SKILL_TUNE = {
   bombRadius: 18, bombSpeed: 110, bombDmg: 32, // 爆発：届く距離・吹き飛ばし・いちばん近くのダメージ
   magnetRadius: 30, magnetSpeed: -150,         // 磁石：届く距離・引き寄せる速さ（マイナスは内向き）
   heal: 35,                 // 保健室：回復する量
+  fullopenDmg: 1.8,         // 全開：ダメージの倍率
 };
 // ゲージのたまり方
 export const GAUGE = { max: 100, shot: 20, hit: 10, beHit: 30 };
