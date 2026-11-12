@@ -350,13 +350,16 @@ async function searchUsers(q) {
       return `<li data-user="${u.id}">
         <span class="who">${esc(u.name)}　<b data-coins="${u.id}">${u.coins}</b>${ECONOMY.unit}
           <small>ID ${u.id}・対戦${u.games}回・登録 ${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()}</small></span>
-        <span class="give"><input type="number" step="1" value="100" aria-label="${esc(u.name)}に配る本数" id="g-${u.id}"><button type="button" data-give="${u.id}">配る</button></span>
+        <span class="give"><input type="number" step="1" value="100" aria-label="${esc(u.name)}に配る本数" id="g-${u.id}"><button type="button" data-give="${u.id}">配る</button>
+          <button type="button" data-items="${u.id}" data-name="${esc(u.name)}">アイテム</button></span>
       </li>`;
     }).join('') : '<li class="who" style="color:var(--ink-soft)">見つかりませんでした</li>';
   } catch (e) { toast(e.message); }
 }
 $('searchForm').addEventListener('submit', (e) => { e.preventDefault(); searchUsers($('q').value.trim()); });
 $('users').addEventListener('click', async (e) => {
+  const it = e.target.closest('[data-items]');
+  if (it) { openGiftPanel(it.dataset.items, it.dataset.name); return; }
   const b = e.target.closest('[data-give]');
   if (!b) return;
   const id = b.dataset.give;
@@ -366,8 +369,93 @@ $('users').addEventListener('click', async (e) => {
     const r = await api('/api/admin/gift', { userId: id, amount, title: $('giftTitle').value.trim() });
     document.querySelector(`[data-coins="${id}"]`).textContent = r.coins;
     toast(r.inbox ? `受け取り箱に${amount}${ECONOMY.unit}届けました（受け取ると増えます）` : `減らしました（いま${r.coins}${ECONOMY.unit}）`);
+    if (gp.user === id && !$('giftPanel').hidden) loadGiftUser();
   } catch (err) { toast(err.message); }
   finally { b.disabled = false; }
+});
+
+// ---- アイテムを配る ----
+const gp = { user: null, name: '', owned: new Set(), pending: [], pick: new Set() };
+const RAR_ORDER = { N: 0, R: 1, SR: 2, SSR: 3 };
+// もう持っているアイテムを受け取ったときのえんぴつ（ガチャでかぶったときと同じ）
+const dupRefund = (id) => {
+  const it = ITEMS[id];
+  return (it.kind === 'ruler' ? saved.rulerGacha?.refund?.[it.rarity] : saved.rarities?.[it.rarity]?.refund) ?? 0;
+};
+async function openGiftPanel(userId, name) {
+  gp.user = userId; gp.name = name; gp.pick.clear();
+  document.querySelectorAll('.users li').forEach((li) => li.classList.toggle('on', li.dataset.user === userId));
+  $('gpTitle').textContent = `${name} さんにアイテムを配る`;
+  $('giftPanel').hidden = false;
+  await loadGiftUser();
+  $('giftPanel').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+async function loadGiftUser() {
+  try {
+    const r = await api('/api/admin/user-items?userId=' + encodeURIComponent(gp.user));
+    gp.owned = new Set(r.owned);
+    gp.pending = r.pending;
+  } catch (e) { toast(e.message); }
+  renderGiftItems(); renderPending();
+}
+function renderGiftItems() {
+  const kind = $('gpKind').value, rar = $('gpRarity').value, q = $('gpQ').value.trim();
+  const hideOwned = $('gpHideOwned').checked, allowOwned = $('gpAllowOwned').checked;
+  const waiting = new Set(gp.pending.filter((x) => x.item).map((x) => x.item));
+  const list = Object.values(ITEMS)
+    .filter((it) => KIND[it.kind] && (!kind || it.kind === kind) && (!rar || it.rarity === rar) && (!q || it.name.includes(q)))
+    .filter((it) => !(hideOwned && gp.owned.has(it.id)))
+    .sort((a, b) => Object.keys(KIND).indexOf(a.kind) - Object.keys(KIND).indexOf(b.kind) || RAR_ORDER[b.rarity] - RAR_ORDER[a.rarity] || a.name.localeCompare(b.name, 'ja'));
+  // 選べなくなったもの（持っていて、送らない設定）は選択から外す
+  for (const id of [...gp.pick]) if (gp.owned.has(id) && !allowOwned) gp.pick.delete(id);
+  $('gpItems').innerHTML = `<tr><th></th><th>種類</th><th>レア度</th><th>名前</th><th>この人</th></tr>` + (list.length ? list.map((it) => {
+    const own = gp.owned.has(it.id);
+    const st = own ? `<span class="tag-own">持っている（受け取るとえんぴつ${dupRefund(it.id)}本）</span>` : waiting.has(it.id) ? '<span class="tag-wait">受け取り箱にある</span>' : '持っていない';
+    const dis = own && !allowOwned;
+    return `<tr class="${own ? 'owned' : ''}"><td><input type="checkbox" data-pick="${it.id}" ${gp.pick.has(it.id) ? 'checked' : ''} ${dis ? 'disabled' : ''} aria-label="${esc(it.name)}を選ぶ"></td>
+      <td>${KIND[it.kind]}</td><td>${it.rarity}</td><td>${esc(it.name)}<small style="display:block;color:var(--ink-soft)">${it.id}</small></td><td class="st">${st}</td></tr>`;
+  }).join('') : '<tr><td colspan="5">当てはまるアイテムはありません</td></tr>');
+  $('gpCount').textContent = `${gp.pick.size}個選択中`;
+  $('gpSend').disabled = !gp.pick.size;
+}
+function renderPending() {
+  $('gpPending').innerHTML = gp.pending.length ? gp.pending.map((x) => {
+    const d = new Date(x.at);
+    const what = [x.coins ? `えんぴつ${x.coins}本` : '', x.item ? `「${ITEMS[x.item]?.name || x.item}」` : '', x.kind === 'ticket' ? 'SSR交換券' : ''].filter(Boolean).join('・');
+    return `<li><span>${esc(x.title)}：${esc(what)} <small>${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}</small></span>
+      ${x.kind === 'gift' ? `<button type="button" data-cancel="${x.id}">取り消す</button>` : '<small>（運営からのものではないので取り消せません）</small>'}</li>`;
+  }).join('') : '<li><small>ありません</small></li>';
+}
+for (const id of ['gpKind', 'gpRarity', 'gpHideOwned', 'gpAllowOwned']) $(id).addEventListener('change', renderGiftItems);
+$('gpQ').addEventListener('input', renderGiftItems);
+$('gpClose').addEventListener('click', () => { $('giftPanel').hidden = true; document.querySelectorAll('.users li.on').forEach((li) => li.classList.remove('on')); });
+$('gpItems').addEventListener('change', (e) => {
+  const c = e.target.closest('[data-pick]');
+  if (!c) return;
+  if (c.checked) gp.pick.add(c.dataset.pick); else gp.pick.delete(c.dataset.pick);
+  $('gpCount').textContent = `${gp.pick.size}個選択中`;
+  $('gpSend').disabled = !gp.pick.size;
+});
+$('gpSend').addEventListener('click', async () => {
+  const items = [...gp.pick];
+  $('gpSend').disabled = true;
+  try {
+    const r = await api('/api/admin/gift-items', { userId: gp.user, items, title: $('giftTitle').value.trim(), allowOwned: $('gpAllowOwned').checked });
+    const names = (ids) => ids.map((id) => `「${ITEMS[id]?.name}」`).join('');
+    toast(`${gp.name} さんの受け取り箱に${r.sent.length}個送りました${r.skipped.length ? `（もう持っている${names(r.skipped)}は送りませんでした）` : ''}`);
+    gp.pick.clear();
+    await loadGiftUser();
+  } catch (e) { toast(e.message); $('gpSend').disabled = false; }
+});
+$('gpPending').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-cancel]');
+  if (!b) return;
+  b.disabled = true;
+  try {
+    await api('/api/admin/gift-cancel', { userId: gp.user, id: Number(b.dataset.cancel) });
+    toast('取り消しました');
+    await loadGiftUser();
+  } catch (err) { toast(err.message); b.disabled = false; }
 });
 
 start();

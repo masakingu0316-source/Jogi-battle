@@ -57,7 +57,23 @@
   .users li:first-child { border-top: 1px solid var(--line); }
   .users .who { min-width: 0; }
   .users .who small { display: block; color: var(--chalk-dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .users .give { display: flex; gap: 6px; align-items: center; }
+  .users .give { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+  .users li.on { background: var(--card); }
+  .gift-panel { margin-top: 14px; padding: 14px; border: 2px solid var(--pen); border-radius: 12px; background: var(--card); display: grid; gap: 10px; }
+  .gp-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+  .gift-panel h3 { margin: 4px 0 0; font-size: 16px; }
+  .gp-filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .gp-filter input[type="text"], .gp-filter #gpQ { max-width: 14em; }
+  .gp-own { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+  .gp-list { max-height: 420px; overflow: auto; }
+  .gp-list td.st { font-size: 12px; white-space: nowrap; }
+  .gp-list tr.owned td { color: var(--ink-soft); }
+  .gp-list .tag-own { color: var(--ink-soft); }
+  .gp-list .tag-wait { color: #b26a00; font-weight: 700; }
+  .gp-send { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .gp-pending { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+  .gp-pending li { display: flex; justify-content: space-between; gap: 10px; align-items: center; padding: 6px 2px; border-bottom: 1px solid var(--line); font-size: 14px; }
+  .gp-pending small { color: var(--ink-soft); }
   .users .give input { width: 6em; padding: 5px 8px; }
   .search { display: flex; gap: 8px; flex-wrap: wrap; }
   .search input { flex: 1 1 200px; min-width: 0; }
@@ -135,14 +151,37 @@
       </section>
 
       <section>
-        <h2>ユーザーとえんぴつ</h2>
-        <p class="lead">表示名かアカウントIDで探して、えんぴつを配れます。配ったえんぴつは、その人の受け取り箱に届きます。マイナスの数を入れると、すぐに減らせます（0本より下にはなりません）。</p>
+        <h2>ユーザー（えんぴつ・アイテムを配る）</h2>
+        <p class="lead">表示名かアカウントIDで探して、えんぴつやアイテム（定規・柄・シール・アクセサリ）を配れます。配ったものは、その人の受け取り箱に届き、本人が「受け取る」を押すと手に入ります。えんぴつはマイナスの数を入れると、すぐに減らせます（0本より下にはなりません）。</p>
+        <p class="lead">アイテムをもう持っている人には、ふつうは送りません（「もう持っているものも送る」にすると送れます）。送ったあと受け取るまでに、ガチャなどで同じものを手に入れていた場合は、受け取ったときにガチャでかぶったときと同じ本数のえんぴつに変わります。まだ受け取られていないおくりものは、取り消せます。</p>
         <label class="field-col" for="giftTitle"><span>受け取り箱に出す見出し</span><input id="giftTitle" maxlength="40" placeholder="運営からのおくりもの"></label>
         <form class="search" id="searchForm">
           <input id="q" placeholder="表示名かアカウントID（空欄で最近の30人）" aria-label="ユーザーを探す">
           <button type="submit">探す</button>
         </form>
         <ol class="users" id="users"></ol>
+        <div class="gift-panel" id="giftPanel" hidden>
+          <div class="gp-head">
+            <h3 id="gpTitle">アイテムを配る</h3>
+            <button type="button" class="link" id="gpClose">閉じる</button>
+          </div>
+          <div class="gp-filter">
+            <select id="gpKind" aria-label="アイテムの種類">
+              <option value="">すべての種類</option><option value="ruler">定規</option><option value="pattern">柄</option><option value="sticker">シール</option><option value="acc">アクセサリ</option>
+            </select>
+            <select id="gpRarity" aria-label="レア度"><option value="">すべてのレア度</option><option>N</option><option>R</option><option>SR</option><option>SSR</option></select>
+            <input id="gpQ" placeholder="名前で絞り込む" aria-label="名前で絞り込む">
+            <label class="gp-own"><input type="checkbox" id="gpHideOwned" checked> 持っているものを隠す</label>
+          </div>
+          <div class="table-wrap gp-list"><table class="tbl" id="gpItems"></table></div>
+          <label class="gp-own"><input type="checkbox" id="gpAllowOwned"> もう持っているものも送る（受け取ると、ガチャでかぶったときと同じ本数のえんぴつに変わる）</label>
+          <div class="gp-send">
+            <button type="button" class="btn-main" id="gpSend" disabled>選んだアイテムを受け取り箱に送る</button>
+            <span id="gpCount">0個選択中</span>
+          </div>
+          <h3>まだ受け取っていないもの</h3>
+          <ul class="gp-pending" id="gpPending"></ul>
+        </div>
       </section>
     </div>
   </main>

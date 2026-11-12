@@ -158,15 +158,36 @@ export async function inboxOf(db, userId) {
   const rows = (await db.prepare('SELECT id, kind, title, coins, item_id, created_at FROM inbox WHERE user_id = ? AND claimed_at IS NULL ORDER BY id DESC LIMIT 100').bind(userId).all()).results;
   return rows.map((r) => ({ id: r.id, kind: r.kind, title: r.title, coins: r.coins, item: r.item_id, at: r.created_at }));
 }
+// もう持っているアイテムを受け取ったときに、代わりにもらえるえんぴつ（ガチャでかぶったときと同じ本数）
+// 定規は定規ガチャの返却、柄・シール・アクセサリは飾りガチャの返却
+export function dupRefund(cfg, itemId) {
+  const it = ITEMS[itemId];
+  if (!it) return 0;
+  return (it.kind === 'ruler' ? cfg.rulerGacha?.refund?.[it.rarity] : cfg.rarities?.[it.rarity]?.refund) ?? 0;
+}
+// 受け取り箱の一覧に「もう持っているので、受け取るとえんぴつになる」を付ける（全部受け取るときと同じ順で数える）
+export async function inboxWithNotes(db, userId, now = Date.now()) {
+  const cfg = await getConfig(db, now);
+  const list = await inboxOf(db, userId);
+  const owned = await ownedSet(db, userId);
+  return list.map((x) => {
+    if (!x.item || !ITEMS[x.item]) return x;
+    if (owned.has(x.item)) return { ...x, owned: true, refund: dupRefund(cfg, x.item) };
+    owned.add(x.item);
+    return x;
+  });
+}
 // 受け取る。id を省くと、選ぶ必要のないもの（交換券以外）を全部。交換券は pick（SSRの定規）を選んで1枚ずつ
+// もう持っているアイテムは、えんぴつに変えて受け取る（届いたあとにガチャなどで同じものを手に入れていた場合も）
 export async function claimInbox(db, userId, { id = null, pick = null } = {}, now = Date.now()) {
   await getConfig(db, now);
   const list = await inboxOf(db, userId);
   const targets = id === null ? list.filter((x) => x.kind !== 'ticket') : list.filter((x) => x.id === Number(id));
   if (!targets.length) return { error: id === null ? '受け取れるものはありません' : 'もう受け取ったか、見つかりません' };
   const owned = await ownedSet(db, userId);
+  const cfg = await getConfig(db, now);
   const stmts = [];
-  const got = { coins: 0, items: [], refund: 0, claimed: [] };
+  const got = { coins: 0, items: [], refund: 0, claimed: [], converted: [] };
   for (const x of targets) {
     let item = x.item;
     if (x.kind === 'ticket') {
@@ -174,14 +195,16 @@ export async function claimInbox(db, userId, { id = null, pick = null } = {}, no
       if (!ssr.length) {
         // 全部持っていれば、えんぴつに変える
         item = null;
-        got.refund += (await getConfig(db, now)).rulerGacha.refund.SSR;
+        got.refund += cfg.rulerGacha.refund.SSR;
       } else if (!ssr.some((it) => it.id === pick)) {
         return { error: 'SSR交換券で受け取る定規を選んでください', choices: ssr.map((it) => it.id) };
       } else item = pick;
     }
-    // 同じ定規をもう持っていれば、えんぴつに変える
+    // 同じアイテムをもう持っていれば、えんぴつに変える
     if (item && owned.has(item)) {
-      got.refund += (await getConfig(db, now)).rulerGacha.refund[ITEMS[item]?.rarity] ?? 0;
+      const back = dupRefund(cfg, item);
+      got.refund += back;
+      got.converted.push({ item, refund: back });
       item = null;
     }
     if (item && ITEMS[item]) {
@@ -439,6 +462,44 @@ export async function giftCoins(db, userId, amount, title = '運営からのお�
   }
   await db.prepare('UPDATE users SET coins = MAX(0, coins + ?) WHERE id = ?').bind(n, userId).run();
   return { coins: (await db.prepare('SELECT coins FROM users WHERE id = ?').bind(userId).first()).coins };
+}
+
+// アイテムを配る（受け取り箱に届ける）。itemIds は1つか配列。1つずつ別の箱に入る
+// もう持っているアイテムは、allowOwned のときだけ送る（受け取るとえんぴつに変わる）。返り値 { sent, skipped }
+export async function giftItems(db, userId, itemIds, { title = '運営からのおくりもの', allowOwned = false } = {}, now = Date.now()) {
+  const ids = [...new Set((Array.isArray(itemIds) ? itemIds : [itemIds]).map(String))];
+  if (!ids.length) return { error: '配るアイテムを選んでください' };
+  if (ids.length > 50) return { error: '一度に配れるのは50個までです' };
+  const bad = ids.filter((id) => !ITEMS[id]);
+  if (bad.length) return { error: `そのアイテムはありません（${bad.join('、')}）` };
+  const u = await db.prepare('SELECT id FROM users WHERE id = ?').bind(userId).first();
+  if (!u) return { error: 'そのユーザーが見つかりません' };
+  const owned = await ownedSet(db, userId);
+  const head = String(title || '').slice(0, 40) || '運営からのおくりもの';
+  const sent = [], skipped = [];
+  const stmts = [];
+  for (const id of ids) {
+    if (owned.has(id) && !allowOwned) { skipped.push(id); continue; }
+    sent.push(id);
+    stmts.push(inboxStmt(db, userId, { kind: 'gift', title: head, item: id }, now));
+  }
+  if (stmts.length) await db.batch(stmts);
+  return { sent, skipped };
+}
+
+// 管理者向け：その人の持ち物と、まだ受け取っていない受け取り箱
+export async function userItemsForAdmin(db, userId) {
+  const u = await db.prepare('SELECT id, name, coins FROM users WHERE id = ?').bind(userId).first();
+  if (!u) return { error: 'そのユーザーが見つかりません' };
+  const owned = [...(await ownedSet(db, userId))];
+  const pending = await inboxOf(db, userId);
+  return { user: { id: u.id, name: u.name, coins: u.coins }, owned, pending };
+}
+
+// 管理者向け：まだ受け取っていない「運営からのおくりもの」を取り消す
+export async function cancelGift(db, userId, inboxId) {
+  const r = await db.prepare("DELETE FROM inbox WHERE id = ? AND user_id = ? AND claimed_at IS NULL AND kind = 'gift'").bind(Number(inboxId), userId).run();
+  return r.meta.changes ? { ok: true } : { error: 'もう受け取られたか、取り消せないものです' };
 }
 
 // ---- ステージ ----

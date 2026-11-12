@@ -1203,3 +1203,152 @@ body.on-home .toast { bottom: auto; top: calc(max(10px, env(safe-area-inset-top,
 :root[data-theme="dark"] .tags .ev.heal { color: #7fe3a0; }
 :root[data-theme="dark"] .tags .ev.gale { color: #cfe6f7; }
 :root[data-theme="dark"] .tags .ev.niji { color: #c3b6ff; }
+
+/* ==== 画面を固定する ====
+   ページ全体はスクロールさせず、いま見えている高さ（--app-h。アドレスバーの出入りに合わせて変わる）にぴったり収める。
+   中身が多い画面は、見出しを残したまま、画面の中（一覧の枠）だけをスクロールさせる。
+   ゲームの画面（index.html の <html class="app">）だけに効かせる（設定画面・プライバシーポリシーは今までどおりスクロールする） */
+html.app {
+  height: 100%; overflow: hidden; overscroll-behavior: none;
+  touch-action: pan-x pan-y;          /* ピンチ・ダブルタップでのページの拡大を止める（盤面は canvas で受ける） */
+  -webkit-text-size-adjust: 100%; text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+html.app body {
+  position: fixed; top: 0; left: 0; right: 0;
+  height: var(--app-h, 100dvh); min-height: 0; overflow: hidden; overscroll-behavior: none;
+  display: flex; flex-direction: column;
+  padding-bottom: max(12px, env(safe-area-inset-bottom, 0px));
+}
+html.app body.with-tabs { padding-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom, 0px) + 10px); }
+html.app .page { flex: 1 1 auto; min-height: 0; width: 100%; display: flex; flex-direction: column; gap: 14px; }
+html.app .page > header { flex: none; }
+html.app .page > .screen {
+  flex: 1 1 auto; min-height: 0; align-content: start;
+  overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+/* 足もと（プライバシーポリシー）はログイン画面だけ。ほかは「その他」から開ける */
+html.app .site-foot { flex: none; margin-top: 0; padding-top: 8px; }
+html.app body:not(.on-login) .site-foot { display: none; }
+/* スマホでは入力欄の文字を16px以上に（iPhone は小さい文字の入力欄を押すと画面を拡大してしまう） */
+@media (pointer: coarse) { input, select, textarea { font-size: max(16px, 1em); } }
+.invite input { font-size: 13px; }
+@media (pointer: coarse) { .invite input { font-size: 16px; } }
+
+/* ホーム：残りの高さいっぱいに3段を並べる */
+.home-screen { height: auto; min-height: 0; align-content: stretch; overflow: visible; }
+body.on-home .page { gap: 0; }
+
+/* 対戦：盤面は画面の高さから計算して収めるので、画面はスクロールさせない */
+#game.screen { overflow: hidden; display: flex; flex-direction: column; }
+#game.screen > .hud, #game.screen > .controls { flex: none; }
+#game.screen > .board-wrap { flex: none; }
+html.app body.in-game { padding-bottom: max(8px, env(safe-area-inset-bottom, 0px)); }
+
+/* マイページ：見出しとタブは残し、一覧の枠の中だけスクロール */
+#mypage.screen { display: flex; flex-direction: column; overflow: hidden; gap: 12px; }
+#mypage > .my-head { flex: none; }
+#mypage > .tab-panel { flex: 1 1 auto; min-height: 0; }
+#tab-case:not([hidden]) { display: flex; flex-direction: column; gap: 12px; }
+#tab-case > * { flex: none; }
+#tab-case > .box-wrap { flex: 1 1 auto; min-height: 120px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; }
+#tab-case .box-grid { align-content: start; }
+#tab-record:not([hidden]) { display: flex; flex-direction: column; gap: 12px; }
+#tab-record > * { flex: none; }
+#tab-record > .mt { margin-top: 4px; }
+#tab-record > .history { flex: 1 1 auto; min-height: 120px; overflow-y: auto; overscroll-behavior: contain; margin: 0; padding-right: 4px; scrollbar-width: thin; }
+#tab-gacha:not([hidden]), #tab-other:not([hidden]) { overflow-y: auto; overscroll-behavior: contain; align-content: start; padding-bottom: 8px; }
+
+/* シート：iPhone の下のバーや、横向きの切り欠きに重ならないように */
+dialog.sheet { max-height: min(88dvh, 760px, calc(var(--app-h, 100dvh) - env(safe-area-inset-top, 0px) - 12px)); padding-left: max(18px, env(safe-area-inset-left, 0px)); padding-right: max(18px, env(safe-area-inset-right, 0px)); overscroll-behavior: contain; }
+dialog.sheet.small { max-height: min(88dvh, calc(var(--app-h, 100dvh) - env(safe-area-inset-top, 0px) - 12px)); }
+.ruler-sheet { max-height: calc(var(--app-h, 100dvh) - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); overflow: auto; overscroll-behavior: contain; }
+.toast { bottom: calc(max(16px, env(safe-area-inset-bottom, 0px)) + var(--toast-lift, 0px) + 8px); }
+.update-bar { padding-bottom: max(10px, env(safe-area-inset-bottom, 0px)); }
+
+/* ---- 起動中の画面（和紙／夜は藍） ---- */
+.boot {
+  position: fixed; inset: 0; z-index: 100; display: grid; place-content: center; justify-items: center; gap: 18px;
+  background: var(--paper); color: var(--ink); transition: opacity .35s ease;
+}
+.boot img { width: 120px; height: 120px; border-radius: 26px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.14); }
+.boot span { font-family: var(--font-display); font-size: 30px; letter-spacing: 0.1em; }
+.boot.done { opacity: 0; pointer-events: none; }
+
+/* ---- 部屋：部屋コードとQRコードを並べる ---- */
+.room-head { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px 16px; align-items: center; }
+.room-head.practice-head { grid-template-columns: 1fr; }
+.room-id { display: grid; gap: 6px; min-width: 0; }
+.room-howto { margin: 0; font-size: 12px; line-height: 1.5; color: var(--ink-soft); }
+.room-head .invite { display: flex; flex-wrap: wrap; gap: 6px; max-width: none; flex: none; }
+.room-head .invite button { padding: 7px 12px; font-size: 13px; font-weight: 700; }
+.room-head .invite input { flex: 1 1 100%; min-width: 0; padding: 5px 10px; color: var(--ink-soft); }
+.room-qr {
+  margin: 0; display: grid; justify-items: center; gap: 2px; padding: 8px 8px 4px; border-radius: 12px;
+  background: #fff; border: 1px solid var(--line-strong); box-shadow: var(--shadow);
+}
+.room-qr svg { display: block; width: clamp(120px, 34vw, 176px); height: auto; }
+.room-qr figcaption { font-size: 12px; color: #4a4f60; line-height: 1.3; }
+@media (max-width: 380px) { .room-head .code { font-size: 36px; } }
+
+/* ---- 部屋に入る：QRを読む／コードを入力 ---- */
+.join-choice { display: grid; gap: 10px; }
+.join-opt {
+  display: grid; grid-template-columns: 44px 1fr; grid-template-rows: auto auto; column-gap: 12px; align-items: center; text-align: left;
+  padding: 14px 16px; border-radius: 14px; border: 2px solid var(--line-strong); background: var(--paper); box-shadow: 0 3px 0 var(--line-strong);
+}
+.join-opt svg { grid-row: 1 / 3; width: 40px; height: 40px; color: var(--pen); }
+.join-opt b { font-size: 18px; font-family: var(--font-display); font-weight: 400; letter-spacing: 0.04em; }
+.join-opt small { font-size: 13px; color: var(--ink-soft); }
+#scanBtn { border-color: var(--pen); }
+.app-scan-note { margin: 2px 0 0; font-size: 13px; }
+.scan-box { display: grid; gap: 10px; justify-items: center; }
+.scan-view { position: relative; width: min(100%, 340px); aspect-ratio: 1; border-radius: 16px; overflow: hidden; background: #0b0f1c; }
+.scan-view video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.scan-frame { position: absolute; inset: 16%; pointer-events: none; }
+.scan-frame i { position: absolute; width: 22%; height: 22%; border: 4px solid #fff; filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.6)); }
+.scan-frame i:nth-child(1) { left: 0; top: 0; border-right: 0; border-bottom: 0; border-top-left-radius: 10px; }
+.scan-frame i:nth-child(2) { right: 0; top: 0; border-left: 0; border-bottom: 0; border-top-right-radius: 10px; }
+.scan-frame i:nth-child(3) { left: 0; bottom: 0; border-right: 0; border-top: 0; border-bottom-left-radius: 10px; }
+.scan-frame i:nth-child(4) { right: 0; bottom: 0; border-left: 0; border-top: 0; border-bottom-right-radius: 10px; }
+.scan-box.found .scan-frame i { border-color: #6fe39a; }
+.scan-status { margin: 0; font-size: 14px; text-align: center; }
+.scan-fail { display: grid; gap: 10px; justify-items: center; text-align: center; }
+.scan-fail p { margin: 0; color: var(--red-pen); font-size: 14px; }
+#joinForm .link { justify-self: start; }
+
+/* ---- ホーム画面に追加の案内 ---- */
+.install-tip {
+  position: fixed; z-index: 60; left: max(10px, env(safe-area-inset-left, 0px)); right: max(10px, env(safe-area-inset-right, 0px));
+  top: calc(max(10px, env(safe-area-inset-top, 0px)) + 6px); margin: 0 auto; max-width: 460px;
+  display: grid; grid-template-columns: 52px 1fr; gap: 12px; align-items: start; padding: 14px 40px 14px 14px;
+  border-radius: 16px; background: var(--card); color: var(--ink); border: 1px solid var(--line-strong); box-shadow: 0 16px 40px rgba(0, 0, 0, 0.28);
+  animation: tip-in .3s ease-out;
+}
+@keyframes tip-in { from { transform: translateY(-16px); opacity: 0; } }
+.install-tip img { border-radius: 12px; }
+.install-body { display: grid; gap: 6px; min-width: 0; }
+.install-title { margin: 0; font-weight: 800; font-size: 15px; line-height: 1.4; }
+.install-steps { margin: 0; font-size: 13px; line-height: 1.6; color: var(--ink-soft); }
+.install-steps b { color: var(--ink); }
+.install-body .btn-main { justify-self: start; padding: 8px 16px; font-size: 14px; }
+.install-close { position: absolute; right: 6px; top: 6px; width: 32px; height: 32px; padding: 0; border-radius: 50%; font-size: 18px; line-height: 1; box-shadow: none; }
+.ios-share {
+  display: inline-block; width: 13px; height: 15px; vertical-align: -2px; margin: 0 1px;
+  background: no-repeat center / contain url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 13 16'><path d='M6.5 1v9M3.5 4l3-3 3 3M2.5 7H1v8h11V7h-1.5' fill='none' stroke='%231f6fe0' stroke-width='1.4' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}
+
+/* ---- 手元カメラ：拡大しているときの「全体を見る」 ---- */
+.cam-reset {
+  position: absolute; right: 8px; bottom: 8px; z-index: 4; padding: 6px 12px; font-size: 13px; font-weight: 700; border-radius: 999px;
+  background: rgba(20, 24, 40, 0.72); color: #fff; border: 0; box-shadow: none;
+}
+
+/* ホーム画面のアプリ（全画面）では、上の切り欠きの分だけ見出しを下げる */
+html.app.standalone body { padding-top: max(10px, env(safe-area-inset-top, 0px)); }
+.code-label { font-size: 12px; color: var(--ink-soft); letter-spacing: 0.1em; margin-bottom: -6px; }
+/* 戦績：高さが足りない画面では、タブの中ごとスクロール */
+#tab-record:not([hidden]) { overflow-y: auto; overscroll-behavior: contain; }
+#tab-record > .history { min-height: 180px; }
+.ib-owned { font-size: 12px; color: var(--red-pen); font-weight: 700; }

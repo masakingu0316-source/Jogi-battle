@@ -206,9 +206,11 @@ export function createHome({ app, $, esc, toast, account, onNav }) {
     if (x.kind === 'ticket') return 'SSRの定規を1本えらべる';
     const parts = [];
     if (x.coins) parts.push(`${ECONOMY.currency} ${x.coins}${ECONOMY.unit}`);
-    if (x.item) parts.push(ITEMS[x.item]?.name || '定規');
+    if (x.item) parts.push(ITEMS[x.item]?.name || 'アイテム');
     return parts.join('・');
   };
+  // もう持っているアイテム：受け取ると、えんぴつに変わる
+  const ownedNote = (x) => (x.owned ? `<span class="ib-owned">もう持っているので、受け取ると${ECONOMY.currency}${x.refund}${ECONOMY.unit}になります</span>` : '');
   async function openInbox() {
     const d = $('inboxSheet');
     picking = null;
@@ -224,9 +226,9 @@ export function createHome({ app, $, esc, toast, account, onNav }) {
   function renderInbox() {
     $('inboxList').innerHTML = inboxItems.length ? inboxItems.map((x) => {
       const d = new Date(x.at);
-      const icon = x.kind === 'ticket' ? '券' : x.item ? '定' : x.kind === 'daily' ? '日' : x.kind === 'stage' ? '旗' : '贈';
+      const icon = x.kind === 'ticket' ? '券' : x.item ? (ITEMS[x.item]?.kind === 'ruler' ? '定' : '飾') : x.kind === 'daily' ? '日' : x.kind === 'stage' ? '旗' : '贈';
       return `<li class="ib-${x.kind}"><span class="ib-icon" aria-hidden="true">${icon}</span>
-        <span class="ib-body"><b>${esc(x.title)}</b><small>${esc(contentText(x))}・${d.getMonth() + 1}/${d.getDate()}</small></span>
+        <span class="ib-body"><b>${esc(x.title)}</b><small>${esc(contentText(x))}・${d.getMonth() + 1}/${d.getDate()}</small>${ownedNote(x)}</span>
         <button type="button" data-claim="${x.id}">${x.kind === 'ticket' ? 'えらぶ' : '受け取る'}</button></li>`;
     }).join('') : '<li class="empty">受け取るものはありません。毎日ボーナスは、日本時間の0時を過ぎてから開くと届きます。</li>';
     $('inboxAll').hidden = !inboxItems.some((x) => x.kind !== 'ticket');
@@ -245,7 +247,8 @@ export function createHome({ app, $, esc, toast, account, onNav }) {
     const bits = [];
     if (r.coins + r.refund) bits.push(`${ECONOMY.currency} +${r.coins + r.refund}${ECONOMY.unit}`);
     for (const id of r.items || []) bits.push(`「${ITEMS[id]?.name}」`);
-    toast(bits.length ? `受け取りました：${bits.join('・')}` : '受け取りました');
+    const conv = (r.converted || []).map((c) => `「${ITEMS[c.item]?.name}」は持っていたので${ECONOMY.currency}${c.refund}${ECONOMY.unit}に`);
+    toast((bits.length ? `受け取りました：${bits.join('・')}` : '受け取りました') + (conv.length ? `（${conv.join('、')}）` : ''));
     renderInbox(); renderBadge(); renderRes(); renderPartner();
     await account.refresh();
   }

@@ -2,8 +2,8 @@
 import { loginEnabled, sessionUser, sameOrigin } from './auth.js';
 import {
   ensureSchema, profile, claimDaily, rename, saveSetup, pullGacha, recentMatches,
-  getConfig, saveConfig, resetConfig, clearConfigCache, findUsers, giftCoins,
-  inboxOf, claimInbox, pullRulerGacha, setPartner,
+  getConfig, saveConfig, resetConfig, clearConfigCache, findUsers, giftCoins, giftItems, userItemsForAdmin, cancelGift,
+  inboxWithNotes, claimInbox, pullRulerGacha, setPartner,
 } from './db.js';
 import { defaultConfig, sanitizeConfig, configProblem } from '../public/shared/catalog.js';
 import { VERSION } from '../public/shared/version.js';
@@ -59,7 +59,7 @@ export async function handleApi(request, env, url) {
   }
   if (path === '/api/inbox' && request.method === 'GET') {
     await getConfig(env.DB);
-    return json({ inbox: await inboxOf(env.DB, user.id) });
+    return json({ inbox: await inboxWithNotes(env.DB, user.id) });
   }
   if (path === '/api/inbox/claim' && request.method === 'POST') {
     const r = await claimInbox(env.DB, user.id, { id: body.id ?? null, pick: body.pick ?? null });
@@ -96,6 +96,19 @@ export async function handleApi(request, env, url) {
     }
     if (path === '/api/admin/gift' && request.method === 'POST') {
       const r = await giftCoins(env.DB, String(body.userId || ''), body.amount, body.title);
+      return r.error ? json(r, 400) : json(r);
+    }
+    // アイテムを配る（受け取り箱へ）・その人の持ち物と未受け取り・未受け取りの取り消し
+    if (path === '/api/admin/gift-items' && request.method === 'POST') {
+      const r = await giftItems(env.DB, String(body.userId || ''), body.items, { title: body.title, allowOwned: !!body.allowOwned });
+      return r.error ? json(r, 400) : json(r);
+    }
+    if (path === '/api/admin/user-items' && request.method === 'GET') {
+      const r = await userItemsForAdmin(env.DB, String(url.searchParams.get('userId') || ''));
+      return r.error ? json(r, 404) : json(r);
+    }
+    if (path === '/api/admin/gift-cancel' && request.method === 'POST') {
+      const r = await cancelGift(env.DB, String(body.userId || ''), body.id);
       return r.error ? json(r, 400) : json(r);
     }
   }

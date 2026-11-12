@@ -16,6 +16,9 @@ import { createHome } from './home.js';
 import { ENEMIES, deskText } from './shared/stage.js';
 import { RoomCore } from './shared/core.js';
 import { StageCore } from './shared/stage-core.js';
+import { qrSvg } from './qr.js';
+import { createScanner, roomFromScan } from './scan.js';
+import { setupScreen, isStandalone } from './screen.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -44,7 +47,8 @@ const app = {
 if (!MODES[app.pickedMode]) app.pickedMode = 'standard';
 // 盤面の下に残す高さ（ボタンの列と、画面の下の余白）
 const board = createBoard($('board'), $('boardWrap'), {
-  below: () => $('controls').offsetHeight + 8 + (parseFloat(getComputedStyle(document.body).paddingBottom) || 0),
+  below: () => $('controls').offsetHeight + 8,
+  bottom: () => $('game').getBoundingClientRect().bottom, // 対戦画面の下の端（画面は固定なので、ここまでに収める）
 });
 let account; // 下で作る（画面の関数を渡すため）
 
@@ -138,6 +142,10 @@ function show(screen) {
   $('tabbar').hidden = !tabs;
   document.body.classList.toggle('with-tabs', tabs);
   document.body.classList.toggle('on-home', screen === 'home');
+  document.body.classList.toggle('on-login', screen === 'login');
+  // 画面を切り替えたら、中の一覧は先頭から見せる
+  const el = $(screen);
+  if (el) el.scrollTop = 0;
   for (const d of document.querySelectorAll('dialog.sheet[open]')) if (screen !== 'home') d.close();
 }
 const memberById = (id) => app.state?.members.find((m) => m.id === id) || null;
@@ -254,7 +262,55 @@ function renderBattle() {
   renderPractice();
 }
 $('openBattle').addEventListener('click', () => { setError('homeError', ''); renderBattle(); $('battleSheet').showModal(); });
-$('openJoin').addEventListener('click', () => { setError('joinError', ''); $('joinSheet').showModal(); setTimeout(() => $('code').focus(), 50); });
+// ---- 部屋に入る：QRを読む／コードを入力 ----
+const scanner = createScanner($('scanVideo'));
+function joinView(which, errorText = '') {
+  if (which !== 'scan') scanner.stop();
+  $('joinChoice').hidden = which !== 'choice';
+  $('scanBox').hidden = which !== 'scan';
+  $('joinForm').hidden = which !== 'code';
+  setError('joinError', errorText);
+  if (which === 'code') setTimeout(() => $('code').focus(), 50);
+}
+$('openJoin').addEventListener('click', () => {
+  // ホーム画面のアプリでは、カメラのアプリで読むとブラウザの方で開くので、ここで読むように案内する
+  $('appScanNote').hidden = !isStandalone();
+  joinView('choice');
+  $('joinSheet').showModal();
+});
+$('codeBtn').addEventListener('click', () => joinView('code'));
+$('codeBack').addEventListener('click', () => joinView('choice'));
+$('scanCancel').addEventListener('click', () => joinView('choice'));
+$('scanToCode').addEventListener('click', () => joinView('code'));
+$('joinSheet').addEventListener('close', () => scanner.stop());
+$('scanBtn').addEventListener('click', async () => {
+  joinView('scan');
+  $('scanFail').hidden = true;
+  $('scanStatus').hidden = false;
+  $('scanStatus').textContent = 'カメラを起動しています…';
+  $('scanBox').classList.remove('found');
+  try {
+    await scanner.start((text) => {
+      const r = roomFromScan(text);
+      if (r.error) { $('scanStatus').textContent = `${r.error}。友だちの部屋の画面にあるQRを写してください`; return false; }
+      $('scanBox').classList.add('found');
+      $('scanStatus').textContent = `部屋 ${r.code} に入ります`;
+      navigator.vibrate?.(30);
+      setTimeout(() => { $('joinSheet').close(); setError('homeError', ''); connect(r.code); }, 350);
+      return true;
+    });
+    if (scanner.running) $('scanStatus').textContent = 'QRコードを枠の中に写してください';
+  } catch (e) {
+    const why = {
+      denied: 'カメラの使用が許可されませんでした。ブラウザ（またはスマホ）の設定でカメラを許可するか、部屋コードを入力してください。',
+      nocamera: 'この端末ではカメラが見つかりませんでした。部屋コードを入力してください。',
+      decoder: 'QRコードを読む準備ができませんでした（通信を確かめてください）。部屋コードを入力してください。',
+    }[e?.kind] || 'このブラウザではカメラを使えません。部屋コードを入力してください。';
+    $('scanStatus').hidden = true;
+    $('scanFailText').textContent = why;
+    $('scanFail').hidden = false;
+  }
+});
 $('fairOpt').addEventListener('change', () => store.set('jogi:fair', $('fairOpt').checked ? '1' : '0'));
 // シートは、×か外側（暗いところ）を押すと閉じる
 for (const d of document.querySelectorAll('dialog.sheet')) {
@@ -578,6 +634,7 @@ function render() {
   if (inGame && app.playedGame !== st.game.id) {
     // 新しい対戦が始まった
     app.playedGame = st.game.id;
+    board.camReset();
     app.lastReward = null;
     if (app.view === 'mypage') { app.view = 'room'; toast('対戦が始まりました'); }
   }
@@ -602,12 +659,22 @@ function renderLobby() {
   const practice = !!app.practice;
   $('roomMode').textContent = practice
     ? `コンピュータと練習（${app.practice.level.name}）・${mode.name}・${desk.name}`
-    : `${mode.name}・${mode.min === mode.max ? mode.max + '人' : mode.min + '〜' + mode.max + '人'}・${desk.name}${st.fair ? '・公平（上乗せなし）' : ''}　部屋コード`;
+    : `${mode.name}・${mode.min === mode.max ? mode.max + '人' : mode.min + '〜' + mode.max + '人'}・${desk.name}${st.fair ? '・公平（上乗せなし）' : ''}`;
+  $('codeLabel').hidden = practice;
   document.querySelector('.room-head').classList.toggle('practice-head', practice);
   $('seatNote').hidden = practice;
   $('leave').textContent = practice ? '練習をやめてホームへ' : '部屋を出てホームへ';
   $('roomCode').textContent = st.code;
-  $('inviteUrl').value = `${location.origin}${location.pathname}?room=${st.code}`;
+  const invite = inviteUrlOf(st.code);
+  $('inviteUrl').value = invite;
+  // 部屋コードの横に、招待リンクのQRコード
+  if (!practice && $('roomQr').dataset.url !== invite) {
+    $('roomQr').innerHTML = qrSvg(invite, { label: `部屋 ${st.code} の招待QRコード` }) + '<figcaption>カメラで読むと入れます</figcaption>';
+    $('roomQr').dataset.url = invite;
+  }
+  $('roomQr').hidden = practice;
+  $('roomHowto').hidden = practice;
+  $('shareInvite').hidden = practice || !navigator.share;
   const rows = [];
   for (let i = 0; i < mode.max; i++) {
     const m = st.members[i];
@@ -924,6 +991,15 @@ $('readyBtn').addEventListener('click', () => {
   send({ t: 'ready', on: !me?.ready });
 });
 $('openCase').addEventListener('click', () => account.open('case', { pick: true }));
+// 招待リンク（QRコードの中身も同じ）
+const inviteUrlOf = (code) => `${location.origin}/?room=${code}`;
+$('shareInvite').addEventListener('click', async () => {
+  const code = app.state?.code;
+  if (!code) return;
+  try {
+    await navigator.share({ title: '定規バトル', text: `定規バトルの部屋 ${code} に招待します。リンクを開くと入れます。`, url: inviteUrlOf(code) });
+  } catch { /* 送るのをやめたときは何もしない */ }
+});
 $('copyInvite').addEventListener('click', async () => {
   const input = $('inviteUrl');
   try {
@@ -961,9 +1037,66 @@ function contactWorld(b, lx, ly) {
 }
 
 const canvas = $('board');
+// ---- 手元カメラ：盤面の上の2本指（ピンチで拡大・ドラッグで移動）。1本指は今までどおり狙う ----
+const fingers = new Map();
+let pinch = null;
+function pinchInfo() {
+  const [a, b] = [...fingers.values()];
+  return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
+}
+// 指で押したときの注意は少し待ってから出す（すぐ2本目の指が来たら、カメラの操作なので出さない）
+let softHintTimer = 0;
+function softHint(e, text) {
+  clearTimeout(softHintTimer);
+  if (e.pointerType === 'touch') softHintTimer = setTimeout(() => { if (!app.camGesture) hint(text); }, 260);
+  else hint(text);
+}
+function camDown(e) {
+  if (e.pointerType !== 'touch') return false;
+  fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (fingers.size >= 2) {
+    clearTimeout(softHintTimer);
+    // 2本目の指：狙いをやめて、カメラの操作にする（指を全部離すまで）
+    app.aim = null;
+    app.camGesture = true;
+    pinch = pinchInfo();
+    e.preventDefault();
+    return true;
+  }
+  return !!app.camGesture;
+}
+function camMoveEv(e) {
+  if (!fingers.has(e.pointerId)) return !!app.camGesture;
+  fingers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (!app.camGesture) return false;
+  if (fingers.size >= 2 && pinch) {
+    const now = pinchInfo();
+    const r = canvas.getBoundingClientRect();
+    board.camMove(now.d / pinch.d, now.mx - r.left, now.my - r.top, now.mx - pinch.mx, now.my - pinch.my);
+    pinch = now;
+  }
+  return true;
+}
+function camUp(e) {
+  fingers.delete(e.pointerId);
+  if (fingers.size < 2) pinch = null;
+  if (!app.camGesture) return false;
+  if (fingers.size === 0) app.camGesture = false;
+  return true;
+}
+// パソコン：ホイール（トラックパッドのピンチ）で拡大
+canvas.addEventListener('wheel', (e) => {
+  if ($('game').hidden) return;
+  e.preventDefault();
+  const r = canvas.getBoundingClientRect();
+  board.camMove(Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top);
+}, { passive: false });
+$('camReset').addEventListener('click', () => board.camReset());
+
 canvas.addEventListener('pointerdown', (e) => {
+  if (camDown(e)) return;
   if (!canAim()) {
-    if (app.state?.phase === 'aim' && !app.playing && !app.waitingShot) hint('今はほかの人の番です');
+    if (app.state?.phase === 'aim' && !app.playing && !app.waitingShot) softHint(e, '今はほかの人の番です');
     return;
   }
   // 吹雪：タップした所にクリスタルを置く
@@ -985,7 +1118,7 @@ canvas.addEventListener('pointerdown', (e) => {
   // 押さえた点を定規の上に収める（少しはみ出しても受け付ける）
   const near = Physics.nearestOnShape(shapeKey, lx, ly);
   if (near.dist > tol) {
-    hint(`自分の定規（${seatLook(g.turn).name}）を押さえてから引っぱってください`);
+    softHint(e, `自分の定規（${seatLook(g.turn).name}）を押さえてから引っぱってください`);
     return;
   }
   app.aim = { b, lx: near.x, ly: near.y, px: p.x, py: p.y };
@@ -993,11 +1126,13 @@ canvas.addEventListener('pointerdown', (e) => {
   e.preventDefault();
 });
 canvas.addEventListener('pointermove', (e) => {
+  if (camMoveEv(e)) return;
   if (!app.aim) return;
   const p = board.toWorld(e.clientX, e.clientY);
   app.aim.px = p.x; app.aim.py = p.y;
 });
-canvas.addEventListener('pointerup', () => {
+canvas.addEventListener('pointerup', (e) => {
+  if (camUp(e)) return;
   const a = app.aim;
   if (!a) return;
   app.aim = null;
@@ -1012,7 +1147,7 @@ canvas.addEventListener('pointerup', () => {
   app.waitingShot = true;
   renderGame();
 });
-canvas.addEventListener('pointercancel', () => { app.aim = null; });
+canvas.addEventListener('pointercancel', (e) => { camUp(e); app.aim = null; });
 
 // ---------------- 動きの再生 ----------------
 // ---------------- 必殺技のカットイン（全員の画面に出す） ----------------
@@ -1300,6 +1435,9 @@ function frame(now) {
     desks.crystals = app.playing?.frozeAt ? [] : crystals.map((c) => ({ ...c, born: app.crystalBorn?.[c.id] }));
     desks.rainbow = app.state.phase === 'aim' ? g.rainbow : null;
     board.draw({ bodies, active, aim, fx: app.fx, now, desks });
+    // 手元カメラで拡大しているときだけ「全体を見る」
+    const zoomed = board.zoomed;
+    if ($('camReset').hidden === zoomed) $('camReset').hidden = !zoomed;
     // クリティカルの瞬間だけ、盤面を小さく揺らす
     const cv = $('board');
     if (app.shakeUntil && now < app.shakeUntil) cv.style.transform = `translate(${(Math.random() - 0.5) * 6}px, ${(Math.random() - 0.5) * 6}px)`;
@@ -1324,7 +1462,11 @@ const home = createHome({
 });
 // 確認用：?debug を付けて開いたときだけ、今の状態を読めるようにする
 if (new URLSearchParams(location.search).has('debug')) { window.__jogiApp = app; window.__toWorld = (x, y) => board.toWorld(x, y); window.__jogiState = () => structuredClone(app.state); window.__jogiSend = (m) => { const ok = send(m); if (ok && m.t === 'flick') { app.waitingShot = true; renderGame(); } return ok; }; }
+setupScreen({ toast, canShowTip: () => !!app.me && app.view === 'home' && !$('home').hidden && !document.querySelector('dialog[open]') });
 await account.load();
+// 起動中の画面を消す
+$('boot').classList.add('done');
+setTimeout(() => $('boot').remove(), 500);
 if (app.config?.version && app.config.version !== VERSION) showUpdate();
 if (!app.me) {
   showLogin();

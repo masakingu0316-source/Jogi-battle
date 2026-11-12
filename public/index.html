@@ -1,19 +1,51 @@
 <!doctype html>
-<html lang="ja">
+<html lang="ja" class="app">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <title>定規バトル</title>
 <meta name="description" content="机の上で定規をはじき合う、あの遊びをオンラインで。部屋コードで友だちと対戦。">
 <meta name="theme-color" content="#f3f3ee" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#10172a" media="(prefers-color-scheme: dark)">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='12' width='26' height='8' rx='1.5' fill='%23ff7f6e'/%3E%3Cpath d='M6 12v3M9 12v2M12 12v3M15 12v2M18 12v3M21 12v2M24 12v3' stroke='%232a1a14' stroke-width='1'/%3E%3C/svg%3E">
+<link rel="icon" href="/icons/favicon-64.png" type="image/png">
+<!-- ホーム画面に追加（全画面のアプリとして開く） -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="定規バトル">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="format-detection" content="telephone=no">
+<!-- iPhone の起動画面（昼は和紙、夜は藍） -->
+<link rel="apple-touch-startup-image" href="/icons/splash-1320x2868.png" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)">
+<link rel="apple-touch-startup-image" href="/icons/splash-1320x2868-dark.png" media="(device-width: 440px) and (device-height: 956px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)">
+<link rel="apple-touch-startup-image" href="/icons/splash-1290x2796.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)">
+<link rel="apple-touch-startup-image" href="/icons/splash-1290x2796-dark.png" media="(device-width: 430px) and (device-height: 932px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)">
+<link rel="apple-touch-startup-image" href="/icons/splash-1206x2622.png" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)">
+<link rel="apple-touch-startup-image" href="/icons/splash-1206x2622-dark.png" media="(device-width: 402px) and (device-height: 874px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)">
+<link rel="apple-touch-startup-image" href="/icons/splash-1179x2556.png" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)">
+<link rel="apple-touch-startup-image" href="/icons/splash-1179x2556-dark.png" media="(device-width: 393px) and (device-height: 852px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)">
+<link rel="apple-touch-startup-image" href="/icons/splash-1284x2778.png" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)">
+<link rel="apple-touch-startup-image" href="/icons/splash-1284x2778-dark.png" media="(device-width: 428px) and (device-height: 926px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)">
+<link rel="apple-touch-startup-image" href="/icons/splash-1170x2532.png" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)">
+<link rel="apple-touch-startup-image" href="/icons/splash-1170x2532-dark.png" media="(device-width: 390px) and (device-height: 844px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)">
+<link rel="apple-touch-startup-image" href="/icons/splash-1125x2436.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: light)">
+<link rel="apple-touch-startup-image" href="/icons/splash-1125x2436-dark.png" media="(device-width: 375px) and (device-height: 812px) and (-webkit-device-pixel-ratio: 3) and (orientation: portrait) and (prefers-color-scheme: dark)">
+<link rel="apple-touch-startup-image" href="/icons/splash-828x1792.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: light)">
+<link rel="apple-touch-startup-image" href="/icons/splash-828x1792-dark.png" media="(device-width: 414px) and (device-height: 896px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: dark)">
+<link rel="apple-touch-startup-image" href="/icons/splash-750x1334.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: light)">
+<link rel="apple-touch-startup-image" href="/icons/splash-750x1334-dark.png" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: dark)">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=BIZ+UDPGothic:wght@400;700&family=Yuji+Syuku&family=Yuji+Mai&family=Yuji+Boku&display=swap">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<!-- 起動中の画面（読み込みが終わったら消す） -->
+<div class="boot" id="boot" aria-hidden="true">
+  <img src="/icons/icon.svg" alt="" width="120" height="120">
+  <span>定規バトル</span>
+</div>
 <div class="page">
   <header>
     <h1><span class="mark">定規バトル</span></h1>
@@ -85,7 +117,7 @@
       </button>
       <button type="button" class="bb side" id="openJoin">
         <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M8 4h14a2 2 0 0 1 2 2v20a2 2 0 0 1-2 2H8z" fill="none" stroke="currentColor" stroke-width="2.4"/><path d="M4 16h11m-4-4 4 4-4 4" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
-        <span>部屋に入る</span><small>部屋コード</small>
+        <span>部屋に入る</span><small>QR・コード</small>
       </button>
     </div>
     <p class="error home-error" id="homeError" hidden></p>
@@ -262,14 +294,18 @@
   <!-- 部屋 -->
   <main id="lobby" class="screen" hidden>
     <div class="room-head">
-      <div>
+      <div class="room-id">
         <div class="label" id="roomMode"></div>
+        <div class="code-label" id="codeLabel">部屋コード</div>
         <div class="code" id="roomCode">-----</div>
+        <p class="room-howto" id="roomHowto">友だちは、このQRをスマホのカメラで読むか、ホームの「部屋に入る」でこのコードを入れると入れます</p>
+        <div class="invite">
+          <button id="copyInvite" type="button">招待リンクをコピー</button>
+          <button id="shareInvite" type="button" hidden>送る</button>
+          <input id="inviteUrl" readonly aria-label="招待リンク">
+        </div>
       </div>
-      <div class="invite">
-        <input id="inviteUrl" readonly aria-label="招待リンク">
-        <button id="copyInvite" type="button">招待リンクをコピー</button>
-      </div>
+      <figure class="room-qr" id="roomQr" aria-label="部屋に入るためのQRコード"></figure>
     </div>
 
     <div class="countdown" id="countdown" role="status" aria-live="polite">
@@ -311,6 +347,7 @@
     <div class="board-wrap" id="boardWrap">
       <canvas id="board" aria-label="机の上の定規バトル盤面。自分の番に、自分の定規を押さえて引っぱり、離すとはじけます。"></canvas>
       <div class="hint" id="hint" hidden></div>
+      <button type="button" class="cam-reset" id="camReset" hidden>全体を見る</button>
       <div class="curve-box" id="curveBox" hidden>
         <label for="curveDeg">百八十度：曲がる角度 <b id="curveVal">0°</b></label>
         <div class="curve-row"><span aria-hidden="true">左</span><input type="range" id="curveDeg" min="-90" max="90" step="5" value="0"><span aria-hidden="true">右</span></div>
@@ -388,15 +425,50 @@
 <dialog class="sheet small" id="joinSheet" aria-labelledby="joinTitle">
   <button type="button" class="sheet-close" data-close aria-label="閉じる">×</button>
   <h2 id="joinTitle">部屋に入る</h2>
-  <form class="join" id="joinForm">
+  <div class="join-choice" id="joinChoice">
+    <button type="button" class="join-opt" id="scanBtn">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8V4a1 1 0 0 1 1-1h4M16 3h4a1 1 0 0 1 1 1v4M21 16v4a1 1 0 0 1-1 1h-4M8 21H4a1 1 0 0 1-1-1v-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="M7 7h4v4H7zM13 13h4v4h-4zM13 7h4v4h-4zM7 13h4v4H7z" fill="currentColor" opacity=".85"/></svg>
+      <b>QRを読む</b><small>友だちの画面のQRコードを、カメラで読み取る</small>
+    </button>
+    <button type="button" class="join-opt" id="codeBtn">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 10v4M10 10v4M14 10v4M18 10v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <b>コードを入力</b><small>5文字の部屋コードを入れる</small>
+    </button>
+    <p class="note app-scan-note" id="appScanNote" hidden>ホーム画面のアプリで入るときは、ここの「QRを読む」を使ってください。スマホのカメラで読むと、アプリではなくブラウザの方で開きます。</p>
+  </div>
+  <div class="scan-box" id="scanBox" hidden>
+    <div class="scan-view">
+      <video id="scanVideo" playsinline muted autoplay></video>
+      <span class="scan-frame" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+    </div>
+    <p class="scan-status" id="scanStatus" role="status">QRコードを枠の中に写してください</p>
+    <div class="scan-fail" id="scanFail" hidden>
+      <p id="scanFailText"></p>
+      <button type="button" class="btn-main" id="scanToCode">コードを入力する</button>
+    </div>
+    <button type="button" class="link" id="scanCancel">← 戻る</button>
+  </div>
+  <form class="join" id="joinForm" hidden>
     <label class="field-col" for="code">
       <span>友だちから届いた部屋コード（5文字）</span>
-      <input id="code" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCDE">
+      <input id="code" maxlength="5" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCDE" inputmode="text">
     </label>
     <button id="join" class="btn-main" type="submit">入る</button>
+    <button type="button" class="link" id="codeBack">← 戻る</button>
   </form>
   <p class="error" id="joinError" hidden></p>
 </dialog>
+
+<!-- ホーム画面に追加の案内（ブラウザで遊んでいる人に1回だけ） -->
+<div class="install-tip" id="installTip" role="dialog" aria-labelledby="installTitle" hidden>
+  <button type="button" class="install-close" id="installClose" aria-label="閉じる">×</button>
+  <img src="/icons/icon-192.png" alt="" width="52" height="52">
+  <div class="install-body">
+    <p class="install-title" id="installTitle">ホーム画面に追加すると、全画面で遊べます</p>
+    <p class="install-steps" id="installSteps"></p>
+    <button type="button" class="btn-main" id="installBtn" hidden>ホーム画面に追加</button>
+  </div>
+</div>
 
 <!-- 受け取り箱 -->
 <dialog class="sheet" id="inboxSheet" aria-labelledby="inboxTitle">

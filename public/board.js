@@ -10,6 +10,28 @@ export const MAX_DRAG = 11; // これ以上引っぱっても力は最大のま�
 export function createBoard(canvas, wrap, opt = {}) {
   const ctx = canvas.getContext('2d');
   const view = { s: 10, rot: false, cx: 0, cy: 0, w: 0, h: 0, dpr: 1 };
+  // 手元カメラ：盤面の拡大（z 倍）と、ずらし（画面の px）。2本指で操作する
+  const cam = { z: 1, x: 0, y: 0 };
+  const CAM_MAX = 3;
+  // カメラを入れた見え方（拡大率と中心）
+  const eff = () => ({ s: view.s * cam.z, cx: view.cx + cam.x, cy: view.cy + cam.y });
+  function clampCam() {
+    cam.z = Math.min(CAM_MAX, Math.max(1, cam.z));
+    const mx = (view.w * (cam.z - 1)) / 2, my = (view.h * (cam.z - 1)) / 2;
+    cam.x = Math.min(mx, Math.max(-mx, cam.x));
+    cam.y = Math.min(my, Math.max(-my, cam.y));
+    if (cam.z === 1) { cam.x = 0; cam.y = 0; }
+  }
+  // 画面の (sx, sy)（盤面の左上から）を中心に k 倍し、(dx, dy) ずらす
+  function camMove(k, sx, sy, dx = 0, dy = 0) {
+    const z2 = Math.min(CAM_MAX, Math.max(1, cam.z * k));
+    const r = z2 / cam.z;
+    cam.x = sx - view.cx - (sx - view.cx - cam.x) * r + dx;
+    cam.y = sy - view.cy - (sy - view.cy - cam.y) * r + dy;
+    cam.z = z2;
+    clampCam();
+  }
+  function camReset() { cam.z = 1; cam.x = 0; cam.y = 0; }
   let desk = DESKS.pair;
   let panels = [];
 
@@ -27,10 +49,11 @@ export function createBoard(canvas, wrap, opt = {}) {
     const vw = (rot ? desk.h : desk.w) + MARGIN * 2;
     const vh = (rot ? desk.w : desk.h) + MARGIN * 2;
     // 盤面の上（名前の札・手番の表示）と下（ボタンの列）を除いた高さに収めて、上下に動かさずに遊べるようにする
-    const top = wrap.getBoundingClientRect().top + window.scrollY;
+    const top = wrap.getBoundingClientRect().top;
     const below = opt.below ? opt.below() : 60;
     const visible = wrap.offsetParent !== null;
-    const maxH = Math.max(140, window.innerHeight - (visible ? top : 290) - below - 2);
+    const bottom = visible && opt.bottom ? opt.bottom() : window.innerHeight;
+    const maxH = Math.max(140, bottom - (visible ? top : 290) - below - 2);
     const s = Math.min(cssW / vw, maxH / vh);
     const cssH = Math.round(vh * s);
     canvas.style.height = cssH + 'px';
@@ -38,6 +61,7 @@ export function createBoard(canvas, wrap, opt = {}) {
     canvas.width = Math.round(cssW * view.dpr);
     canvas.height = Math.round(cssH * view.dpr);
     Object.assign(view, { s, rot, cx: cssW / 2, cy: cssH / 2, w: cssW, h: cssH });
+    clampCam();
     buildGrain();
   }
 
@@ -59,17 +83,20 @@ export function createBoard(canvas, wrap, opt = {}) {
   }
 
   function setWorldTransform() {
-    const { s, rot, cx, cy, dpr } = view;
+    const { rot, dpr } = view;
+    const { s, cx, cy } = eff();
     if (rot) ctx.setTransform(0, s * dpr, -s * dpr, 0, cx * dpr, cy * dpr);
     else ctx.setTransform(s * dpr, 0, 0, s * dpr, cx * dpr, cy * dpr);
   }
   function toScreen(x, y) {
-    return view.rot ? { x: view.cx - view.s * y, y: view.cy + view.s * x } : { x: view.cx + view.s * x, y: view.cy + view.s * y };
+    const { s, cx, cy } = eff();
+    return view.rot ? { x: cx - s * y, y: cy + s * x } : { x: cx + s * x, y: cy + s * y };
   }
   function toWorld(clientX, clientY) {
     const r = canvas.getBoundingClientRect();
     const sx = clientX - r.left, sy = clientY - r.top;
-    return view.rot ? { x: (sy - view.cy) / view.s, y: (view.cx - sx) / view.s } : { x: (sx - view.cx) / view.s, y: (sy - view.cy) / view.s };
+    const { s, cx, cy } = eff();
+    return view.rot ? { x: (sy - cy) / s, y: (cx - sx) / s } : { x: (sx - cx) / s, y: (sy - cy) / s };
   }
 
   function roundRect(x, y, w, h, r) {
@@ -101,7 +128,7 @@ export function createBoard(canvas, wrap, opt = {}) {
     ctx.fillStyle = theme.floor;
     ctx.fillRect(0, 0, view.w, view.h);
     setWorldTransform();
-    const px = view.s;
+    const px = eff().s;
 
     // 教室の床（30cm角のタイル）
     ctx.strokeStyle = theme.line;
@@ -269,13 +296,13 @@ export function createBoard(canvas, wrap, opt = {}) {
         for (const [k, w] of [[1, 1], [0.72, 0.6], [0.45, 0.35]]) {
           ctx.globalAlpha = (1 - rt) * w;
           ctx.strokeStyle = f.color;
-          ctx.lineWidth = Math.max(0.25, 5 / view.s) * (1.4 - rt);
+          ctx.lineWidth = Math.max(0.25, 5 / eff().s) * (1.4 - rt);
           const grow = f.inward ? 1 - 0.75 * Math.sqrt(rt) : 0.25 + 0.75 * Math.sqrt(rt);
         ctx.beginPath(); ctx.arc(f.x, f.y, Math.max(0.1, f.ring * k * grow), 0, Math.PI * 2); ctx.stroke();
         }
         // 風の筋
         ctx.globalAlpha = (1 - rt) * 0.8;
-        ctx.lineWidth = Math.max(0.15, 2.5 / view.s);
+        ctx.lineWidth = Math.max(0.15, 2.5 / eff().s);
         ctx.beginPath();
         for (let k = 0; k < 16; k++) {
           const a = (k / 16) * Math.PI * 2 + rt * 0.8;
@@ -831,5 +858,9 @@ export function createBoard(canvas, wrap, opt = {}) {
   layout();
   // 盤面の向き (x, y) が、画面ではどちら向きに見えるか
   const screenDir = (x, y) => (view.rot ? { x: -y, y: x } : { x, y });
-  return { setDesk, layout, draw, toWorld, screenDir, get scale() { return view.s; } };
+  return {
+    setDesk, layout, draw, toWorld, screenDir, camMove, camReset,
+    get scale() { return view.s * cam.z; },
+    get zoomed() { return cam.z > 1.001; },
+  };
 }
