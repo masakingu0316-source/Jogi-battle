@@ -1,11 +1,14 @@
 // ホーム画面（1画面）：資源の帯／相棒の定規／大ボタン3つ、下のタブ、受け取り箱
 import Physics from './shared/physics.js';
+import { titleOf } from './shared/dojo.js';
 import { SKILLS, TRAITS, skillDesc, traitDesc } from './shared/rules.js';
 import { ITEMS, ECONOMY, RULER_RARITY, rulerList, rulerTune, resolveLoadout, levelInfo, STAGE_LEVEL_MAX, defaultConfig } from './shared/catalog.js';
 import { paintRuler, matLook, iconRuler } from './ruler-paint.js';
+import { drawAvatar, drawAvatarBg } from './avatar-paint.js';
+import { avatarKey } from './shared/avatar.js';
 import { levelOfRuler } from './ruler-info.js';
 
-export function createHome({ app, $, esc, toast, account, onNav }) {
+export function createHome({ app, $, esc, toast, account, onNav, onAvatar }) {
   const game = () => app.game || defaultConfig();
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch { return null; } },
@@ -22,7 +25,7 @@ export function createHome({ app, $, esc, toast, account, onNav }) {
     let mass = 1, power = 1;
     for (const k of Object.keys(Physics.RULERS)) {
       const r = Physics.RULERS[k];
-      if (r.enemy) continue;
+      if (r.enemy || r.teacher) continue;
       const t = rulerTune(k, cfg);
       mass = Math.max(mass, t.mass * 1.16);
       power = Math.max(power, Math.pow(r.mass / 26, Physics.ENERGY_MASS_EXP ?? 0.7) * (t.power / 100) * 1.16);
@@ -76,26 +79,49 @@ export function createHome({ app, $, esc, toast, account, onNav }) {
     const ctx = c.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    // 机（木目）
-    const dw = w * 0.9, dh = h * 0.84, dx = (w - dw) / 2, dy = (h - dh) / 2;
+    // アバターが机の向こうに立ち、手前の机に相棒の定規を置く
+    const lay = sceneLayout(w, h);
+    const av = app.me.avatar;
+    if (av) {
+      // 背景（教室・黒板など）を、机より上いっぱいに
+      ctx.save();
+      ctx.beginPath(); ctx.roundRect(0, 0, w, lay.deskTop + 12, [12, 12, 0, 0]); ctx.clip();
+      if (!drawAvatarBg(ctx, av, { x: 0, y: 0, w, h: lay.deskTop + 12 })) {
+        ctx.fillStyle = 'rgba(30, 40, 70, 0.06)'; ctx.fillRect(0, 0, w, lay.deskTop + 12);
+      }
+      ctx.restore();
+      // 体（少し息をするように上下）
+      const img = avatarSprite(av, lay, dpr);
+      const bob = Math.sin(now / 900) * 0.8;
+      ctx.drawImage(img, lay.ax, lay.ay + bob, lay.aw, lay.ah);
+    }
+    // 机（手前が広い台形・木目）
+    const { deskTop } = lay;
+    const farL = w * 0.07, farR = w * 0.93, nearL = 0, nearR = w;
+    const deskPath = () => { ctx.beginPath(); ctx.moveTo(farL, deskTop); ctx.lineTo(farR, deskTop); ctx.lineTo(nearR, h); ctx.lineTo(nearL, h); ctx.closePath(); };
     ctx.save();
-    ctx.shadowColor = 'rgba(20, 28, 50, 0.35)'; ctx.shadowBlur = 14; ctx.shadowOffsetY = 5;
-    ctx.fillStyle = '#d9bb8f';
-    ctx.beginPath(); ctx.roundRect(dx, dy, dw, dh, 10); ctx.fill();
+    ctx.shadowColor = 'rgba(20, 28, 50, 0.32)'; ctx.shadowBlur = 12; ctx.shadowOffsetY = -2;
+    ctx.fillStyle = '#d9bb8f'; deskPath(); ctx.fill();
     ctx.restore();
     ctx.save();
-    ctx.beginPath(); ctx.roundRect(dx, dy, dw, dh, 10); ctx.clip();
+    deskPath(); ctx.clip();
+    const grd = ctx.createLinearGradient(0, deskTop, 0, h); grd.addColorStop(0, 'rgba(120,80,40,.18)'); grd.addColorStop(1, 'rgba(255,255,255,.08)');
+    ctx.fillStyle = grd; ctx.fillRect(0, deskTop, w, h - deskTop);
     let seed = 11;
     const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-    for (let i = 0; i < 34; i++) {
+    for (let i = 0; i < 26; i++) {
       ctx.strokeStyle = `rgba(122, 78, 38, ${0.05 + rnd() * 0.08})`;
       ctx.lineWidth = 0.6 + rnd() * 1.2;
-      const y0 = dy + rnd() * dh, amp = 1 + rnd() * 4, fr = 0.01 + rnd() * 0.02, ph = rnd() * 6;
+      const y0 = deskTop + rnd() * (h - deskTop), amp = 1 + rnd() * 3, fr = 0.01 + rnd() * 0.02, ph = rnd() * 6;
       ctx.beginPath();
-      for (let x = dx; x <= dx + dw; x += 6) { const y = y0 + Math.sin(x * fr + ph) * amp; if (x === dx) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
+      for (let x = 0; x <= w; x += 6) { const y = y0 + Math.sin(x * fr + ph) * amp; if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); }
       ctx.stroke();
     }
     ctx.restore();
+    // 机の奥のふち
+    ctx.strokeStyle = 'rgba(110, 70, 36, 0.55)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(farL, deskTop + 1); ctx.lineTo(farR, deskTop + 1); ctx.stroke();
+    const dw = w * 0.92, dh = (h - deskTop) * 0.8;
     // 相棒（少し斜めに大きく）
     const id = partnerId();
     if (!id) return;
@@ -110,7 +136,8 @@ export function createHome({ app, $, esc, toast, account, onNav }) {
       const px = Math.min((dw * 0.86) / span, (dh * 0.8) / (sh.kind === 'rect' ? Math.max(sh.W * 3.5, span * 0.32) : span * 0.75), 26);
       ctx.save();
       ctx.globalAlpha = alpha;
-      ctx.setTransform(px * dpr, 0, 0, px * dpr, (w / 2 + offset) * dpr, (h / 2) * dpr);
+      // 机に置いた定規（奥行きの分だけ、縦を少しつぶす）
+      ctx.setTransform(px * dpr, 0, 0, px * dpr * 0.8, (w / 2 + offset) * dpr, (deskTop + (h - deskTop) * 0.55) * dpr);
       paintRuler(ctx, { owner: 0, specKey: it.specKey, shapeKey, level: lv.level, art: it.art, pattern: setup.pattern, sticker: setup.sticker, pl: { ...matLook(it.mat), name: '' }, x: 0, y: 0, a: ang }, px, false, now);
       ctx.restore();
     };
@@ -123,7 +150,29 @@ export function createHome({ app, $, esc, toast, account, onNav }) {
       drawOne(id, 0, 1);
     }
   }
+  // 机とアバターの位置（キャンバスの大きさから）
+  function sceneLayout(w, h) {
+    const deskTop = Math.round(h * 0.5);
+    // 頭のてっぺん（単位14）を上の少し下、腰（単位108）を机の奥のふちに合わせる
+    const k = (deskTop - h * 0.04) / (108 - 12);
+    const aw = 120 * k, ah = 184 * k;
+    return { deskTop, k, aw, ah, ax: (w - aw) / 2, ay: h * 0.04 - 12 * k };
+  }
+  // アバターの絵は、見た目か大きさが変わったときだけ描き直す
+  let sprite = null;
+  function avatarSprite(av, lay, dpr) {
+    const key = `${avatarKey(av)}|${Math.round(lay.aw)}|${dpr}`;
+    if (sprite?.key === key) return sprite.c;
+    const c = document.createElement('canvas');
+    c.width = Math.round(lay.aw * dpr); c.height = Math.round(lay.ah * dpr);
+    const g = c.getContext('2d');
+    g.scale(dpr, dpr);
+    drawAvatar(g, av, { x: 0, y: 0, w: lay.aw, h: lay.ah, view: 'full', bg: false });
+    sprite = { key, c };
+    return c;
+  }
   function renderPartner() {
+    renderAvatarCue();
     const id = partnerId();
     if (!id) return;
     const it = ITEMS[id];
@@ -185,7 +234,13 @@ export function createHome({ app, $, esc, toast, account, onNav }) {
     const dx = e.clientX - sw.x, dy = e.clientY - sw.y;
     sw = null;
     if (Math.abs(dx) > 36 && Math.abs(dx) > Math.abs(dy) * 1.3) shift(dx < 0 ? 1 : -1);
-    else if (Math.abs(dx) < 8 && Math.abs(dy) < 8) onNav('case', { edit: true });
+    else if (Math.abs(dx) < 8 && Math.abs(dy) < 8) {
+      // 机より上（アバター）を押したら着せ替え、机を押したら定規ケース
+      const r = $('partnerCanvas').getBoundingClientRect();
+      const lay = sceneLayout(r.width, r.height);
+      if (e.clientY - r.top < lay.deskTop) onAvatar?.();
+      else onNav('case', { edit: true });
+    }
   });
   $('partnerStage').addEventListener('pointercancel', () => { sw = null; });
   document.addEventListener('keydown', (e) => {
@@ -193,6 +248,17 @@ export function createHome({ app, $, esc, toast, account, onNav }) {
     if (e.key === 'ArrowLeft') shift(-1);
     if (e.key === 'ArrowRight') shift(1);
   });
+
+  // アバターをまだ作っていない人には「着せ替えできます」の印を出す（作って保存したら消える）
+  function renderAvatarCue() {
+    $('avatarCue').hidden = !app.me || app.me.avatarSet;
+    // 称号（アバターの下、机の奥のふち）
+    const t = titleOf(app.me?.title);
+    $('homeTitle').hidden = !t;
+    if (t) { $('homeTitle').textContent = t.name; $('homeTitle').style.setProperty('--tc', t.color); }
+  }
+  $('avatarCue').addEventListener('click', () => onAvatar?.());
+  $('avatarBtn').addEventListener('click', () => onAvatar?.());
 
   // ---- 受け取り箱 ----
   function renderBadge() {
@@ -226,7 +292,8 @@ export function createHome({ app, $, esc, toast, account, onNav }) {
   function renderInbox() {
     $('inboxList').innerHTML = inboxItems.length ? inboxItems.map((x) => {
       const d = new Date(x.at);
-      const icon = x.kind === 'ticket' ? '券' : x.item ? (ITEMS[x.item]?.kind === 'ruler' ? '定' : '飾') : x.kind === 'daily' ? '日' : x.kind === 'stage' ? '旗' : '贈';
+      const ik = ITEMS[x.item]?.kind;
+      const icon = x.kind === 'ticket' ? '券' : x.item ? (ik === 'ruler' ? '定' : ik === 'avatar' ? '着' : ik === 'title' ? '称' : '飾') : x.kind === 'daily' ? '日' : x.kind === 'stage' ? '旗' : '贈';
       return `<li class="ib-${x.kind}"><span class="ib-icon" aria-hidden="true">${icon}</span>
         <span class="ib-body"><b>${esc(x.title)}</b><small>${esc(contentText(x))}・${d.getMonth() + 1}/${d.getDate()}</small>${ownedNote(x)}</span>
         <button type="button" data-claim="${x.id}">${x.kind === 'ticket' ? 'えらぶ' : '受け取る'}</button></li>`;

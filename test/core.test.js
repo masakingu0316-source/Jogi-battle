@@ -452,12 +452,45 @@ test('必殺技：ゲージがたまっていないと使えない。使うと�
   assert.equal(g.gauge[0], 0);
 });
 
-test('ゲージは、はじく・当てる・当てられるでたまる', () => {
+test('ゲージは1周ごとにたまる（はじく・当てる・当てられるでは、たまらない）。たまりやすさは定規ごと', () => {
   const { r, ms, g } = skillGame('ruler:straight30-acrylic');
   Object.assign(g.bodies[0], { x: -6, y: 0, a: Math.PI / 2 });
   Object.assign(g.bodies[1], { x: 2, y: 0, a: Math.PI / 2 });
   r.handle(ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 1, dy: 0, power: 0.5 });
-  assert.deepEqual(g.gauge, [GAUGE.shot + GAUGE.hit, GAUGE.beHit]);
+  assert.deepEqual(g.gauge, [0, 0], '当てても、1周するまではたまらない');
+  r.handle(ms[1].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
+  assert.deepEqual(g.gauge, [GAUGE.charge, GAUGE.charge], '2人とも1回ずつはじいたら1周');
+  assert.equal(g.lap, 1);
+  assert.equal(g.fx.at(-1).kind, 'lap');
+  // 定規ごとのたまりやすさ（設定で変えた値）
+  const cfg = sanitizeConfig({ brands: { 'ruler:straight15-acrylic': { charge: 50 } } });
+  assert.equal(cfg.brands['ruler:straight15-acrylic'].charge, 50);
+  assert.equal(resolveLoadout({ ruler: 'ruler:straight15-acrylic' }, cfg).charge, 50);
+  assert.equal(resolveLoadout({ ruler: 'ruler:straight30-acrylic' }, cfg).charge, GAUGE.charge);
+  assert.equal(sanitizeConfig({ brands: { 'ruler:straight15-acrylic': { charge: 999 } } }).brands['ruler:straight15-acrylic'].charge, GAUGE.chargeMax);
+  assert.equal(sanitizeConfig({ brands: { 'ruler:straight15-acrylic': { charge: GAUGE.charge } } }).brands['ruler:straight15-acrylic'], undefined, '初期値と同じなら持たない');
+  const g2 = skillGame('ruler:straight15-acrylic');
+  g2.r.s.game.bodies[0].charge = 50;
+  g2.r.handle(g2.ms[0].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: -1, power: 0.05 });
+  g2.r.handle(g2.ms[1].id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 1, power: 0.05 });
+  assert.deepEqual(g2.g.gauge, [50, GAUGE.charge]);
+});
+
+test('1周：連打の2打目は同じ番。倒れた人は数えない（3人で1人倒れたら、残りの2人で1周）', () => {
+  const { r } = started(3, 'melee');
+  const g = r.s.game;
+  g.shots = 10;
+  const shoot = () => { const i = g.turn; r.handle(g.order[i], { t: 'flick', lx: 0, ly: 0, dx: 0, dy: 0.01, power: 0.02 }); return i; };
+  shoot(); shoot();
+  assert.deepEqual(g.gauge, [0, 0, 0]);
+  shoot();
+  assert.deepEqual(g.gauge, [25, 25, 25]);
+  // 次の番の人以外の1人を倒す
+  const out = [0, 1, 2].find((i) => i !== g.turn);
+  g.players[out].alive = false; g.bodies[out].state = 'gone';
+  shoot(); shoot();
+  assert.equal(g.gauge[out], 25, '倒れた人にはたまらない');
+  assert.deepEqual([0, 1, 2].filter((i) => i !== out).map((i) => g.gauge[i]), [50, 50]);
 });
 
 test('剛腕：同じ力でも、ずっと遠くまですべる', () => {

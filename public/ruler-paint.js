@@ -22,17 +22,69 @@ function geometry(shapeKey) {
   if (geoCache.has(shapeKey)) return geoCache.get(shapeKey);
   const sh = Physics.SHAPES[shapeKey] || Physics.SHAPES.straight30;
   const off = sh.offset;
-  const outer = sh.verts.map((p) => ({ x: p.x + off.x, y: p.y + off.y }));
-  const normals = sh.normals;
+  let outer = sh.verts.map((p) => ({ x: p.x + off.x, y: p.y + off.y }));
+  let normals = sh.normals;
+  // へこんだ形（部品の組み合わせ）：雲形定規は部品をつないだ外形、はさみ・磁石は部品ごとに描く
+  let multi = null;
+  if (sh.parts) {
+    const parts = sh.parts.map((q) => q.verts.map((p) => ({ x: p.x + off.x, y: p.y + off.y })));
+    if (sh.kind === 'cloud') {
+      outer = unionOutline(sh.parts, off);
+      normals = outer.map((p, i) => {
+        const q = outer[(i + 1) % outer.length];
+        const ex = q.x - p.x, ey = q.y - p.y, l = Math.hypot(ex, ey) || 1;
+        return outer.cw ? { x: -ey / l, y: ex / l } : { x: ey / l, y: -ex / l };
+      });
+    } else multi = parts;
+  }
   const hole = sh.hole ? insetPolygon(outer, normals, sh.hole) : null;
   const xs = outer.map((p) => p.x), ys = outer.map((p) => p.y);
   const box = { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
   // 周の長さ（オーラの粒を周に沿って置く）
   const lens = outer.map((p, i) => Math.hypot(outer[(i + 1) % outer.length].x - p.x, outer[(i + 1) % outer.length].y - p.y));
   const perim = lens.reduce((a, b) => a + b, 0);
-  const g = { sh, off, outer, normals, hole, box, lens, perim, outset: new Map() };
+  const g = { sh, off, outer, normals, hole, box, lens, perim, multi, outset: new Map() };
   geoCache.set(shapeKey, g);
   return g;
+}
+// 部品（凸多角形）を合わせた外形を、細かいマス目でなぞって1本の線にする（形ごとに1回だけ）
+function unionOutline(parts, off) {
+  const step = 0.12;
+  const inPart = (q, x, y) => q.verts.every((v, i) => q.normals[i].x * (x - v.x) + q.normals[i].y * (y - v.y) <= 0);
+  const inside = (x, y) => parts.some((q) => inPart(q, x, y));
+  const all = parts.flatMap((q) => q.verts);
+  const x0 = Math.min(...all.map((p) => p.x)) - step * 2, y0 = Math.min(...all.map((p) => p.y)) - step * 2;
+  const nx = Math.ceil((Math.max(...all.map((p) => p.x)) - x0) / step) + 3, ny = Math.ceil((Math.max(...all.map((p) => p.y)) - y0) / step) + 3;
+  const grid = new Uint8Array(nx * ny);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) grid[j * nx + i] = inside(x0 + i * step, y0 + j * step) ? 1 : 0;
+  const at = (i, j) => (i >= 0 && j >= 0 && i < nx && j < ny ? grid[j * nx + i] : 0);
+  // 左上から最初の中のマス → 外周をたどる（ムーア近傍）
+  let si = -1, sj = -1;
+  for (let j = 0; j < ny && si < 0; j++) for (let i = 0; i < nx; i++) if (grid[j * nx + i]) { si = i; sj = j; break; }
+  const dirs = [[1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0], [-1, -1], [0, -1], [1, -1]];
+  const pts = [];
+  let ci = si, cj = sj, d = 6;
+  for (let guard = 0; guard < nx * ny; guard++) {
+    pts.push({ x: x0 + ci * step + off.x, y: y0 + cj * step + off.y });
+    let found = false;
+    for (let k = 0; k < 8; k++) {
+      const dd = (d + 6 + k) % 8;
+      const ni = ci + dirs[dd][0], nj = cj + dirs[dd][1];
+      if (at(ni, nj)) { ci = ni; cj = nj; d = dd; found = true; break; }
+    }
+    if (!found || (ci === si && cj === sj)) break;
+  }
+  // なめらかにして、点を減らす
+  const sm = pts.map((_, i) => {
+    let sx = 0, sy = 0;
+    for (let k = -3; k <= 3; k++) { const q = pts[(i + k + pts.length) % pts.length]; sx += q.x; sy += q.y; }
+    return { x: sx / 7, y: sy / 7 };
+  });
+  const out = sm.filter((_, i) => i % 3 === 0);
+  let area = 0;
+  for (let i = 0; i < out.length; i++) { const a = out[i], b = out[(i + 1) % out.length]; area += a.x * b.y - b.x * a.y; }
+  out.cw = area < 0;
+  return out;
 }
 // 各辺を内側に d だけずらした多角形（凸多角形なので、となりの辺どうしの交点を取ればよい）
 function insetPolygon(v, n, d) {
@@ -75,6 +127,7 @@ function addPoly(ctx, pts) {
 // 本体の形（中抜きは穴をあける。evenodd で塗る）
 function bodyPath(ctx, g) {
   ctx.beginPath();
+  if (g.multi) { for (const q of g.multi) addPoly(ctx, q); return; }
   addPoly(ctx, g.outer);
   if (g.hole) addPoly(ctx, g.hole);
 }
@@ -214,6 +267,18 @@ function paintScale(ctx, g, mat, P) {
   ctx.strokeStyle = ink;
   ctx.fillStyle = ink;
   ctx.lineWidth = Math.max(0.03, 0.8 / P);
+  if (sh.kind === 'cloud') {
+    // 雲形定規：目盛りの代わりに、ふちに沿った細い線（曲線をなぞる定規）
+    ctx.save();
+    ctx.globalAlpha *= 0.5;
+    ctx.beginPath();
+    addPoly(ctx, g.outer.map((p, i) => ({ x: p.x - g.normals[i].x * 0.55, y: p.y - g.normals[i].y * 0.55 })));
+    ctx.setLineDash([0.12, 0.38]);
+    ctx.lineWidth = Math.max(0.03, 1.4 / P);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
   if (sh.kind === 'protractor') {
     const R = sh.R;
     ctx.beginPath();
@@ -549,6 +614,79 @@ function paintPattern(ctx, id, hx, hy, k) {
       ctx.fillRect(-hx, -hy, L, W);
       break;
     }
+    // ---- バトル道場の柄（和柄） ----
+    case 'pattern:sakura': {
+      // 桜：散らした五枚の花びら
+      const rnd = rng(17);
+      const n = Math.max(3, Math.round(L * W * 0.16));
+      for (let i = 0; i < n; i++) {
+        const x = -hx + rnd() * L, y = -hy + rnd() * W, r = (0.35 + rnd() * 0.35) * k, rot = rnd() * 6;
+        ctx.fillStyle = rnd() > 0.4 ? 'rgba(255, 196, 214, 0.85)' : 'rgba(255, 240, 245, 0.85)';
+        for (let p = 0; p < 5; p++) {
+          const a = rot + p * Math.PI * 2 / 5;
+          ctx.beginPath(); ctx.ellipse(x + Math.cos(a) * r * 0.55, y + Math.sin(a) * r * 0.55, r * 0.5, r * 0.32, a, 0, Math.PI * 2); ctx.fill();
+        }
+        ctx.fillStyle = 'rgba(214, 90, 120, 0.8)'; ctx.beginPath(); ctx.arc(x, y, r * 0.16, 0, Math.PI * 2); ctx.fill();
+      }
+      break;
+    }
+    case 'pattern:asanoha': {
+      // 麻の葉：六角の中に放射状の線
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)'; ctx.lineWidth = 0.07 * k;
+      const s6 = 1.1 * k, h6 = s6 * Math.sqrt(3) / 2;
+      ctx.beginPath();
+      for (let row = 0, y = -hy - h6; y < hy + h6; y += h6 * 1.5, row++) {
+        for (let x = -hx - s6 + (row % 2) * s6 * 0.866; x < hx + s6; x += s6 * 1.732) {
+          for (let q = 0; q < 6; q++) {
+            const a = Math.PI / 6 + q * Math.PI / 3;
+            ctx.moveTo(x, y); ctx.lineTo(x + Math.cos(a) * s6, y + Math.sin(a) * s6);
+            const b = a + Math.PI / 3;
+            ctx.moveTo(x + Math.cos(a) * s6, y + Math.sin(a) * s6); ctx.lineTo(x + Math.cos(b) * s6, y + Math.sin(b) * s6);
+            const m = a + Math.PI / 6;
+            ctx.moveTo(x + Math.cos(a) * s6, y + Math.sin(a) * s6); ctx.lineTo(x + Math.cos(m) * s6 * 0.5, y + Math.sin(m) * s6 * 0.5);
+            ctx.moveTo(x + Math.cos(b) * s6, y + Math.sin(b) * s6); ctx.lineTo(x + Math.cos(m) * s6 * 0.5, y + Math.sin(m) * s6 * 0.5);
+          }
+        }
+      }
+      ctx.stroke();
+      break;
+    }
+    case 'pattern:ichimatsu': {
+      // 市松：濃い色と淡い色の石畳
+      const c = Math.max(0.7, W / 3);
+      let i = 0;
+      for (let x = -hx; x < hx; x += c, i++) {
+        let j = 0;
+        for (let y = -hy; y < hy; y += c, j++) {
+          ctx.fillStyle = (i + j) % 2 ? 'rgba(20, 60, 50, 0.4)' : 'rgba(255, 255, 255, 0.28)';
+          ctx.fillRect(x, y, c, c);
+        }
+      }
+      break;
+    }
+    case 'pattern:yagasuri': {
+      // 矢絣：矢羽根を縦に並べる
+      const w = 1.2 * k, h = W;
+      let i = 0;
+      for (let x = -hx; x < hx; x += w, i++) {
+        ctx.fillStyle = i % 2 ? 'rgba(130, 40, 60, 0.45)' : 'rgba(255, 255, 255, 0.35)';
+        ctx.beginPath();
+        ctx.moveTo(x, -hy); ctx.lineTo(x + w, -hy + h * 0.25); ctx.lineTo(x + w, hy); ctx.lineTo(x, hy - h * 0.25); ctx.closePath();
+        ctx.fill();
+      }
+      break;
+    }
+    case 'pattern:shippo': {
+      // 七宝：重なり合う円
+      ctx.strokeStyle = 'rgba(176, 128, 26, 0.62)'; ctx.lineWidth = 0.1 * k;
+      const r = 0.7 * k;
+      ctx.beginPath();
+      for (let y = -hy - r; y < hy + r; y += r) for (let x = -hx - r; x < hx + r; x += r) {
+        ctx.moveTo(x + r, y); ctx.arc(x, y, r, 0, Math.PI * 2);
+      }
+      ctx.stroke();
+      break;
+    }
   }
 }
 
@@ -714,7 +852,7 @@ function paintEnemy(ctx, b, s, g, px, active, now) {
   ctx.globalAlpha = b.alpha ?? 1;
   ctx.translate(b.x, b.y);
   // 範囲（向きに関係ない円）
-  const range = { 'en-compass': ['rgba(220, 60, 50, 0.5)', 14, true], 'en-glue': ['rgba(142, 91, 214, 0.5)', 12, false], 'en-eraser': ['rgba(63, 127, 214, 0.45)', 9, true] }[b.specKey];
+  const range = { 'en-compass': ['rgba(220, 60, 50, 0.5)', 14, true], 'en-glue': ['rgba(142, 91, 214, 0.5)', 12, false], 'en-eraser': ['rgba(63, 127, 214, 0.45)', 9, true], 'en-magnet': ['rgba(208, 69, 58, 0.32)', 32, true] }[b.specKey];
   if (range && (b.alpha ?? 1) > 0.6) {
     const [col, r, dash] = range;
     ctx.save();
@@ -823,12 +961,91 @@ function paintEnemy(ctx, b, s, g, px, active, now) {
       ctx.fillStyle = '#2b2f36'; ctx.beginPath(); ctx.arc(0, 0, 0.22, 0, Math.PI * 2); ctx.fill();
       break;
     }
+    // ---- 破天荒編 ----
+    case 'en-brush': {
+      // 木の柄・金具・絵の具をふくんだ穂先（色は筆ごと）
+      const col = PAINT_COLOR[b.paint] || PAINT_COLOR.red;
+      ctx.fillStyle = '#c98a4b';
+      ctx.beginPath(); ctx.moveTo(-7.5, -0.42); ctx.lineTo(3.6, -0.55); ctx.lineTo(3.6, 0.55); ctx.lineTo(-7.5, 0.42); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = 'rgba(255, 230, 190, 0.35)'; ctx.fillRect(-7.2, -0.32, 10.4, 0.18);
+      ctx.fillStyle = col; ctx.fillRect(-7.5, -0.42, 1.1, 0.84); // 柄のおしりの色
+      const fg = ctx.createLinearGradient(0, -0.6, 0, 0.6);
+      fg.addColorStop(0, '#f1f3f5'); fg.addColorStop(0.5, '#a9b1bb'); fg.addColorStop(1, '#dfe3e8');
+      ctx.fillStyle = fg; ctx.fillRect(3.4, -0.6, 1.4, 1.2);
+      ctx.fillStyle = '#efe4cf';
+      ctx.beginPath(); ctx.moveTo(4.8, -0.62); ctx.quadraticCurveTo(6.6, -0.6, 7.5, 0); ctx.quadraticCurveTo(6.6, 0.6, 4.8, 0.62); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = col;
+      ctx.beginPath(); ctx.moveTo(5.6, -0.55); ctx.quadraticCurveTo(6.8, -0.45, 7.5, 0); ctx.quadraticCurveTo(6.8, 0.45, 5.6, 0.55); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(70, 40, 15, 0.6)'; ctx.lineWidth = line(1); bodyPath(ctx, g); ctx.stroke();
+      break;
+    }
+    case 'en-palette': {
+      // 白いパレットに、4色の絵の具のくぼみと、親指の穴
+      const R = 5.2, R2 = 3.9;
+      ctx.fillStyle = '#fbfaf6'; ctx.beginPath(); ctx.ellipse(0, 0, R, R2, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = 'rgba(120, 110, 90, 0.6)'; ctx.lineWidth = line(1.2); ctx.stroke();
+      const wells = [['red', -2.6, -1.9], ['blue', 0.2, -2.6], ['green', 2.8, -1.6], ['yellow', 3.2, 1.2]];
+      for (const [c, x, y] of wells) {
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.08)'; ctx.beginPath(); ctx.arc(x + 0.08, y + 0.1, 1.05, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = PAINT_COLOR[c]; ctx.beginPath(); ctx.arc(x, y, 0.95, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)'; ctx.beginPath(); ctx.ellipse(x - 0.3, y - 0.35, 0.35, 0.16, -0.5, 0, Math.PI * 2); ctx.fill();
+      }
+      // 混ぜた跡
+      ctx.fillStyle = 'rgba(150, 90, 160, 0.35)'; ctx.beginPath(); ctx.ellipse(-0.6, 1.4, 1.6, 0.8, 0.3, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#d9bb8f'; ctx.beginPath(); ctx.ellipse(-3.3, 1.4, 0.8, 0.65, 0.4, 0, Math.PI * 2); ctx.fill(); // 親指の穴（机が見える）
+      ctx.strokeStyle = 'rgba(120, 110, 90, 0.5)'; ctx.lineWidth = line(1); ctx.stroke();
+      break;
+    }
+    case 'en-scissors': {
+      // 刃（金属）・持ち手（オレンジの輪）・要のねじ
+      const [b1, b2, h1, h2] = g.multi;
+      const mg = ctx.createLinearGradient(0, -3, 9, 3);
+      mg.addColorStop(0, '#eef1f4'); mg.addColorStop(0.5, '#a3acb7'); mg.addColorStop(1, '#dde2e7');
+      for (const q of [b1, b2]) { ctx.beginPath(); addPoly(ctx, q); ctx.fillStyle = mg; ctx.fill(); ctx.strokeStyle = 'rgba(60, 68, 80, 0.7)'; ctx.lineWidth = line(1); ctx.stroke(); }
+      for (const q of [h1, h2]) {
+        ctx.beginPath(); addPoly(ctx, q); ctx.fillStyle = '#e8743b'; ctx.fill();
+        const cx = q.reduce((a, p) => a + p.x, 0) / q.length, cy = q.reduce((a, p) => a + p.y, 0) / q.length;
+        ctx.fillStyle = '#d9bb8f'; ctx.beginPath(); ctx.ellipse(cx, cy, 1.15, 0.6, cy > g.off.y ? -0.3 : 0.3, 0, Math.PI * 2); ctx.fill();
+        ctx.beginPath(); addPoly(ctx, q); ctx.strokeStyle = 'rgba(120, 50, 20, 0.7)'; ctx.lineWidth = line(1); ctx.stroke();
+      }
+      // 刃の間（ここで番を終えると力が半分）をうっすら
+      const { len, open } = Physics.BLADE;
+      ctx.fillStyle = 'rgba(232, 116, 59, 0.16)';
+      ctx.beginPath(); ctx.moveTo(g.off.x * 0, 0); ctx.lineTo(Math.cos(open) * len, Math.sin(open) * len); ctx.lineTo(Math.cos(open) * len, -Math.sin(open) * len); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = '#5b6470'; ctx.beginPath(); ctx.arc(0, 0, 0.42, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#c9ced6'; ctx.beginPath(); ctx.arc(-0.08, -0.08, 0.2, 0, Math.PI * 2); ctx.fill();
+      break;
+    }
+    case 'en-magnet': {
+      // 赤いU字と、銀色の極（N・S）
+      for (const q of g.multi) { ctx.beginPath(); addPoly(ctx, q); ctx.fillStyle = '#d0453a'; ctx.fill(); }
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.25)'; ctx.fillRect(-3.3, -3.1, 0.4, 6.2);
+      const sg = ctx.createLinearGradient(0, -3.3, 0, 3.3);
+      sg.addColorStop(0, '#f2f4f6'); sg.addColorStop(0.5, '#a8b0ba'); sg.addColorStop(1, '#e3e7ea');
+      ctx.fillStyle = sg;
+      ctx.fillRect(2.0, -3.3, 1.4, 1.8); ctx.fillRect(2.0, 1.5, 1.4, 1.8);
+      for (const q of g.multi) { ctx.beginPath(); addPoly(ctx, q); ctx.strokeStyle = 'rgba(90, 20, 15, 0.65)'; ctx.lineWidth = line(1); ctx.stroke(); }
+      if (P > 9) {
+        ctx.save(); ctx.scale(1 / P, 1 / P);
+        ctx.fillStyle = '#2b2f36'; ctx.font = `700 ${(1.2 * P).toFixed(1)}px "BIZ UDPGothic", sans-serif`;
+        ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+        ctx.fillText('N', 2.7 * P, -2.4 * P); ctx.fillText('S', 2.7 * P, 2.4 * P);
+        ctx.restore();
+      }
+      break;
+    }
+    case 'boss-cloud': {
+      // 雷雲の雲形定規：体力で白い雲 → 灰色の雲 → 黒い雷雲
+      const form = Physics.formIndex(b.hp ?? 100, b.maxHp || 100);
+      paintCloud(ctx, g, P, now, ['white', 'gray', 'black'][form] || 'white');
+      break;
+    }
     default: {
       bodyPath(ctx, g); ctx.fillStyle = '#ccc'; ctx.fill();
     }
   }
   const hpPct = ((b.hp ?? 100) / (b.maxHp || 100)) * 100;
-  if (hpPct < 70 && b.specKey !== 'en-clip') paintCracks(ctx, g, hpPct, P, b.owner || 0);
+  if (hpPct < 70 && !['en-clip', 'boss-cloud', 'en-scissors', 'en-magnet'].includes(b.specKey)) paintCracks(ctx, g, hpPct, P, b.owner || 0);
   if (active) {
     ctx.globalAlpha = (b.alpha ?? 1) * (0.55 + 0.45 * Math.sin(now / 260));
     ctx.beginPath();
@@ -840,6 +1057,55 @@ function paintEnemy(ctx, b, s, g, px, active, now) {
     ctx.setLineDash([]);
   }
   ctx.restore();
+}
+
+// 絵の具の色（stage.js の PAINT と同じ）
+const PAINT_COLOR = { red: '#e0483a', blue: '#2f7fd6', green: '#3fae5a', yellow: '#e8b818' };
+// 雲形定規の雲（tone：white / gray / black / storm〈プレイヤーの定規〉）
+const CLOUD_TONE = {
+  white: { a: '#ffffff', b: '#dde4f0', edge: 'rgba(110, 120, 160, 0.85)', puff: 'rgba(255, 255, 255, 0.9)' },
+  gray: { a: '#d4d8df', b: '#8e94a2', edge: 'rgba(60, 64, 78, 0.9)', puff: 'rgba(240, 242, 246, 0.55)' },
+  black: { a: '#5a5470', b: '#211e2c', edge: 'rgba(10, 8, 16, 0.95)', puff: 'rgba(150, 140, 190, 0.35)', flash: true },
+  storm: { a: '#6f63d8', b: '#2c2560', edge: 'rgba(20, 12, 40, 0.9)', puff: 'rgba(200, 190, 255, 0.4)', flash: true },
+};
+function paintCloud(ctx, g, P, now, tone) {
+  const t = CLOUD_TONE[tone] || CLOUD_TONE.white;
+  const { box } = g;
+  const cx = (box.x0 + box.x1) / 2, cy = (box.y0 + box.y1) / 2;
+  ctx.save();
+  bodyPath(ctx, g);
+  const gr = ctx.createRadialGradient(cx - 3, cy - 3, 1, cx, cy, (box.x1 - box.x0) * 0.6);
+  gr.addColorStop(0, t.a); gr.addColorStop(1, t.b);
+  ctx.globalAlpha *= 0.94; // アクリルなので少し透ける
+  ctx.fillStyle = gr; ctx.fill();
+  ctx.clip();
+  // もこもこの雲（部品の上側に丸を重ねる）
+  ctx.fillStyle = t.puff;
+  for (const q of g.sh.parts) {
+    const px = q.center.x + g.off.x, py = q.center.y + g.off.y;
+    const r = Math.sqrt(q.area / Math.PI);
+    for (const [dx, dy, k] of [[-0.45, -0.35, 0.42], [0.1, -0.5, 0.36], [0.5, -0.25, 0.3]]) {
+      ctx.beginPath(); ctx.arc(px + dx * r, py + dy * r, r * k, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+  // 黒い雷雲は、中で稲妻がときどき光る
+  if (t.flash) {
+    const ph = (now % 2400) / 2400;
+    if (ph < 0.12 || (ph > 0.2 && ph < 0.26)) {
+      ctx.strokeStyle = 'rgba(230, 220, 255, 0.9)'; ctx.lineWidth = Math.max(0.12, 2 / P); ctx.lineJoin = 'miter';
+      ctx.beginPath(); ctx.moveTo(cx - 2, box.y0 + 1); ctx.lineTo(cx - 3.2, cy); ctx.lineTo(cx - 1.4, cy); ctx.lineTo(cx - 2.8, box.y1 - 1); ctx.stroke();
+    }
+  }
+  ctx.restore();
+  // つやの帯（アクリル）
+  ctx.save(); bodyPath(ctx, g); ctx.clip();
+  const sh = ctx.createLinearGradient(box.x0, box.y0, box.x1, box.y1);
+  sh.addColorStop(0.3, 'rgba(255,255,255,0)'); sh.addColorStop(0.4, 'rgba(255,255,255,0.3)'); sh.addColorStop(0.5, 'rgba(255,255,255,0)');
+  ctx.fillStyle = sh; ctx.fillRect(box.x0, box.y0, box.x1 - box.x0, box.y1 - box.y0);
+  ctx.restore();
+  bodyPath(ctx, g);
+  ctx.strokeStyle = t.edge; ctx.lineWidth = Math.max(0.06, 1.5 / P); ctx.stroke();
+  paintScale(ctx, g, tone === 'white' || tone === 'gray' ? 'acrylic' : 'gold', P);
 }
 
 // ---- 定規ケースのアイコン（正方形。長い定規は斜めに置いて大きく見せる） ----
@@ -890,7 +1156,7 @@ export function iconRuler(canvas, look, opt = {}) {
 // R＝教室の持ち物、SR＝製図用、SSR＝漆・蒔絵・金箔の工芸品。本体の形で切り抜いた中に描く（形を定義したときの座標）
 // ART_BASE：地の色から塗りかえる絵柄（席の色は外のふちで見せる）。ART_INK：目盛りの色
 export const matLook = (mat) => ICON_PL[mat] || ICON_PL.acrylic;
-const ART_BASE = new Set(['steel', 'makie', 'karakawa', 'raden', 'urushi', 'kinpaku']);
+const ART_BASE = new Set(['steel', 'makie', 'karakawa', 'raden', 'urushi', 'kinpaku', 'board', 'raiun']);
 const ART_INK = { makie: 'gold', karakawa: 'gold', raden: 'gold', urushi: 'gold', steel: 'metal', kinpaku: 'metal' };
 function rng(seed) { let r = seed; return () => (r = (r * 16807) % 2147483647) / 2147483647; }
 function fillBox(ctx, g, style) { const { box } = g; ctx.fillStyle = style; ctx.fillRect(box.x0 - 1, box.y0 - 1, box.x1 - box.x0 + 2, box.y1 - box.y0 + 2); }
@@ -907,6 +1173,47 @@ function glint(ctx, g, now, alpha = 0.45) {
 }
 const ART_PAINT = {
   plain() {},
+  // SSR：雷雲（雲形定規。藍の雷雲に、ときどき光る稲妻と金の雷紋）
+  raiun(ctx, g, P, now) {
+    const { box } = g;
+    const gr = ctx.createLinearGradient(box.x0, box.y0, box.x1, box.y1);
+    gr.addColorStop(0, '#4b3fb0'); gr.addColorStop(0.55, '#2a235e'); gr.addColorStop(1, '#5a4fcf');
+    fillBox(ctx, g, gr);
+    ctx.fillStyle = 'rgba(200, 190, 255, 0.28)';
+    for (const q of g.sh.parts || []) {
+      const px = q.center.x + g.off.x, py = q.center.y + g.off.y, r = Math.sqrt(q.area / Math.PI);
+      ctx.beginPath(); ctx.arc(px - 0.4 * r, py - 0.35 * r, r * 0.42, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.arc(px + 0.15 * r, py - 0.5 * r, r * 0.34, 0, Math.PI * 2); ctx.fill();
+    }
+    // 金の雷紋（四角いうず）を帯に
+    ctx.strokeStyle = 'rgba(255, 216, 120, 0.75)'; ctx.lineWidth = Math.max(0.04, 1 / P);
+    const y = box.y1 - 1.6;
+    for (let x = box.x0 + 1; x < box.x1 - 1.4; x += 1.6) {
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 1.1, y); ctx.lineTo(x + 1.1, y - 1.1); ctx.lineTo(x + 0.3, y - 1.1); ctx.lineTo(x + 0.3, y - 0.4); ctx.lineTo(x + 0.75, y - 0.4); ctx.stroke();
+    }
+    const ph = (now % 3000) / 3000;
+    if (ph < 0.08) {
+      const cx = (box.x0 + box.x1) / 2;
+      ctx.strokeStyle = 'rgba(255, 246, 200, 0.95)'; ctx.lineWidth = Math.max(0.1, 2 / P);
+      ctx.beginPath(); ctx.moveTo(cx + 1, box.y0 + 0.8); ctx.lineTo(cx - 0.6, box.y0 + 4); ctx.lineTo(cx + 0.8, box.y0 + 4); ctx.lineTo(cx - 0.8, box.y0 + 7.5); ctx.stroke();
+    }
+    glint(ctx, g, now, 0.3);
+  },
+  // 黒板用の大きな定規（担任の先生）：木の地と、真ん中の取っ手
+  board(ctx, g, P) {
+    const { box } = g;
+    const gr = ctx.createLinearGradient(box.x0, box.y0, box.x0, box.y1);
+    gr.addColorStop(0, '#e6c48a'); gr.addColorStop(0.5, '#d4ad6c'); gr.addColorStop(1, '#c69c5c');
+    fillBox(ctx, g, gr);
+    ctx.strokeStyle = 'rgba(120, 80, 30, 0.25)'; ctx.lineWidth = Math.max(0.02, 0.6 / P);
+    const h = box.y1 - box.y0;
+    for (let k = 1; k < 5; k++) { ctx.beginPath(); for (let x = box.x0; x <= box.x1; x += 1) { const y = box.y0 + h * k / 5 + Math.sin(x * 0.3 + k) * 0.12; if (x === box.x0) ctx.moveTo(x, y); else ctx.lineTo(x, y); } ctx.stroke(); }
+    // 取っ手
+    const cx = (box.x0 + box.x1) / 2, cy = box.y0 + h * 0.62;
+    ctx.fillStyle = 'rgba(60, 40, 20, 0.35)'; roundRect(ctx, cx - 3.2 + 0.2, cy - 0.9 + 0.25, 6.4, 1.8, 0.9); ctx.fill();
+    ctx.fillStyle = '#7a5530'; roundRect(ctx, cx - 3.2, cy - 0.9, 6.4, 1.8, 0.9); ctx.fill();
+    ctx.fillStyle = 'rgba(255, 230, 190, 0.35)'; roundRect(ctx, cx - 2.6, cy - 0.7, 5.2, 0.5, 0.25); ctx.fill();
+  },
   // R：名前シール（白い名前欄に手書きの線）
   namesticker(ctx, g, P) {
     const { box } = g;

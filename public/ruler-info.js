@@ -1,7 +1,7 @@
 // 定規のレベル・属性の表示（ホーム・定規ケース・部屋・対戦で共用）
 import { ITEMS, MATERIAL_INFO, matInfo, levelInfo, levelBonus, rulerTune } from './shared/catalog.js';
-import { SKILLS, skillFor, skillDesc } from './shared/rules.js';
-import { brandSkill } from './shared/catalog.js';
+import { SKILLS, skillFor, skillDesc, lapsToFull } from './shared/rules.js';
+import { brandSkill, brandCharge } from './shared/catalog.js';
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
@@ -42,7 +42,14 @@ export function skillText(id, cfg) {
   const r = rulerOf(id);
   const key = r && brandSkill(r, cfg);
   const sk = key && SKILLS[key];
-  return sk ? `必殺技「${sk.name}」${sk.ssr ? '（SSR専用）' : ''}：${skillDesc(key, cfg?.skillTune)}` : '';
+  return sk ? `必殺技「${sk.name}」${sk.ssr ? '（SSR専用）' : ''}：${skillDesc(key, cfg?.skillTune)}\n${chargeText(id, cfg)}` : '';
+}
+// 必殺ゲージのたまりやすさ（1周ごと）
+export function chargeText(id, cfg) {
+  const r = rulerOf(id);
+  if (!r) return '';
+  const c = brandCharge(r, cfg);
+  return `必殺ゲージ：1周ごとに+${c}（${lapsToFull(c)}周で満タン）`;
 }
 export function rulerTitle(id) {
   const r = rulerOf(id);

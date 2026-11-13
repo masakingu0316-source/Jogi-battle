@@ -16,6 +16,7 @@ export function createAccount(ctx) {
   let tab = 'case';
   let editing = null; // 定規ケースで選んでいる定規
   let picking = false; // 部屋から開いた：選んだ定規で戦う（選んだら部屋に戻る）
+  let backTo = null;   // 部屋以外（道場）から選びに来たとき、戻る先
   // 値段・確率・アクセサリの効き目は、管理者の設定（/api/config）に合わせる
   const game = () => app.game || defaultConfig();
   const accText = (id) => accTextOf(id, game());
@@ -73,9 +74,12 @@ export function createAccount(ctx) {
     if (!app.me) return;
     app.view = 'mypage';
     ctx.show('mypage');
-    picking = !!(opt.pick && app.state && app.state.phase !== 'aim');
-    // 部屋にいるときは、下のタブの代わりに「部屋に戻る」を出す
-    $('myHead').hidden = !app.state;
+    backTo = opt.pick && opt.back ? opt.back : null;
+    picking = !!(opt.pick && ((app.state && app.state.phase !== 'aim') || backTo));
+    // 部屋にいるときは、下のタブの代わりに「部屋に戻る」を出す（道場から来たときは「道場に戻る」）
+    $('myHead').hidden = !app.state && !backTo;
+    $('myBack').textContent = backTo === 'dojo' ? '← 道場に戻る' : '← 部屋に戻る';
+    $('pickNote').textContent = backTo === 'dojo' ? '道場で使う定規をタップして、「この定規で戦う」を押してください' : '部屋で使う定規をタップして、「この定規で戦う」を押してください';
     $('pickNote').hidden = !picking;
     $('mypage').classList.toggle('picking', picking);
     window.scrollTo(0, 0);
@@ -92,6 +96,7 @@ export function createAccount(ctx) {
     picking = false;
     $('mypage').classList.remove('picking');
     if ($('rulerSheet').open) $('rulerSheet').close?.();
+    if (backTo) { const b = backTo; backTo = null; ctx.onBack?.(b); return; }
     if (app.state) { app.view = 'room'; ctx.render(); }
     else ctx.showHome();
   }
@@ -142,7 +147,7 @@ export function createAccount(ctx) {
   let caseSort = SORTS[pref('sort', 'got')] ? pref('sort', 'got') : 'got';
   let caseMat = MATS[pref('mat', 'all')] ? pref('mat', 'all') : 'all';
   const orderOf = (id) => allRulers().findIndex((r) => r.id === id);
-  const howToGet = (r) => (r.stage ? 'ステージ「可変定規編」をすべてクリアするともらえる' : r.gacha ? `定規ガチャで出る（${RULER_RARITY[r.rarity]?.name || r.rarity}）` : '今は手に入りません');
+  const howToGet = (r) => (r.stage ? `ステージ「${r.stage === 'hatenko' ? '破天荒編' : '可変定規編'}」をすべてクリアするともらえる` : r.gacha ? `定規ガチャで出る（${RULER_RARITY[r.rarity]?.name || r.rarity}）` : '今は手に入りません');
 
   function sortedRulers() {
     const me = app.me, have = owned();

@@ -1,8 +1,10 @@
 // アイテムの一覧（サーバーと画面で共有）
 // kind: ruler 定規 / pattern 柄 / sticker シール / acc アクセサリ（性能に効く）
 import Physics from './physics.js';
-import { SKILLS, RULER_SKILL, skillFor, SKILL_TUNE, SKILL_TUNE_KEYS, TRAITS } from './rules.js';
+import { SKILLS, RULER_SKILL, skillFor, SKILL_TUNE, SKILL_TUNE_KEYS, TRAITS, GAUGE } from './rules.js';
 import { ENEMIES, SCALE } from './stage.js';
+import { applyAvatarParts, sanitizeAvatarParts } from './avatar.js';
+import { sanitizeClassmates, defaultClassmates, DOJO_PATTERNS, TITLES, TEACHER_RULER } from './dojo.js';
 
 export const RARITIES = {
   N: { name: 'ノーマル', weight: 60, refund: 2, color: '#c9d3cd' },
@@ -33,6 +35,11 @@ export const ECONOMY = {
   expPlay: 10,        // 定規の経験値：対戦に使った
   expWin: 10,         // 勝ったときの上乗せ
   expKo: 5,           // 相手を1本落とすごと
+  // バトル道場（えんぴつは対戦と同じ1日の上限に数える）
+  dojoPlay: 3,        // 道場：対戦に参加
+  dojoWin: 7,         // 道場：勝ったときの上乗せ
+  dojoExpPlay: 10,    // 道場：定規の経験値（対戦に使った）
+  dojoExpWin: 10,     // 道場：定規の経験値（勝ったときの上乗せ）
 };
 
 // ---- 定規のレベル ----
@@ -67,11 +74,14 @@ export const SHAPE_INFO = {
   tri60: { name: '三角定規（30°・60°）', desc: '30°・60°の三角定規。長い辺で受け止める' },
   protractor: { name: '分度器', desc: '半円の分度器。丸い背で当たりを受け流す' },
   folding: { name: '折りたたみ定規', desc: '50cmの折りたたみ定規。体力が減るほど伸びて長くなる' },
+  cloud: { name: '雲形定規', desc: '曲線の雲形定規。へこんだ形のまま当たる。体力が減るほど雲が暗くなる' },
 };
 export const MATERIAL_INFO = {
   acrylic: { name: 'アクリル', desc: 'よくすべり、よく跳ね返る', color: '#2f9fd8', aura: '#7fd8ff' },
   metal: { name: 'メタル', desc: '重くて、押されにくい', color: '#b8892a', aura: '#ffd36b' },
   rubber: { name: 'ラバー', desc: 'すぐ止まり、跳ね返らない', color: '#d0457f', aura: '#ff7ab6' },
+  // 担任の先生の黒板用の定規だけ（三すくみには入らない）
+  wood: { name: '木', desc: '重くて長い。三すくみには入らない', color: '#a8773c', aura: '#ffd9a0' },
 };
 export const MAT_ORDER = ['acrylic', 'metal', 'rubber'];
 // 三すくみ：strong は当てたとき少し強く弾ける相手、weak はその逆
@@ -85,7 +95,7 @@ export function matInfo(mat) {
 // gacha：定規ガチャに出るか。starter：はじめから全員が持っている。stage：ステージの報酬
 // art：絵柄（ruler-paint.js で描く）。N は学習定規、R は教室の持ち物、SR は製図用、SSR は漆・蒔絵・金箔
 const FORM_SHAPES = ['straight30', 'straight15', 'tri45', 'tri60', 'protractor'];
-export const BRAND_SHAPES = [...FORM_SHAPES, 'folding'];
+export const BRAND_SHAPES = [...FORM_SHAPES, 'folding', 'cloud'];
 const DEFAULT_BRANDS = [];
 for (const shape of FORM_SHAPES) {
   for (const mat of MAT_ORDER) {
@@ -120,7 +130,12 @@ B('ssr-kinpaku-prot', 'SSR', 'protractor', 'acrylic', '金箔の分度器', 'hya
 // ステージ「可変定規編」の報酬（ガチャには出ない）
 DEFAULT_BRANDS.push({
   id: 'ruler:folding-acrylic', rarity: 'SSR', name: '折りたたみ定規（アクリル）', shape: 'folding', mat: 'acrylic', art: 'plain', trait: 'aim', skill: 'fullopen',
-  gacha: false, starter: false, stage: true,
+  gacha: false, starter: false, stage: 'kahen',
+});
+// ステージ「破天荒編」の報酬（ガチャには出ない）
+DEFAULT_BRANDS.push({
+  id: 'ruler:cloud-acrylic', rarity: 'SSR', name: '雷雲の雲形定規', shape: 'cloud', mat: 'acrylic', art: 'raiun', trait: 'edge', skill: 'raiun',
+  gacha: false, starter: false, stage: 'hatenko',
 });
 export const ARTS = {
   plain: { name: '学習定規', rarity: 'N' },
@@ -130,18 +145,20 @@ export const ARTS = {
   drafting: { name: '製図目盛り', rarity: 'SR' }, fullcircle: { name: '全円目盛り', rarity: 'SR' },
   makie: { name: '金蒔絵', rarity: 'SSR' }, karakawa: { name: '金唐革', rarity: 'SSR' }, raden: { name: '螺鈿', rarity: 'SSR' },
   urushi: { name: '朱漆', rarity: 'SSR' }, kinpaku: { name: '金箔', rarity: 'SSR' },
+  raiun: { name: '雷雲', rarity: 'SSR' },
 };
 export const DEFAULT_BRAND_IDS = DEFAULT_BRANDS.map((b) => b.id);
 export const defaultBrands = () => DEFAULT_BRANDS.map((b) => ({ ...b }));
-const specKeyOf = (b) => (b.shape === 'folding' ? 'folding-acrylic' : `${b.shape}-${b.mat}`);
+const specKeyOf = (b) => (b.shape === 'folding' ? 'folding-acrylic' : b.shape === 'cloud' ? 'cloud-acrylic' : `${b.shape}-${b.mat}`);
 function brandItem(b) {
   const specKey = specKeyOf(b);
+  const charge = Number.isFinite(b.charge) ? b.charge : GAUGE.charge;
   const shape = SHAPE_INFO[b.shape];
-  const how = b.stage ? 'ステージ「可変定規編」をすべてクリアするともらえる。' : '';
+  const how = b.stage ? `ステージ「${b.stage === 'hatenko' ? '破天荒編' : '可変定規編'}」をすべてクリアするともらえる。` : '';
   return {
     id: b.id, kind: 'ruler', rarity: b.rarity, name: b.name, specKey, shape: b.shape, mat: b.mat, art: b.art || 'plain',
     trait: TRAITS[b.trait] ? b.trait : null, skill: SKILLS[b.skill] ? b.skill : RULER_SKILL[specKey] || 'power',
-    gacha: !!b.gacha, starter: !!b.starter, stage: !!b.stage, custom: !!b.custom,
+    gacha: !!b.gacha, starter: !!b.starter, stage: b.stage || false, custom: !!b.custom, charge,
     desc: `${how}${shape?.desc || ''}。${MATERIAL_INFO[b.mat]?.desc || ''}`,
   };
 }
@@ -175,18 +192,26 @@ const items = [
   { id: 'acc:pencilcap', kind: 'acc', rarity: 'SR', name: 'えんぴつキャップ', stat: 'power', pct: 4 },
   { id: 'acc:goldclip', kind: 'acc', rarity: 'SSR', name: '金のクリップ', stat: 'mass', pct: 5 },
   { id: 'acc:goldcot', kind: 'acc', rarity: 'SSR', name: '金の指サック', stat: 'power', pct: 5 },
+
+  // バトル道場だけで手に入る柄と、称号（ガチャには出ない）
+  ...DOJO_PATTERNS,
+  ...TITLES,
 ];
 
 export const ITEMS = Object.fromEntries(items.map((it) => [it.id, it]));
+// アバターのパーツも持ち物の一覧に入れる（ガチャの中身には入らない）
+for (const it of applyAvatarParts(null)) ITEMS[it.id] = it;
 // 飾りガチャ（柄・シール・アクセサリ）に出るもの。定規は定規ガチャから出る
-export const GACHA_POOL = items.filter((it) => it.kind !== 'ruler');
+export const GACHA_POOL = items.filter((it) => ['pattern', 'sticker', 'acc'].includes(it.kind) && !it.dojo);
 export const BASIC_RULERS = items.filter((it) => it.kind === 'ruler' && it.starter).map((it) => it.id);
 export const DEFAULT_RULER = 'ruler:straight30-acrylic';
 
 // 設定画面で変えた銘柄（名前・レア度・絵柄・特性・必殺技・ガチャに出すか）と、追加した銘柄を一覧に反映する。
 // サーバーでは設定を読むたび、画面では設定を受け取ったときに呼ぶ（同じ一覧を書きかえる）
 export function applyConfig(cfg) {
-  for (const it of Object.values(ITEMS)) if (it.kind === 'ruler' && it.custom) delete ITEMS[it.id];
+  for (const it of Object.values(ITEMS)) if ((it.kind === 'ruler' && it.custom) || it.kind === 'avatar') delete ITEMS[it.id];
+  // アバターのパーツ（持ち物として配れるように、一覧に入れる）
+  for (const it of applyAvatarParts(cfg?.avatarParts)) ITEMS[it.id] = it;
   for (const b of DEFAULT_BRANDS) {
     const o = cfg?.brands?.[b.id] || {};
     // 前の版の「形×素材ごとの必殺技の割り当て」も効かせる
@@ -224,6 +249,10 @@ export const ECONOMY_KEYS = {
   expPlay: { name: '定規の経験値：対戦に使った', min: 0, max: 1000, unit: '点' },
   expWin: { name: '定規の経験値：勝ったときの上乗せ', min: 0, max: 1000, unit: '点' },
   expKo: { name: '定規の経験値：1本落とすごと', min: 0, max: 1000, unit: '点' },
+  dojoPlay: { name: 'バトル道場：対戦に参加', min: 0, max: 1000 },
+  dojoWin: { name: 'バトル道場：勝ったときの上乗せ', min: 0, max: 1000 },
+  dojoExpPlay: { name: 'バトル道場：定規の経験値（対戦に使った）', min: 0, max: 1000, unit: '点' },
+  dojoExpWin: { name: 'バトル道場：定規の経験値（勝ったときの上乗せ）', min: 0, max: 1000, unit: '点' },
 };
 
 export function defaultConfig() {
@@ -241,6 +270,8 @@ export function defaultConfig() {
     enemyHp: Object.fromEntries(Object.entries(ENEMIES).map(([k, d]) => [k, d.hp])), // ステージの敵の体力（マップ1のとき）
     enemyHpGrow: Math.round(SCALE.hp * 1000) / 10,     // マップが1つ進むごとに増える体力（％）
     brands: {}, // 変えた銘柄と、追加した銘柄だけ { id: { name, rarity, art, trait, skill, gacha（追加は custom, shape, mat も） } }
+    avatarParts: {}, // 変えたアバターのパーツと、追加したパーツだけ { 'avatar:部位:key': { name, rarity, basic, c1, c2（追加は custom, base も） } }
+    classmates: defaultClassmates(), // クラスメイト31人（バトル道場の相手）
   };
 }
 
@@ -337,20 +368,30 @@ export function sanitizeConfig(input) {
     if (RARITY_ORDER.includes(v.rarity)) out.rarity = v.rarity;
     if (ARTS[v.art]) out.art = v.art;
     if (v.trait === null || v.trait === '' || TRAITS[v.trait]) out.trait = TRAITS[v.trait] ? v.trait : null;
-    if (SKILLS[v.skill]) out.skill = v.skill;
+    if (SKILLS[v.skill] && !SKILLS[v.skill].teacher) out.skill = v.skill;
     if (typeof v.gacha === 'boolean') out.gacha = d?.stage ? false : v.gacha;
+    // 必殺ゲージのたまりやすさ（1周でたまる量）
+    if (v.charge !== undefined && v.charge !== null && v.charge !== '') out.charge = num(v.charge, GAUGE.chargeMin, GAUGE.chargeMax, GAUGE.charge);
     if (isCustom) {
       if (!FORM_SHAPES.includes(v.shape) || !MAT_ORDER.includes(v.mat)) continue;
-      brands[id] = { name: out.name || '名前のない定規', rarity: out.rarity || 'N', art: out.art || 'plain', trait: out.trait ?? null, skill: out.skill || RULER_SKILL[`${v.shape}-${v.mat}`], gacha: out.gacha ?? true, custom: true, shape: v.shape, mat: v.mat };
+      brands[id] = { name: out.name || '名前のない定規', rarity: out.rarity || 'N', art: out.art || 'plain', trait: out.trait ?? null, skill: out.skill || RULER_SKILL[`${v.shape}-${v.mat}`], gacha: out.gacha ?? true, custom: true, shape: v.shape, mat: v.mat, charge: out.charge ?? GAUGE.charge };
       continue;
     }
-    for (const k of Object.keys(out)) if (out[k] === (d[k] ?? null)) delete out[k];
+    for (const k of Object.keys(out)) if (out[k] === (k === 'charge' ? d.charge ?? GAUGE.charge : d[k] ?? null)) delete out[k];
     if (Object.keys(out).length) brands[id] = out;
   }
   const enemyHp = {};
   for (const k of Object.keys(ENEMIES)) enemyHp[k] = num(src.enemyHp?.[k], ENEMY_HP_RANGE.min, ENEMY_HP_RANGE.max, base.enemyHp[k]);
   const enemyHpGrow = num(src.enemyHpGrow, 0, 50, base.enemyHpGrow, 0.5);
-  return { economy, rarities, acc, disabled, skills, rulers, rarityBonus, traits, skillTune, rulerGacha, brands, enemyHp, enemyHpGrow };
+  // アバターのパーツ → クラスメイト（足したパーツも使えるように、先にパーツを反映する）
+  const avatarParts = sanitizeAvatarParts(src.avatarParts);
+  applyAvatarParts(avatarParts);
+  // クラスメイト：使う定規は今ある銘柄（先生は黒板の定規）、もらえる物は今ある持ち物だけ
+  const classmates = sanitizeClassmates(src.classmates, {
+    isRuler: (id) => id === TEACHER_RULER || DEFAULT_BRANDS.some((b) => b.id === id) || !!brands[id]?.custom,
+    itemOk: (id) => !!ITEMS[id] || /^avatar:[a-zA-Z]+:x-/.test(id),
+  });
+  return { economy, rarities, acc, disabled, skills, rulers, rarityBonus, traits, skillTune, rulerGacha, brands, enemyHp, enemyHpGrow, avatarParts, classmates };
 }
 
 // 設定として成り立っているか（保存の前に確かめる）。問題があれば理由を返す
@@ -434,6 +475,12 @@ export function brandSkill(ruler, cfg) {
   if (SKILLS[old]) return old;
   return ruler.skill || skillFor(ruler.specKey);
 }
+// 銘柄の必殺ゲージのたまりやすさ（1周でたまる量。設定で変えた値 → 銘柄の初期値）
+export function brandCharge(ruler, cfg) {
+  const o = cfg?.brands?.[ruler?.id]?.charge;
+  if (Number.isFinite(o)) return o;
+  return Number.isFinite(ruler?.charge) ? ruler.charge : GAUGE.charge;
+}
 // 重さ・はじく力：レア度 × レベル × アクセサリ を掛け合わせる（上限は physics.js の MOD_TOTAL_LIMIT）
 export function resolveLoadout(setup, cfg = defaultConfig(), level = 1, cap = LEVEL_MAX) {
   const ruler = ITEMS[setup?.ruler] && ITEMS[setup.ruler].kind === 'ruler' ? ITEMS[setup.ruler] : ITEMS[DEFAULT_RULER];
@@ -453,7 +500,7 @@ export function resolveLoadout(setup, cfg = defaultConfig(), level = 1, cap = LE
   for (const k of Object.keys(mods)) mods[k] = Math.round(mods[k] * 10000) / 10000;
   const trait = ruler.trait || null;
   return {
-    ruler: ruler.id, specKey: ruler.specKey, pattern, sticker, acc, level: lv, mods, skill: brandSkill(ruler, cfg),
+    ruler: ruler.id, specKey: ruler.specKey, pattern, sticker, acc, level: lv, mods, skill: brandSkill(ruler, cfg), charge: brandCharge(ruler, cfg),
     tune: cfg.rulers?.[ruler.specKey] || null, rarity: ruler.rarity, art: ruler.art, name: ruler.name,
     trait, traitPct: trait ? (cfg.traits?.[trait] ?? TRAITS[trait].pct) : 0,
     skillTune: { ...Object.fromEntries(Object.keys(SKILL_TUNE_KEYS).map((k) => [k, SKILL_TUNE[k]])), ...(cfg.skillTune || {}) },

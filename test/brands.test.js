@@ -24,11 +24,11 @@ function game(ruler, other = 'ruler:straight30-acrylic', opt = {}) {
   return { r, a, b, g: r.s.game };
 }
 
-test('銘柄：N15本・R6本・SR5本・SSR5本と折りたたみ定規。定規は飾りガチャに出ない', () => {
+test('銘柄：N15本・R6本・SR5本・SSR5本と折りたたみ定規・雲形定規。定規は飾りガチャに出ない', () => {
   const list = rulerList();
   const count = (k) => list.filter((it) => it.rarity === k).length;
-  assert.deepEqual([count('N'), count('R'), count('SR'), count('SSR')], [15, 6, 5, 6]);
-  assert.equal(rulerPool('SSR').length, 5, '折りたたみ定規はガチャに出ない');
+  assert.deepEqual([count('N'), count('R'), count('SR'), count('SSR')], [15, 6, 5, 7]);
+  assert.equal(rulerPool('SSR').length, 5, '折りたたみ定規・雲形定規はガチャに出ない');
   assert.ok(!GACHA_POOL.some((it) => it.kind === 'ruler'));
   assert.deepEqual(BASIC_RULERS.sort(), ['ruler:straight30-acrylic', 'ruler:straight30-metal', 'ruler:straight30-rubber']);
   for (const it of list) {
@@ -73,10 +73,17 @@ test('特性：鋭い縁はダメージ、ふんばりはすべりにくさ、�
   const nn = nb.r.makeBody(nb.g.bodies[0]);
   Physics.setHp(cb, 50); Physics.setHp(nn, 50);
   assert.ok(cb.grip > nn.grip, '重心の方が押されたときに止まりやすい');
+  // 方眼：1周でたまる量が+5%（25 → 26.3）
   const grid = game('ruler:sr-draft60');
   Object.assign(grid.g.bodies[1], { x: 25, y: 18 });
-  grid.r.handle(grid.a.id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: -1, power: 0.2 });
-  assert.equal(grid.g.gauge[0], 21);
+  const firstSeat = grid.g.turn;
+  for (let k = 0; k < 2; k++) {
+    const id = grid.g.order[grid.g.turn];
+    grid.r.handle(id, { t: 'flick', lx: 0, ly: 0, dx: 0, dy: grid.g.turn === 0 ? -1 : 1, power: 0.05 });
+  }
+  assert.ok(firstSeat === 0 || firstSeat === 1);
+  assert.equal(grid.g.gauge[0], 26.3);
+  assert.equal(grid.g.gauge[1], 25);
 });
 
 test('一文字：その1打は回らない。ゴム跳び：机の端で1回跳ね返る', () => {

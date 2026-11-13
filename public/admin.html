@@ -57,6 +57,31 @@
   .users li:first-child { border-top: 1px solid var(--line); }
   .users .who { min-width: 0; }
   .users .who small { display: block; color: var(--chalk-dim); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .av-filter, .av-add { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 8px 0; }
+  .av-add { padding: 10px; border: 1px dashed var(--line-strong); border-radius: 10px; }
+  .av-parts-tbl img, .cm-tbl img { display: block; border-radius: 8px; background: var(--paper); }
+  .av-parts-tbl input[type="color"] { width: 40px; height: 28px; padding: 0; border: 1px solid var(--line-strong); border-radius: 6px; }
+  .av-parts-tbl td small { display: block; color: var(--chalk-dim); font-size: 11px; }
+  .cm-tbl select { max-width: 8.5em; font-size: 12px; padding: 4px; }
+  .cm-tbl td { vertical-align: middle; }
+  .brands td.charge input { width: 5em; }
+  .brands td.charge small, .brands th small { display: block; font-size: 11px; font-weight: 400; color: var(--ink-soft); }
+  .cm-list { display: grid; gap: 6px; }
+  .cm-card { border: 1px solid var(--line); border-radius: 10px; background: var(--card); }
+  .cm-card > summary { display: flex; align-items: center; gap: 8px; padding: 6px 10px; cursor: pointer; flex-wrap: wrap; }
+  .cm-card > summary img { border-radius: 50%; background: var(--paper); }
+  .cm-card > summary small { color: var(--ink-soft); font-size: 12px; }
+  .cm-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px 12px; padding: 4px 12px 12px; align-items: end; }
+  .cm-grid label { display: grid; gap: 2px; font-size: 12px; color: var(--ink-soft); }
+  .cm-grid select, .cm-grid input { font-size: 14px; padding: 5px 6px; min-width: 0; width: 100%; }
+  .cm-grid .cm-wide { grid-column: span 2; }
+  .cm-num { display: flex; align-items: center; gap: 4px; }
+  .cm-num input { width: 6em; }
+  .cm-fixed { font-size: 14px; color: var(--ink); padding: 5px 0; }
+  .cm-note { grid-column: 1 / -1; margin: 0; font-size: 12px; color: var(--ink-soft); }
+  .cm-rewards, .cm-look { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 6px 10px; align-items: end; }
+  .cm-look img { border-radius: 8px; background: var(--paper); }
+  @media (max-width: 520px) { .cm-grid .cm-wide { grid-column: 1 / -1; } }
   .users .give { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
   .users li.on { background: var(--card); }
   .gift-panel { margin-top: 14px; padding: 14px; border: 2px solid var(--pen); border-radius: 12px; background: var(--card); display: grid; gap: 10px; }
@@ -107,9 +132,30 @@
 
       <section>
         <h2>定規の銘柄</h2>
-        <p class="lead">1本ずつの名前・レア度・絵柄・特性・必殺技です。同じ形・素材の銘柄は、重さやすべり方が同じで、レア度の上乗せと特性・必殺技が違います。「ガチャ」のチェックを外すと定規ガチャに出なくなります（持っている人はそのまま使えます）。銘柄は消せないので、使わなくなったらガチャから外してください。</p>
+        <p class="lead">1本ずつの名前・レア度・絵柄・特性・必殺技です。同じ形・素材の銘柄は、重さやすべり方が同じで、レア度の上乗せと特性・必殺技が違います。「ゲージのたまりやすさ」は、全員が1回ずつはじく（1周する）たびに、必殺ゲージにたまる量です（満タンは100。初期値25＝4周で満タン）。「ガチャ」のチェックを外すと定規ガチャに出なくなります（持っている人はそのまま使えます）。銘柄は消せないので、使わなくなったらガチャから外してください。</p>
         <div class="table-wrap"><table class="tbl brands" id="brands"></table></div>
         <button type="button" id="addBrand">銘柄を追加する</button>
+      </section>
+
+      <section>
+        <h2>アバターのパーツ</h2>
+        <p class="lead">プレイヤーとクラスメイトのアバターは、このパーツの組み合わせでできています。「最初から」にチェックがあるパーツは、だれでも最初から選べます。チェックのないパーツは、受け取り箱で配ったとき（道場の報酬・ガチャ・イベントなど）に手に入ります。名前・色・レア度を変えたり、「描き方」と色を選んで新しいパーツを足したりできます（足したパーツは消せます。消すと、使っていた人はおまかせのパーツに戻ります）。</p>
+        <div class="av-filter">
+          <label>部位 <select id="avSlotFilter"></select></label>
+        </div>
+        <div class="table-wrap"><table class="tbl av-parts-tbl" id="avParts"></table></div>
+        <div class="av-add">
+          <b>パーツを足す</b>
+          <label>部位 <select id="avAddSlot"></select></label>
+          <label>描き方 <select id="avAddBase"></select></label>
+          <button type="button" id="avAdd">足す</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>バトル道場のクラスメイト（31人）</h2>
+        <p class="lead">バトル道場で出席番号順に戦う30人と、30人破りのあとに挑める担任の先生です（コンピュータとの練習の相手にも出てきます）。1人ずつ開いて、名前・係・使う定規と必殺技・くせ（狙い方や力加減の好み）・強さ（狙いのずれ・力加減の誤差・試すはじき方の数）・せりふ・初めて勝ったときにもらえる物・見た目を変えられます。5・10・15・20・25番は班長、30番は学級委員長です。変えた値は、次に始める試合から使われます。</p>
+        <div class="cm-list" id="classmates"></div>
       </section>
 
       <section>
@@ -167,7 +213,7 @@
           </div>
           <div class="gp-filter">
             <select id="gpKind" aria-label="アイテムの種類">
-              <option value="">すべての種類</option><option value="ruler">定規</option><option value="pattern">柄</option><option value="sticker">シール</option><option value="acc">アクセサリ</option>
+              <option value="">すべての種類</option><option value="ruler">定規</option><option value="pattern">柄</option><option value="sticker">シール</option><option value="acc">アクセサリ</option><option value="avatar">アバター</option>
             </select>
             <select id="gpRarity" aria-label="レア度"><option value="">すべてのレア度</option><option>N</option><option>R</option><option>SR</option><option>SSR</option></select>
             <input id="gpQ" placeholder="名前で絞り込む" aria-label="名前で絞り込む">

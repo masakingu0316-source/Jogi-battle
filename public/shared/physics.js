@@ -30,6 +30,18 @@ const Physics = (() => {
     const x = L / 2, y = W / 2;
     return [[-x + c, -y], [x - c, -y], [x, -y + c], [x, y - c], [x - c, y], [-x + c, y], [-x, y - c], [-x, -y + c]];
   }
+  // 楕円の多角形を、中心 (cx, cy)・向き rot に置く（へこんだ形を、とがっていない部品の組み合わせで作るため）
+  function lobe(cx, cy, rx, ry, rot = 0, n = 12) {
+    const c = Math.cos(rot), s = Math.sin(rot);
+    return poly(rx, ry, n).map(([x, y]) => [cx + x * c - y * s, cy + x * s + y * c]);
+  }
+  // 長方形を、中心 (cx, cy)・向き rot に置く
+  function bar(cx, cy, L, W, rot = 0) {
+    const c = Math.cos(rot), s = Math.sin(rot);
+    return rect(L, W).map(([x, y]) => [cx + x * c - y * s, cy + x * s + y * c]);
+  }
+  // はさみ：要（かなめ）が原点。刃は +x 向きに ±BLADE_OPEN 開き、持ち手は -x 側
+  const BLADE = { len: 10, open: 0.4 };
   const SHAPE_DEFS = {
     straight30: { name: '30cm定規', kind: 'rect', nominal: 30, L: 32, W: 3.4, verts: rect(32, 3.4), fill: 1 },
     straight15: { name: '15cm定規', kind: 'rect', nominal: 15, L: 17, W: 2.6, verts: rect(17, 2.6), fill: 1.5 },
@@ -40,6 +52,8 @@ const Physics = (() => {
     folding1: { name: '折りたたみ定規', kind: 'rect', nominal: 50, L: 17.6, W: 3.3, verts: rect(17.6, 3.3), fill: 1, special: true, folds: 3 },
     folding2: { name: '折りたたみ定規', kind: 'rect', nominal: 50, L: 34.6, W: 3.1, verts: rect(34.6, 3.1), fill: 1, special: true, folds: 2 },
     folding3: { name: '折りたたみ定規', kind: 'rect', nominal: 50, L: 51.6, W: 3.1, verts: rect(51.6, 3.1), fill: 1, special: true, folds: 1 },
+    // 黒板用の大きな定規（バトル道場の担任の先生だけが使う）。取っ手つきの木の定規
+    board50: { name: '黒板用の大きな定規', kind: 'rect', nominal: 40, L: 41, W: 4.4, verts: rect(41, 4.4), fill: 1, special: true },
     // ステージの敵（文房具）
     eraser: { name: '消しゴム', kind: 'rect', L: 5.6, W: 2.4, verts: chamfer(5.6, 2.4, 0.25), fill: 1, special: true },
     pencil: { name: '鉛筆', kind: 'rect', L: 17.6, W: 0.8, verts: [[-8.8, -0.4], [6.6, -0.4], [8.8, 0], [6.6, 0.4], [-8.8, 0.4]], fill: 1, special: true },
@@ -49,6 +63,34 @@ const Physics = (() => {
     glue: { name: 'スティックのり', kind: 'rect', L: 9.6, W: 2.6, verts: chamfer(9.6, 2.6, 0.6), fill: 1, special: true },
     tape: { name: '修正テープ', kind: 'box', L: 8.6, W: 3.4, verts: chamfer(8.6, 3.4, 1.0), fill: 1, special: true },
     compass: { name: 'コンパス', kind: 'round', R: 1.9, verts: poly(1.9, 1.9, 10), fill: 1, special: true },
+    // ---- 破天荒編 ----
+    // 雲形定規（へこんだ曲線の形）：とがっていない部品（parts）の組み合わせで、形のまま当たりを計算する
+    cloud: {
+      name: '雲形定規', kind: 'cloud', nominal: 24, fill: 1, special: true,
+      parts: [
+        lobe(-6.2, 0.4, 6.4, 3.6, 0.12),
+        lobe(3.2, -1.2, 5.6, 3.0, -0.32),
+        lobe(9.6, -4.4, 3.2, 1.7, -0.78, 10),
+        lobe(-12.0, 2.6, 2.5, 1.9, 0.5, 10),
+      ],
+    },
+    brush: { name: '筆', kind: 'rect', L: 15, W: 1.1, verts: [[-7.5, -0.42], [3.6, -0.55], [5.6, -0.62], [7.5, 0], [5.6, 0.62], [3.6, 0.55], [-7.5, 0.42]], fill: 1, special: true },
+    palette: { name: 'パレット', kind: 'round', R: 5.2, verts: poly(5.2, 3.9, 16), fill: 1, special: true },
+    // はさみ：開いた2枚の刃と、2つの持ち手（刃の間に定規が入る）
+    scissors: {
+      name: 'はさみ', kind: 'scissors', special: true, fill: 1, blade: BLADE,
+      parts: [
+        bar(Math.cos(BLADE.open) * BLADE.len / 2, Math.sin(BLADE.open) * BLADE.len / 2, BLADE.len, 0.9, BLADE.open),
+        bar(Math.cos(BLADE.open) * BLADE.len / 2, -Math.sin(BLADE.open) * BLADE.len / 2, BLADE.len, 0.9, -BLADE.open),
+        lobe(-3.0, 1.5, 2.1, 1.3, -0.3, 10),
+        lobe(-3.0, -1.5, 2.1, 1.3, 0.3, 10),
+      ],
+    },
+    // U字磁石：+x 向きに開いた U の形
+    umagnet: {
+      name: 'U字磁石', kind: 'umagnet', special: true, fill: 1,
+      parts: [bar(-2.6, 0, 1.8, 6.6), bar(0.6, -2.4, 5.6, 1.8), bar(0.6, 2.4, 5.6, 1.8)],
+    },
   };
 
   // ---- 素材 ----
@@ -63,7 +105,50 @@ const Physics = (() => {
   const AFFINITY_BONUS = 0.22;
 
   // 形を、重心が原点に来るようにして、面積・慣性・外向きの法線・摩擦をかける点を計算する
+  // 点の集まりを囲む、いちばん小さい凸多角形（へこんだ形の外側の線）
+  function hull(pts) {
+    const p = [...pts].sort((a, b) => a.x - b.x || a.y - b.y);
+    const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    const lo = [], up = [];
+    for (const q of p) { while (lo.length >= 2 && cross(lo.at(-2), lo.at(-1), q) <= 0) lo.pop(); lo.push(q); }
+    for (const q of [...p].reverse()) { while (up.length >= 2 && cross(up.at(-2), up.at(-1), q) <= 0) up.pop(); up.push(q); }
+    return [...lo.slice(0, -1), ...up.slice(0, -1)];
+  }
+  // 部品を組み合わせた形（へこんだ形）。当たりは部品ごと、外側の線（verts）は全体を囲む凸多角形
+  function buildCompound(def) {
+    const parts = def.parts.map((pv) => buildShape({ kind: 'part', verts: pv, fill: 1 }));
+    const area = parts.reduce((a, q) => a + q.area, 0);
+    const cx = parts.reduce((a, q) => a + q.offset.x * q.area, 0) / area;
+    const cy = parts.reduce((a, q) => a + q.offset.y * q.area, 0) / area;
+    // 部品を、全体の重心が原点に来る座標へ
+    const placed = parts.map((q) => {
+      const ox = q.offset.x - cx, oy = q.offset.y - cy;
+      return { verts: q.verts.map((p) => ({ x: p.x + ox, y: p.y + oy })), normals: q.normals, center: { x: ox, y: oy }, area: q.area, ipm: q.inertiaPerMass };
+    });
+    const inertiaPerMass = placed.reduce((a, q) => a + q.area * (q.ipm + q.center.x ** 2 + q.center.y ** 2), 0) / area;
+    const all = placed.flatMap((q) => q.verts);
+    const v = hull(all);
+    const normals = v.map((p, i) => {
+      const q = v[(i + 1) % v.length];
+      const ex = q.x - p.x, ey = q.y - p.y, len = Math.hypot(ex, ey);
+      let nx = ey / len, ny = -ex / len;
+      const mx = (p.x + q.x) / 2, my = (p.y + q.y) / 2;
+      if (nx * mx + ny * my < 0) { nx = -nx; ny = -ny; }
+      return { x: nx, y: ny };
+    });
+    const radius = Math.max(...all.map((p) => Math.hypot(p.x, p.y)));
+    const xs = all.map((p) => p.x), ys = all.map((p) => p.y);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    const samples = [];
+    for (let i = 0; i < 9; i++) for (let j = 0; j < 9; j++) {
+      const p = { x: x0 + (i + 0.5) * (x1 - x0) / 9, y: y0 + (j + 0.5) * (y1 - y0) / 9 };
+      if (placed.some((q) => inside(q.verts, q.normals, p))) samples.push(p);
+    }
+    // 外側の線の原点合わせ（描くときに使う）
+    return { ...def, verts: v, normals, area, inertiaPerMass, radius, samples, parts: placed, offset: { x: cx, y: cy }, L: x1 - x0, W: y1 - y0 };
+  }
   function buildShape(def) {
+    if (def.parts) return buildCompound(def);
     let v = def.verts.map(([x, y]) => ({ x, y }));
     let A = 0, cx = 0, cy = 0;
     for (let i = 0; i < v.length; i++) {
@@ -133,6 +218,10 @@ const Physics = (() => {
     name: '折りたたみ定規（アクリル）', shape: 'folding1', forms: ['folding1', 'folding2', 'folding3'], mat: 'acrylic', kind: 'acrylic', nominal: 50,
     mass: 30, mu: 0.38, e: 0.5,
   };
+  // 雷雲の雲形定規（破天荒編の報酬）：へこんだ曲線の形のアクリル定規
+  RULERS['cloud-acrylic'] = { name: '雷雲の雲形定規（アクリル）', shape: 'cloud', mat: 'acrylic', kind: 'acrylic', nominal: 24, mass: 30, mu: 0.38, e: 0.5 };
+  // 黒板用の大きな定規（木）。長くて重いので押されにくい
+  RULERS['board50-wood'] = { name: '黒板用の大きな定規', shape: 'board50', mat: 'wood', kind: 'wood', nominal: 40, mass: 46, mu: 0.46, e: 0.3, teacher: true };
   // ステージの敵。pinned：机に刺さって動かない
   const ENEMY_SPECS = {
     'en-eraser': { name: '消しゴム', shape: 'eraser', mat: 'rubber', mass: 18, mu: 1.5, e: 0.05 },
@@ -144,6 +233,13 @@ const Physics = (() => {
     'en-tape': { name: '修正テープ', shape: 'tape', mat: 'plastic', mass: 14, mu: 0.6, e: 0.3 },
     'en-compass': { name: 'コンパス', shape: 'compass', mat: 'metal', mass: 20, mu: 1, e: 0.3 },
     'boss-folding': { name: '折りたたみ定規', shape: 'folding1', forms: ['folding1', 'folding2', 'folding3'], mat: 'acrylic', mass: 40, mu: 0.42, e: 0.45 },
+    // 破天荒編
+    'en-brush': { name: '筆', shape: 'brush', mat: 'wood', mass: 7, mu: 0.3, e: 0.4 },
+    'en-palette': { name: 'パレット', shape: 'palette', mat: 'plastic', mass: 30, mu: 0.8, e: 0.2 },
+    'en-scissors': { name: 'はさみ', shape: 'scissors', mat: 'metal', mass: 34, mu: 0.75, e: 0.3 },
+    'en-magnet': { name: 'U字磁石', shape: 'umagnet', mat: 'metal', mass: 50, mu: 0.9, e: 0.2 },
+    // 雷雲の雲形定規（ボス）：形は変わらず、体力で雲の色が変わる（白 → 灰色 → 黒い雷雲）
+    'boss-cloud': { name: '雷雲の雲形定規', shape: 'cloud', phases: true, mat: 'acrylic', mass: 40, mu: 0.42, e: 0.45 },
   };
   for (const [k, v] of Object.entries(ENEMY_SPECS)) RULERS[k] = { ...v, kind: v.mat, nominal: SHAPES[v.shape].nominal || 0, enemy: true };
 
@@ -224,6 +320,7 @@ const Physics = (() => {
       state: 'desk', fallAt: 0,
       maxHp, hp: maxHp, grip: 1, // 体力と、押されたときのすべりにくさ（体力が多いほど止まりやすい）
       pinned: pin, thorns: opt.thorns || 0, zone: opt.zone || null,
+      ...(opt.trail ? { trail: [] } : {}), ...(opt.splash ? { splash: true } : {}),
     };
   }
 
@@ -285,12 +382,36 @@ const Physics = (() => {
     return { sep: best, idx };
   }
 
-  // 2つの凸多角形の衝突判定。法線はA→B向き。
+  // 部品の世界座標（部品のない形は、形そのものを1つの部品として返す）
+  function worldParts(b) {
+    const c = Math.cos(b.a), s = Math.sin(b.a);
+    const tf = (q) => ({
+      v: q.verts.map((p) => ({ x: b.x + p.x * c - p.y * s, y: b.y + p.x * s + p.y * c })),
+      n: q.normals.map((n) => ({ x: n.x * c - n.y * s, y: n.x * s + n.y * c })),
+    });
+    return b.shape.parts ? b.shape.parts.map(tf) : [tf(b.shape)];
+  }
+  // 2つの定規の衝突判定。法線はA→B向き。
+  // へこんだ形（部品の組み合わせ）は、部品どうしで判定する。いちばん深い接触を返し、ほかの接触は more に入れる
   function collide(A, B) {
     const dx = B.x - A.x, dy = B.y - A.y;
     const rr = A.shape.radius + B.shape.radius;
     if (dx * dx + dy * dy > rr * rr) return null;
-    const va = worldVerts(A), na = worldNormals(A), vb = worldVerts(B), nb = worldNormals(B);
+    if (!A.shape.parts && !B.shape.parts) return collidePoly(A, B, worldVerts(A), worldNormals(A), worldVerts(B), worldNormals(B));
+    const found = [];
+    for (const pa of worldParts(A)) for (const pb of worldParts(B)) {
+      const c = collidePoly(A, B, pa.v, pa.n, pb.v, pb.n);
+      if (c) found.push(c);
+    }
+    if (!found.length) return null;
+    const depth = (c) => Math.min(...c.points.map((p) => p.sep));
+    found.sort((a, b) => depth(a) - depth(b));
+    const [main, ...more] = found;
+    for (const m of more) m.extra = true;
+    if (more.length) main.more = more;
+    return main;
+  }
+  function collidePoly(A, B, va, na, vb, nb) {
     const sA = maxSeparation(va, na, vb);
     if (sA.sep > 0) return null;
     const sB = maxSeparation(vb, nb, va);
@@ -575,26 +696,38 @@ const Physics = (() => {
       if (b.ride) continue; // 虹の道に乗っている間は、すべって減速しない
       let k = P.friction;
       for (const z of zones) if (z !== b && Math.hypot(b.x - z.x, b.y - z.y) < z.zone.r) k *= z.zone.mul;
+      // 絵の具の水たまり：赤はすべりにくく、青はよくすべる（重心が上を通っている間だけ）
+      if (world.puddles?.length && (b.vx || b.vy || b.w)) k *= puddleFriction(world.puddles, b.x, b.y);
       applyDeskFriction(b, dt, k);
+      // 筆：動いた跡を記録する（あとで水たまりにする）
+      if (b.trail && (b.vx || b.vy)) {
+        const last = b.trail.at(-1);
+        if (!last || Math.hypot(b.x - last.x, b.y - last.y) >= 1.0) b.trail.push({ x: Math.round(b.x * 100) / 100, y: Math.round(b.y * 100) / 100 });
+      }
     }
     const contacts = [];
     for (let i = 0; i < live.length; i++)
       for (let j = i + 1; j < live.length; j++) {
         const c = collide(live[i], live[j]);
-        if (c) { prepare(c, dt, P.restitution); contacts.push(c); }
+        if (!c) continue;
+        for (const x of [c, ...(c.more || [])]) { prepare(x, dt, P.restitution); contacts.push(x); }
       }
     for (let it = 0; it < 12; it++) for (const c of contacts) solve(c);
-    for (const c of contacts) applyAffinity(c);
-    for (const c of contacts) c.crit = applyCrit(world, c);
-    for (const c of contacts) c.tip = applyTip(world, c);
+    // （へこんだ形の2つ目からの接触は、押し返すだけ。三すくみ・クリティカル・ダメージは1組に1回）
+    const mains = contacts.filter((c) => !c.extra);
+    for (const c of mains) applyAffinity(c);
+    for (const c of mains) c.crit = applyCrit(world, c);
+    for (const c of mains) c.tip = applyTip(world, c);
     // 一文字：この1打のあいだは回らない
     for (const b of live) if (b.noSpin) b.w = 0;
     // 新しくぶつかった組だけダメージ（触れ続けている間や、0.25秒以内の当たり直しは数えない）
     const touching = new Set();
     const last = (world.lastHit ||= new Map());
-    for (const c of contacts) {
+    for (const c of mains) {
       const key = c.A.id + '|' + c.B.id;
       touching.add(key);
+      // パレット：当てられると絵の具がはねる（ゆっくり触れただけでは、はねない）
+      if (-(c.vn0 ?? 0) > 3) for (const sp of [c.A, c.B]) if (sp.splash) (world.events ||= []).push({ type: 'splash', time: world.time, owner: sp.owner, x: sp.x, y: sp.y });
       if (world.touching?.has(key)) continue;
       if (world.time - (last.get(key) ?? -1) < 0.25) continue;
       last.set(key, world.time);
@@ -677,9 +810,37 @@ const Physics = (() => {
     world.time += dt;
     return fell;
   }
-  // 点から定規の形までの距離（中なら0）
+  // 絵の具の水たまり（色ごとのすべりにくさの倍率）。pool：円 { x, y, r }、trail：筆の跡 { pts, w }
+  const PAINT_FRICTION = { red: 1.8, blue: 0.4 };
+  function onPuddle(p, x, y) {
+    if (p.pts) {
+      for (let i = 1; i < p.pts.length; i++) {
+        const a = p.pts[i - 1], q = p.pts[i];
+        const ex = q.x - a.x, ey = q.y - a.y, l2 = ex * ex + ey * ey || 1;
+        const t = Math.max(0, Math.min(1, ((x - a.x) * ex + (y - a.y) * ey) / l2));
+        if (Math.hypot(x - (a.x + ex * t), y - (a.y + ey * t)) <= p.w) return true;
+      }
+      return p.pts.length === 1 && Math.hypot(x - p.pts[0].x, y - p.pts[0].y) <= p.w;
+    }
+    return Math.hypot(x - p.x, y - p.y) <= p.r;
+  }
+  function puddleFriction(puddles, x, y) {
+    let k = 1;
+    const seen = new Set();
+    for (const p of puddles) {
+      const m = PAINT_FRICTION[p.c];
+      if (!m || seen.has(p.c) || !onPuddle(p, x, y)) continue;
+      seen.add(p.c); // 同じ色が重なっても1回だけ
+      k *= m;
+    }
+    return k;
+  }
+  // 点から定規の形までの距離（中なら0）。へこんだ形は、部品ごとのいちばん近い距離
   function distToBody(b, x, y) {
-    const v = worldVerts(b), n = worldNormals(b);
+    if (b.shape.parts) return Math.min(...worldParts(b).map((q) => distToPoly(q.v, q.n, x, y)));
+    return distToPoly(worldVerts(b), worldNormals(b), x, y);
+  }
+  function distToPoly(v, n, x, y) {
     let inside = true, best = Infinity;
     for (let i = 0; i < v.length; i++) {
       const a = v[i], q = v[(i + 1) % v.length];
@@ -741,11 +902,31 @@ const Physics = (() => {
     return hit;
   }
 
+  // 落雷：点 (x, y) を中心に半径 radius の中の定規を外向きに吹き飛ばす（近いほど強く）。
+  // dmg は円の中ならどこでも同じダメージ。skip は当たらない定規の owner の一覧（ボス自身など）
+  function blastAt(world, x, y, radius, speed, dmg, kind = 'bolt', skip = []) {
+    const hit = [];
+    for (const b of world.bodies) {
+      if (b.state !== 'desk' || skip.includes(b.owner)) continue;
+      const d = distToBody(b, x, y);
+      if (d >= radius) continue;
+      const dc = Math.hypot(b.x - x, b.y - y);
+      // 真ん中に落ちたら、向きは少しずらす（真上の定規も外へ飛ぶように）
+      const ux = dc > 0.3 ? (b.x - x) / dc : 1, uy = dc > 0.3 ? (b.y - y) / dc : 0;
+      const v = speed * (0.45 + 0.55 * Math.pow(1 - Math.min(dc, radius) / radius, 0.5)) * Math.sqrt(26 / b.m);
+      if (!b.pinned) { b.vx += ux * v; b.vy += uy * v; }
+      hit.push(b.owner);
+      if (dmg > 0) damage(world, b, dmg, null, b.x, b.y, kind);
+      if (b.splash) (world.events ||= []).push({ type: 'splash', time: world.time, owner: b.owner, x: b.x, y: b.y });
+    }
+    return hit;
+  }
+
   // 形の中のいちばん近い点（はじく点を定規の上に収める）と、形からの距離
   function nearestOnShape(shapeKey, lx, ly) {
     const sh = SHAPES[shapeKey];
     const p = { x: lx, y: ly };
-    if (inside(sh.verts, sh.normals, p)) return { x: lx, y: ly, dist: 0 };
+    if (sh.parts ? sh.parts.some((q) => inside(q.verts, q.normals, p)) : inside(sh.verts, sh.normals, p)) return { x: lx, y: ly, dist: 0 };
     let best = null;
     for (let i = 0; i < sh.verts.length; i++) {
       const a = sh.verts[i], b = sh.verts[(i + 1) % sh.verts.length];
@@ -760,7 +941,7 @@ const Physics = (() => {
 
   return {
     G, DESK, SHAPES, MATERIALS, BEATS, AFFINITY_BONUS, RULERS, DEFAULT_PARAMS, MAX_IMPULSE, MOD_LIMIT, MOD_TOTAL_LIMIT,
-    createBody, createWorld, step, atRest, flick, blast, collide, nearestOnShape, worldVerts, HP, setHp, damage,
+    createBody, createWorld, step, atRest, flick, blast, blastAt, collide, nearestOnShape, worldVerts, worldParts, HP, setHp, damage, onPuddle, PAINT_FRICTION, BLADE,
     formIndex, shapeOf, ENEMY_SPECS, sharpestCorner, onDesk, distToBody, nearestOnRoad,
   };
 })();

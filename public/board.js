@@ -255,6 +255,9 @@ export function createBoard(canvas, wrap, opt = {}) {
     ctx.stroke();
     ctx.globalAlpha = 1;
 
+    // 絵の具の水たまり（破天荒編）と、落雷の予告（墨の円）は、定規の下
+    if (desks.puddles?.length) drawPuddles(desks.puddles, now, px);
+    if (desks.bolts?.length) drawBoltWarn(desks.bolts, now, px);
     // 回復アイテム（ばんそうこう）・吹雪のクリスタルは、定規の下に置く
     if (desks.items?.length) drawItems(desks.items, now);
     if (desks.crystals?.length) drawCrystals(desks.crystals, now);
@@ -315,6 +318,10 @@ export function createBoard(canvas, wrap, opt = {}) {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         continue;
       }
+      if (f.bolt) {
+        drawLightning(f, now, p);
+        continue;
+      }
       if (f.burst) {
         // クリティカルの光：放射状の線が広がって消える
         const bt = Math.min(1, (now - f.t0) / 520);
@@ -363,6 +370,157 @@ export function createBoard(canvas, wrap, opt = {}) {
   }
 
   function drawRuler(b, px, active, now) { paintRuler(ctx, b, px, active, now); }
+
+  // ---- 破天荒編 ----
+  // 水たまり：少しいびつな円（形は番号で決まる）と、つやの光。筆の跡は太い線
+  const PAINT_RGB = { red: [224, 72, 58], blue: [47, 127, 214], green: [63, 174, 90], yellow: [232, 184, 24] };
+  function blobPath(x, y, r, seed) {
+    let q = 1000 + seed * 7919;
+    const rnd = () => (q = (q * 16807) % 2147483647) / 2147483647;
+    const n = 14, wob = [];
+    for (let k = 0; k < n; k++) wob.push(0.86 + rnd() * 0.22);
+    ctx.beginPath();
+    for (let k = 0; k <= n; k++) {
+      const a0 = ((k % n) / n) * Math.PI * 2;
+      const r0 = r * wob[k % n], r1 = r * (wob[k % n] + wob[(k + 1) % n]) / 2;
+      const px0 = x + Math.cos(a0) * r0, py0 = y + Math.sin(a0) * r0;
+      if (k === 0) ctx.moveTo(px0, py0);
+      else ctx.quadraticCurveTo(x + Math.cos(a0 - Math.PI / n) * r1 * 1.04, y + Math.sin(a0 - Math.PI / n) * r1 * 1.04, px0, py0);
+    }
+    ctx.closePath();
+  }
+  function drawPuddles(list, now, px) {
+    ctx.save();
+    for (const p of list) {
+      const [r, g, b] = PAINT_RGB[p.c] || PAINT_RGB.red;
+      const age = p.born ? Math.min(1, (now - p.born) / 380) : 1;
+      if (p.pts) {
+        // 筆の跡：乾きかけ（残り1周）は薄く
+        ctx.globalAlpha = (p.fading ? 0.38 : 0.62) * age;
+        ctx.strokeStyle = `rgb(${r}, ${g}, ${b})`;
+        ctx.lineWidth = p.w * 2;
+        ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+        ctx.beginPath();
+        p.pts.forEach((q, k) => (k ? ctx.lineTo(q.x, q.y) : ctx.moveTo(q.x, q.y)));
+        ctx.stroke();
+        ctx.globalAlpha *= 0.5;
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+        ctx.lineWidth = Math.max(0.08, 1 / px);
+        ctx.beginPath();
+        p.pts.forEach((q, k) => (k ? ctx.lineTo(q.x - 0.25, q.y - 0.25) : ctx.moveTo(q.x - 0.25, q.y - 0.25)));
+        ctx.stroke();
+        continue;
+      }
+      const rr = p.r * (0.6 + 0.4 * age);
+      ctx.globalAlpha = 0.6 * age;
+      blobPath(p.x, p.y, rr, p.id || 1);
+      ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+      ctx.fill();
+      ctx.globalAlpha = 0.55 * age;
+      ctx.strokeStyle = `rgb(${Math.round(r * 0.6)}, ${Math.round(g * 0.6)}, ${Math.round(b * 0.6)})`;
+      ctx.lineWidth = Math.max(0.1, 1.2 / px);
+      ctx.stroke();
+      // つや
+      ctx.globalAlpha = 0.35 * age;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.ellipse(p.x - rr * 0.32, p.y - rr * 0.36, rr * 0.28, rr * 0.12, -0.5, 0, Math.PI * 2); ctx.fill();
+      // 緑と黄は、効き目の印（＋・−）
+      if ((p.c === 'green' || p.c === 'yellow') && rr * px > 16) {
+        ctx.globalAlpha = 0.75 * age;
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = Math.max(0.25, 3 / px);
+        ctx.lineCap = 'round';
+        const k = Math.min(1.6, rr * 0.22);
+        ctx.beginPath();
+        ctx.moveTo(p.x - k, p.y); ctx.lineTo(p.x + k, p.y);
+        if (p.c === 'green') { ctx.moveTo(p.x, p.y - k); ctx.lineTo(p.x, p.y + k); }
+        ctx.stroke();
+      }
+    }
+    ctx.restore();
+  }
+  // 落雷の予告：墨で描いた円（筆の太さがむらになる）と、真ん中の稲妻の印。落ちる直前は速く点滅
+  function boltGlyph(x, y, k) {
+    ctx.beginPath();
+    ctx.moveTo(x + 0.25 * k, y - 1 * k); ctx.lineTo(x - 0.45 * k, y + 0.1 * k); ctx.lineTo(x - 0.02 * k, y + 0.1 * k);
+    ctx.lineTo(x - 0.25 * k, y + 1 * k); ctx.lineTo(x + 0.5 * k, y - 0.2 * k); ctx.lineTo(x + 0.05 * k, y - 0.2 * k);
+    ctx.closePath();
+  }
+  function drawBoltWarn(list, now, px) {
+    ctx.save();
+    for (const b of list) {
+      const soon = b.soon;
+      const pulse = soon ? 0.6 + 0.4 * Math.sin(now / 90) : 0.75 + 0.25 * Math.sin(now / 420 + b.id);
+      // うすい墨のにじみ
+      ctx.globalAlpha = 0.16 * pulse;
+      ctx.fillStyle = '#1a1626';
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2); ctx.fill();
+      // 筆の円：太さを少しずつ変えながら一周
+      ctx.globalAlpha = 0.85 * pulse;
+      ctx.strokeStyle = '#1a1626';
+      ctx.lineCap = 'round';
+      const segs = 36;
+      for (let k = 0; k < segs; k++) {
+        const a0 = (k / segs) * Math.PI * 2 + b.id, a1 = ((k + 1.15) / segs) * Math.PI * 2 + b.id;
+        ctx.lineWidth = Math.max(0.2, (2.2 + 1.8 * Math.sin(k * 0.7 + b.id * 3) ** 2) / px) * (k > segs - 3 ? 0.5 : 1);
+        ctx.beginPath(); ctx.arc(b.x, b.y, b.r, a0, a1); ctx.stroke();
+      }
+      // 内側の点線（落ちる範囲の目安）
+      ctx.globalAlpha = 0.5 * pulse;
+      ctx.lineWidth = Math.max(0.1, 1 / px);
+      ctx.setLineDash([0.9, 0.9]);
+      ctx.beginPath(); ctx.arc(b.x, b.y, b.r * 0.55, 0, Math.PI * 2); ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 0.9 * pulse;
+      boltGlyph(b.x, b.y, Math.min(3.2, b.r * 0.22));
+      ctx.fillStyle = b.owner >= 0 && b.color ? b.color : '#5a4fcf';
+      ctx.fill();
+      ctx.lineWidth = Math.max(0.1, 1.2 / px);
+      ctx.strokeStyle = '#1a1626';
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  // 落雷の瞬間：画面の上から点まで走るギザギザの光と、白い閃光の輪
+  function drawLightning(f, now, p) {
+    const lt = (now - f.t0) / 700;
+    if (lt < 0 || lt >= 1) return;
+    const s = eff().s;
+    ctx.save();
+    // 閃光（画面全体をうっすら白く）
+    if (lt < 0.18) {
+      ctx.globalAlpha = (0.18 - lt) * 2.2;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, view.w, view.h);
+    }
+    // 稲妻（番号ごとに形が決まる）
+    let q = 3000 + (f.seed || 1) * 131;
+    const rnd = () => (q = (q * 16807) % 2147483647) / 2147483647;
+    const top = { x: p.x + (rnd() - 0.5) * 80, y: -10 };
+    const pts = [top];
+    const n = 9;
+    for (let k = 1; k < n; k++) {
+      const t = k / n;
+      pts.push({ x: top.x + (p.x - top.x) * t + (rnd() - 0.5) * 34 * (1 - t * 0.6), y: top.y + (p.y - top.y) * t });
+    }
+    pts.push({ x: p.x, y: p.y });
+    const a = lt < 0.35 ? 1 : (1 - lt) / 0.65;
+    for (const [w, col] of [[10, 'rgba(160, 140, 255, 0.45)'], [4.5, '#d9d2ff'], [2, '#ffffff']]) {
+      ctx.globalAlpha = a;
+      ctx.strokeStyle = col; ctx.lineWidth = w; ctx.lineJoin = 'miter'; ctx.lineCap = 'round';
+      ctx.beginPath(); pts.forEach((pt, k) => (k ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y))); ctx.stroke();
+    }
+    // 落ちた所の輪（落雷の範囲）
+    const rr = f.r * s * (0.3 + 0.7 * Math.sqrt(Math.min(1, lt * 2)));
+    ctx.globalAlpha = (1 - lt) * 0.9;
+    ctx.strokeStyle = '#fff6c8';
+    ctx.lineWidth = 6 * (1 - lt) + 1;
+    ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = (1 - lt) * 0.35;
+    ctx.fillStyle = '#c8b8ff';
+    ctx.beginPath(); ctx.arc(p.x, p.y, rr, 0, Math.PI * 2); ctx.fill();
+    ctx.restore();
+  }
 
   // ばんそうこう：うっすら光る緑の輪の上に、斜めに貼ったばんそうこう
   // 救急箱（大回復）：金色に光る輪の上に、取っ手の付いた白い箱と赤い十字

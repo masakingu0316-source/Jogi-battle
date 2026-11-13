@@ -3,13 +3,16 @@ import {
   ITEMS, RARITIES, ECONOMY, ECONOMY_KEYS, ORDER, GACHA_POOL, STATS, odds, sanitizeConfig, configProblem, RULER_TUNE_KEYS, rulerTune, rulerTuneDefault,
   applyConfig, defaultBrands, RULER_RARITY, RARITY_ORDER, ARTS, SHAPE_INFO, MATERIAL_INFO, MAT_ORDER, rulerOdds, RARITY_BONUS,
 } from './shared/catalog.js';
-import { SKILLS, TRAITS, SKILL_TUNE_KEYS, traitDesc, skillDesc } from './shared/rules.js';
+import { SKILLS, TRAITS, SKILL_TUNE_KEYS, traitDesc, skillDesc, GAUGE, lapsToFull } from './shared/rules.js';
 import { ENEMIES, STAGES, enemyMaxHp } from './shared/stage.js';
 import Physics from './shared/physics.js';
+import { AVATAR_SLOTS, SLOT_INFO, AVATAR_BASES, DEFAULT_PARTS, PARTS, partId, parsePartId, applyAvatarParts, sanitizeAvatarParts, randomAvatar } from './shared/avatar.js';
+import { avatarImage } from './avatar-paint.js';
+import { STYLES, SKILL_USES, RANKS, TEACHER_RULER, defaultClassmates, CLEAR_REWARD, tierOf } from './shared/dojo.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const KIND = { ruler: '定規', pattern: '柄', sticker: 'シール', acc: 'アクセサリ' };
+const KIND = { ruler: '定規', pattern: '柄', sticker: 'シール', acc: 'アクセサリ', avatar: 'アバター', title: '称号' };
 
 let saved = null;     // 保存されている設定
 let defaults = null;  // コードに書いてある初期値
@@ -72,15 +75,211 @@ function renderAll() {
   renderRulerGacha();
   renderTraits();
   renderEnemies();
+  renderAvatarParts();
+  renderClassmates();
   markChanges();
 }
+
+// ---- アバターのパーツ・クラスメイト ----
+const DEF_PART = Object.fromEntries(DEFAULT_PARTS.map((p) => [partId(p.slot, p.key), p]));
+const SAMPLE = { skin: 's2', hair: 'short', hairColor: 'kogecha', eyes: 'maru', outfit: 'gakuran', jacket: null, head: null, face: null, item: null, bg: null };
+const THUMB_VIEW = { skin: 'face', hair: 'face', hairColor: 'face', eyes: 'face', face: 'face', head: 'face', outfit: 'full', jacket: 'full', item: 'full', bg: 'full' };
+// 編集中のパーツを、絵を描く一覧（PARTS）に反映する
+const useDraftParts = () => applyAvatarParts(sanitizeAvatarParts(draft.avatarParts));
+function partRowsOf(slotFilter) {
+  useDraftParts();
+  return AVATAR_SLOTS.filter((s) => !slotFilter || s.key === slotFilter).flatMap((s) => Object.values(PARTS[s.key]));
+}
+function partThumb(p) {
+  const view = THUMB_VIEW[p.slot];
+  return avatarImage({ ...SAMPLE, [p.slot]: p.key }, { view, size: view === 'face' ? 52 : 40, bg: p.slot === 'bg' });
+}
+function renderAvatarParts() {
+  if (!$('avSlotFilter').options.length) {
+    $('avSlotFilter').innerHTML = `<option value="">すべての部位</option>${AVATAR_SLOTS.map((s) => `<option value="${s.key}">${esc(s.name)}</option>`).join('')}`;
+    $('avAddSlot').innerHTML = AVATAR_SLOTS.map((s) => `<option value="${s.key}">${esc(s.name)}</option>`).join('');
+    renderAddBase();
+  }
+  const rows = partRowsOf($('avSlotFilter').value);
+  $('avParts').innerHTML = `<thead><tr><th>見本</th><th>部位</th><th>名前</th><th>色</th><th>レア度</th><th>最初から</th><th></th></tr></thead><tbody>${
+    rows.map((p) => {
+      const id = partId(p.slot, p.key);
+      const b = AVATAR_BASES[p.slot]?.[p.base] || {};
+      const color = (k, label) => (label ? `<label>${esc(label)} <input type="color" data-av="${id}" data-k="${k}" value="${p[k] || '#888888'}"></label>` : '');
+      return `<tr data-avrow="${id}">
+        <td><img src="${partThumb(p)}" alt="" height="52" data-avimg="${id}"></td>
+        <td>${esc(SLOT_INFO[p.slot].name)}<small>${esc(b.name || '')}${p.custom ? '・足したパーツ' : ''}</small></td>
+        <td><input data-av="${id}" data-k="name" maxlength="16" value="${esc(p.name)}" aria-label="名前"><small>${esc(id)}</small></td>
+        <td>${color('c1', b.c1)} ${color('c2', b.c2)}</td>
+        <td><select data-av="${id}" data-k="rarity" aria-label="レア度">${ORDER.map((k) => `<option${k === p.rarity ? ' selected' : ''}>${k}</option>`).join('')}</select></td>
+        <td><input type="checkbox" data-av="${id}" data-k="basic" ${p.basic ? 'checked' : ''} aria-label="最初から選べる"></td>
+        <td>${p.custom ? `<button type="button" data-avdel="${id}">消す</button>` : ''}</td></tr>`;
+    }).join('')}</tbody>`;
+  applyConfig(saved);
+}
+function renderAddBase() {
+  const slot = $('avAddSlot').value;
+  $('avAddBase').innerHTML = Object.entries(AVATAR_BASES[slot] || {}).map(([k, b]) => `<option value="${k}">${esc(b.name)}</option>`).join('');
+}
+function setPart(id, key, value) {
+  const cur = { ...(DEF_PART[id] ? {} : draft.avatarParts?.[id]), ...(draft.avatarParts?.[id] || {}) };
+  draft.avatarParts = { ...(draft.avatarParts || {}), [id]: { ...cur, [key]: value } };
+}
+// ---- バトル道場のクラスメイト（31人） ----
+// 1人ずつ開いて、名前・係・定規・必殺技・くせ・強さ・せりふ・もらえる物・見た目を変える
+const cmOpen = new Set();
+const DEF_CM = Object.fromEntries(defaultClassmates().map((c) => [c.id, c]));
+const rewardOpts = (cur) => {
+  const all = Object.values(ITEMS).filter((it) => (it.kind === 'avatar' && !it.basic) || it.kind === 'pattern' || it.kind === 'title' || it.kind === 'sticker' || it.kind === 'acc');
+  const groups = [['avatar', 'アバターのパーツ'], ['pattern', '定規の柄'], ['title', '称号'], ['sticker', 'シール'], ['acc', 'アクセサリ']];
+  return `<option value="">（なし）</option>` + groups.map(([k, label]) => `<optgroup label="${label}">${all.filter((it) => it.kind === k)
+    .map((it) => `<option value="${it.id}"${it.id === cur ? ' selected' : ''}>${esc(it.name)}${it.dojo ? '・道場' : ''}</option>`).join('')}</optgroup>`).join('');
+};
+function renderClassmates() {
+  useDraftParts();
+  applyConfig({ ...saved, avatarParts: draft.avatarParts, brands: draft.brands });
+  const slotOpts = (slot, cur) => {
+    const s = SLOT_INFO[slot];
+    return (s.none ? `<option value=""${cur ? '' : ' selected'}>なし</option>` : '')
+      + Object.values(PARTS[slot]).map((p) => `<option value="${p.key}"${p.key === cur ? ' selected' : ''}>${esc(p.name)}</option>`).join('');
+  };
+  const rulers = Object.values(ITEMS).filter((it) => it.kind === 'ruler');
+  const rulerOpts = (cur) => rulers.map((it) => `<option value="${it.id}"${it.id === cur ? ' selected' : ''}>[${it.rarity}] ${esc(it.name)}</option>`).join('');
+  const skillOpts = (c) => `<option value=""${c.skill === '' ? ' selected' : ''}>定規の技（${esc(c.teacher ? '静かに！' : SKILLS[ITEMS[c.ruler]?.skill]?.name || '')}）</option><option value="none"${c.skill === 'none' ? ' selected' : ''}>使わない</option>`
+    + Object.entries(SKILLS).filter(([k, v]) => !v.teacher || c.teacher).map(([k, v]) => `<option value="${k}"${k === c.skill ? ' selected' : ''}>${esc(v.name)}</option>`).join('');
+  const sel = (i, k, opts, label) => `<label>${label}<select data-cm="${i}" data-k="${k}">${opts}</select></label>`;
+  const num = (i, k, v, label, min, max, step = 1, unit = '') => `<label>${label}<span class="cm-num"><input type="number" data-cm="${i}" data-k="${k}" value="${v}" min="${min}" max="${max}" step="${step}">${unit}</span></label>`;
+  const text = (i, k, v, label, max, ph = '') => `<label class="cm-wide">${label}<input data-cm="${i}" data-k="${k}" maxlength="${max}" value="${esc(v || '')}" placeholder="${esc(ph)}"></label>`;
+  $('classmates').innerHTML = draft.classmates.map((c, i) => {
+    const t = tierOf(c.no), d = DEF_CM[c.id];
+    const rank = RANKS[c.rank]?.name;
+    const rw = [0, 1, 2, 3].map((k) => sel(i, `reward${k}`, rewardOpts(c.reward[k] || ''), `もらえる物${k + 1}`)).join('');
+    return `<details class="cm-card" data-cmcard="${i}"${cmOpen.has(c.id) ? ' open' : ''}>
+      <summary><img src="${avatarImage(c.avatar, { view: 'face', size: 40 })}" alt="" width="40" height="40" data-cmimg="${i}">
+        <b>${c.teacher ? '担任' : c.no + '番'}</b> <span>${esc(c.name)}</span> <small>${esc(c.role)}${rank && !c.teacher ? '・' + esc(rank) : ''}・${esc(c.teacher ? '黒板用の大きな定規' : ITEMS[c.ruler]?.name || '')} Lv.${c.level}・${esc(STYLES[c.style]?.name || '')}・ずれ±${c.aim}°</small></summary>
+      <div class="cm-grid">
+        ${text(i, 'name', c.name, '名前', 16)}
+        ${text(i, 'role', c.role, '係・委員会', 12)}
+        ${c.teacher ? '<label>定規<span class="cm-fixed">黒板用の大きな定規（先生だけ）</span></label>' : sel(i, 'ruler', rulerOpts(c.ruler), '定規')}
+        ${num(i, 'level', c.level, '定規のLv', 1, 10)}
+        ${sel(i, 'skill', skillOpts(c), '必殺技（道場での）')}
+        ${sel(i, 'skillUse', Object.entries(SKILL_USES).map(([k, v]) => `<option value="${k}"${k === c.skillUse ? ' selected' : ''}>${esc(v.name)}</option>`).join(''), '必殺技の使い方')}
+        ${sel(i, 'style', Object.entries(STYLES).map(([k, v]) => `<option value="${k}"${k === c.style ? ' selected' : ''}>${esc(v.name)}</option>`).join(''), 'くせ')}
+        ${num(i, 'aim', c.aim, '狙いのずれ', 0, 45, 0.5, '±°')}
+        ${num(i, 'powerErr', c.powerErr, '力加減の誤差', 0, 80, 1, '±%')}
+        ${num(i, 'samples', c.samples, '試すはじき方の数', 1, 40)}
+        <p class="cm-note">${esc(STYLES[c.style]?.desc || '')}。番号の段階の初期値：ずれ±${t.aim}°・誤差±${t.powerErr}%・試す数${t.samples}${rank && !c.teacher && c.no < 30 ? '（班長は少し強く：ずれ−1°・誤差−2%・試す数+2）' : ''}。試す数を増やすほど強くなりますが、サーバーの計算が増えます（目安：20まで）</p>
+        ${text(i, 'line.enter', c.lines.enter, '登場のせりふ', 40)}
+        ${text(i, 'line.win', c.lines.win, '勝ったときのせりふ（あなたが負けたとき）', 40, 'なくてもよい')}
+        ${text(i, 'line.lose', c.lines.lose, '負けたときのせりふ（あなたが勝ったとき）', 40, 'なくてもよい')}
+        <div class="cm-rewards">${rw}</div>
+        <p class="cm-note">初めて勝ったときに受け取り箱に届きます${d ? `（初期値：${d.reward.map((id) => esc(ITEMS[id]?.name || id)).join('、')}）` : ''}</p>
+        <div class="cm-look">${AVATAR_SLOTS.map((s) => sel(i, 'av.' + s.key, slotOpts(s.key, c.avatar[s.key]), s.name)).join('')}
+          <button type="button" data-cmrand="${i}">見た目をおまかせ</button>
+          <img src="${avatarImage(c.avatar, { view: 'full', size: 72, bg: true })}" alt="" width="72" data-cmfull="${i}"></div>
+        <button type="button" class="link" data-cmreset="${i}">この人を初期値に戻す</button>
+      </div>
+    </details>`;
+  }).join('') + `<p class="cm-note">30人破りの初回の報酬：${CLEAR_REWARD.map((id) => esc(ITEMS[id]?.name || id)).join('、')}</p>`;
+  applyConfig(saved);
+}
+$('classmates').addEventListener('toggle', (e) => {
+  const d = e.target.closest?.('[data-cmcard]');
+  if (!d) return;
+  const id = draft.classmates[Number(d.dataset.cmcard)]?.id;
+  if (d.open) cmOpen.add(id); else cmOpen.delete(id);
+}, true);
+function onAvatarInput(e) {
+  const el = e.target;
+  if (!draft) return;
+  if (el.dataset.av) {
+    const id = el.dataset.av, k = el.dataset.k;
+    setPart(id, k, el.type === 'checkbox' ? el.checked : el.value);
+    if (k === 'c1' || k === 'c2') {
+      useDraftParts();
+      const at = parsePartId(id);
+      const img = document.querySelector(`[data-avimg="${CSS.escape(id)}"]`);
+      if (img && at) img.src = partThumb(PARTS[at.slot][at.key]);
+      applyConfig(saved);
+    }
+  } else if (el.dataset.cm) {
+    const i = Number(el.dataset.cm), k = el.dataset.k;
+    const list = structuredClone(draft.classmates);
+    const c = list[i];
+    const v = el.value;
+    if (k.startsWith('av.')) c.avatar[k.slice(3)] = v || null;
+    else if (k.startsWith('line.')) c.lines[k.slice(5)] = v;
+    else if (k.startsWith('reward')) { const r = [...c.reward]; r[Number(k.slice(6))] = v; c.reward = r.filter(Boolean); }
+    else if (['level', 'aim', 'powerErr', 'samples'].includes(k)) c[k] = v === '' ? c[k] : Number(v);
+    else c[k] = v;
+    draft.classmates = list;
+    if (k.startsWith('av.')) {
+      useDraftParts();
+      document.querySelector(`[data-cmimg="${i}"]`).src = avatarImage(c.avatar, { view: 'face', size: 40 });
+      document.querySelector(`[data-cmfull="${i}"]`).src = avatarImage(c.avatar, { view: 'full', size: 72, bg: true });
+      applyConfig(saved);
+    }
+    // 選び直したら、見出しの要約や「定規の技」の名前も更新する
+    if (e.type === 'change' && !k.startsWith('av.') && !k.startsWith('line.') && k !== 'name' && k !== 'role') renderClassmates();
+  } else return;
+  markChanges();
+}
+document.addEventListener('input', onAvatarInput);
+document.addEventListener('change', (e) => {
+  if (e.target.type === 'checkbox' || e.target.tagName === 'SELECT') onAvatarInput(e);
+  // パーツの名前を変えたら、クラスメイトの選択肢の名前も変える
+  if (e.target.dataset?.av && e.target.dataset.k === 'name') renderClassmates();
+});
+$('avSlotFilter').addEventListener('change', renderAvatarParts);
+$('avAddSlot').addEventListener('change', renderAddBase);
+$('avAdd').addEventListener('click', () => {
+  const slot = $('avAddSlot').value, base = $('avAddBase').value;
+  const a = new Uint8Array(4); crypto.getRandomValues(a);
+  const key = 'x-' + Array.from(a, (x) => x.toString(36).padStart(2, '0')).join('').slice(0, 6);
+  const like = DEFAULT_PARTS.find((p) => p.slot === slot && p.base === base);
+  draft.avatarParts = { ...(draft.avatarParts || {}), [partId(slot, key)]: { custom: true, base, name: `新しい${AVATAR_BASES[slot][base].name}`, rarity: 'R', basic: false, c1: like?.c1 || '#7a8a9a', c2: like?.c2 || null } };
+  $('avSlotFilter').value = slot;
+  renderAvatarParts(); renderClassmates(); markChanges();
+  document.querySelector(`[data-avrow="${CSS.escape(partId(slot, key))}"] input[data-k="name"]`)?.focus();
+});
+$('avParts').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-avdel]');
+  if (!b) return;
+  const { [b.dataset.avdel]: _, ...rest } = draft.avatarParts || {};
+  draft.avatarParts = rest;
+  renderAvatarParts(); renderClassmates(); markChanges();
+});
+$('classmates').addEventListener('click', (e) => {
+  const r = e.target.closest('[data-cmreset]');
+  if (r) {
+    const i = Number(r.dataset.cmreset);
+    const list = structuredClone(draft.classmates);
+    list[i] = structuredClone(DEF_CM[list[i].id]);
+    draft.classmates = list;
+    renderClassmates(); markChanges();
+    return;
+  }
+  const b = e.target.closest('[data-cmrand]');
+  if (!b) return;
+  const i = Number(b.dataset.cmrand);
+  useDraftParts();
+  const list = structuredClone(draft.classmates);
+  list[i].avatar = randomAvatar(`${Date.now()}-${i}`, { allow: () => true, noneRate: 0.5 });
+  draft.classmates = list;
+  renderClassmates(); markChanges();
+});
 
 // ---- ステージの敵の体力 ----
 // どのマップに出てくるか（表に添える）
 const ENEMY_MAPS = (() => {
+  // { 種類: ['可変定規編 1・2', '破天荒編 3'] }
   const out = {};
-  for (const st of Object.values(STAGES)) st.maps.forEach((m, i) => m.boards.forEach((b) => b.foes.forEach((f) => { (out[f.t] ||= new Set()).add(i + 1); })));
-  return Object.fromEntries(Object.entries(out).map(([k, v]) => [k, [...v].sort((a, b) => a - b)]));
+  for (const st of Object.values(STAGES)) {
+    const here = {};
+    st.maps.forEach((m, i) => m.boards.forEach((b) => b.foes.forEach((f) => { (here[f.t] ||= new Set()).add(i + 1); })));
+    for (const [k, v] of Object.entries(here)) (out[k] ||= []).push(`${st.name} ${[...v].sort((a, b) => a - b).join('・')}`);
+  }
+  return out;
 })();
 function renderEnemies() {
   $('enemyGrow').value = draft.enemyHpGrow;
@@ -90,7 +289,7 @@ function renderEnemies() {
       <td>${d.move ? '動く' : '置物'}</td>
       <td><input type="number" data-path='${JSON.stringify(['enemyHp', k])}' min="1" max="3000" step="1" value="${draft.enemyHp[k]}" aria-label="${esc(d.name)}の体力"><small>初期 ${defaults.enemyHp[k]}</small></td>
       <td data-ehp="${k}" data-map="5"></td><td data-ehp="${k}" data-map="10"></td>
-      <td><small>${(ENEMY_MAPS[k] || []).join('・') || '—'}</small></td></tr>`).join('')}</tbody>`;
+      <td><small>${(ENEMY_MAPS[k] || []).join('<br>') || '—'}</small></td></tr>`).join('')}</tbody>`;
   refreshEnemyPreview();
 }
 function refreshEnemyPreview() {
@@ -114,7 +313,7 @@ function renderSkills() {
       return `<tr><td>${esc(name)}</td>${cells}</tr>`;
     }).join('')}</tbody>`;
   $('tuneHelp').innerHTML = Object.values(RULER_TUNE_KEYS).map((r) => `<li><b>${r.name}</b>：${esc(r.desc)}（${r.min}〜${r.max}${r.unit}）</li>`).join('');
-  $('skillList').innerHTML = Object.entries(SKILLS).map(([k, v]) => `<li><b>${v.name}</b>${v.ssr ? '（SSR専用）' : ''}（${v.mode === 'now' ? 'ボタンを押した時点で使う' : '構えてからはじく'}）：${esc(skillDesc(k, draft.skillTune))}</li>`).join('');
+  $('skillList').innerHTML = Object.entries(SKILLS).map(([k, v]) => `<li><b>${v.name}</b>${v.ssr ? '（SSR専用）' : v.teacher ? '（バトル道場の担任の先生だけ）' : ''}（${v.mode === 'now' ? 'ボタンを押した時点で使う' : '構えてからはじく'}）：${esc(skillDesc(k, draft.skillTune))}</li>`).join('');
 }
 
 // ---- 銘柄 ----
@@ -126,13 +325,13 @@ function brandIds() {
 }
 function renderBrands() {
   const sel = (path, opts, cur, label) => `<select data-path='${JSON.stringify(path)}' aria-label="${esc(label)}">${opts.map(([k, n]) => `<option value="${esc(k)}"${k === cur ? ' selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
-  const skillOpts = Object.entries(SKILLS).map(([k, v]) => [k, `${v.name}${v.ssr ? '（SSR）' : ''}`]);
+  const skillOpts = Object.entries(SKILLS).filter(([, v]) => !v.teacher).map(([k, v]) => [k, `${v.name}${v.ssr ? '（SSR）' : ''}`]);
   const traitOpts = [['', 'なし'], ...Object.entries(TRAITS).map(([k, v]) => [k, v.name])];
   const artOpts = Object.entries(ARTS).map(([k, v]) => [k, `${v.name}（${v.rarity}）`]);
   const rarOpts = RARITY_ORDER.map((k) => [k, k]);
   const shapeOpts = Object.entries(SHAPE_INFO).filter(([k]) => k !== 'folding').map(([k, v]) => [k, v.name]);
   const matOpts = MAT_ORDER.map((k) => [k, MATERIAL_INFO[k].name]);
-  $('brands').innerHTML = `<thead><tr><th>ガチャ</th><th>レア度</th><th>名前</th><th>形・素材</th><th>絵柄</th><th>特性</th><th>必殺技</th></tr></thead><tbody>${
+  $('brands').innerHTML = `<thead><tr><th>ガチャ</th><th>レア度</th><th>名前</th><th>形・素材</th><th>絵柄</th><th>特性</th><th>必殺技</th><th>ゲージのたまりやすさ<small>1周でたまる量（満タンは100）</small></th></tr></thead><tbody>${
     brandIds().map((id) => {
       const b = brandOf(draft, id);
       const custom = !DEF[id];
@@ -147,13 +346,14 @@ function renderBrands() {
         <td>${form}</td>
         <td>${sel([...base, 'art'], artOpts, b.art, '絵柄')}</td>
         <td>${sel([...base, 'trait'], traitOpts, b.trait || '', '特性')}</td>
-        <td>${sel([...base, 'skill'], skillOpts, b.skill, '必殺技')}</td></tr>`;
+        <td>${sel([...base, 'skill'], skillOpts, b.skill, '必殺技')}</td>
+        <td class="charge"><input type="number" data-path='${JSON.stringify([...base, 'charge'])}' min="${GAUGE.chargeMin}" max="${GAUGE.chargeMax}" step="1" value="${b.charge ?? GAUGE.charge}" aria-label="${esc(b.name)}の必殺ゲージのたまりやすさ（1周でたまる量）"><small data-laps="${esc(id)}">${lapsToFull(b.charge ?? GAUGE.charge)}周で満タン</small></td></tr>`;
     }).join('')}</tbody>`;
 }
 $('addBrand').addEventListener('click', () => {
   const a = new Uint8Array(4); crypto.getRandomValues(a);
   const id = 'ruler:x-' + Array.from(a, (x) => x.toString(36).padStart(2, '0')).join('').slice(0, 8);
-  draft.brands = { ...(draft.brands || {}), [id]: { custom: true, name: '新しい定規', rarity: 'R', shape: 'straight30', mat: 'acrylic', art: 'plain', trait: null, skill: 'power', gacha: true } };
+  draft.brands = { ...(draft.brands || {}), [id]: { custom: true, name: '新しい定規', rarity: 'R', shape: 'straight30', mat: 'acrylic', art: 'plain', trait: null, skill: 'power', gacha: true, charge: GAUGE.charge } };
   renderBrands(); renderRulerGacha(); markChanges();
   document.querySelector(`[data-brand="${CSS.escape(id)}"] input:not([type=checkbox])`)?.focus();
 });
@@ -283,6 +483,11 @@ document.addEventListener('input', (e) => {
     const val = el.type === 'checkbox' ? el.checked : el.type === 'number' ? (Number.isFinite(v) ? v : getPath(saved, p)) : el.tagName === 'SELECT' && p.at(-1) === 'trait' ? (el.value || null) : el.value;
     setPath(p, val);
     if (p[0] === 'rulerGacha' || (p[0] === 'brands' && ['rarity', 'gacha'].includes(p[2]))) { renderRulerGacha(); }
+    if (p[0] === 'brands' && p[2] === 'charge') {
+      const c = Math.max(GAUGE.chargeMin, Math.min(GAUGE.chargeMax, Number.isFinite(val) ? val : GAUGE.charge));
+      const small = document.querySelector(`[data-laps="${CSS.escape(p[1])}"]`);
+      if (small) small.textContent = `${lapsToFull(c)}周で満タン`;
+    }
     if (p[0] === 'traits' || p[0] === 'skillTune') {
       const small = el.parentElement.querySelector('small');
       if (small && p[0] === 'traits') small.textContent = traitDesc(p[1], val);

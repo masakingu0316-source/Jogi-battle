@@ -118,11 +118,15 @@ export const SKILLS = {
   chair: { name: 'いす召喚', mode: 'now', color: '#d39a1c', desc: '自分にいちばん近い辺に椅子を並べ、1周のあいだそこから落ちない' },
   blizzard: { name: '吹雪', mode: 'now', color: '#74b9ff', place: true, desc: '机の好きな所に氷のクリスタルを置く。だれかの定規が触れると机が凍り、その動きの残りと次の人の番のあいだ、よくすべる' },
   fullopen: { name: '全開', mode: 'shot', color: '#22c3b0', desc: 'この1打だけいちばん長い形に伸び、当てた相手へのダメージが1.8倍' },
+  // 雷雲の雲形定規（破天荒編の報酬・ボス）
+  raiun: { name: '落雷', mode: 'now', color: '#5a4fcf', desc: 'その場で、相手の定規のまわり{boltCount}か所に落雷を予告する。自分の次の番の直前に落ち、半径{boltR}cmの中の定規にダメージ{boltDmg}と、外向きの強い吹き飛ばし（自分には当たらない。予告が出ている間は使えない）' },
   // SSR の専用技（数値は SKILL_TUNE。設定画面で変えられる）
   ichimonji: { name: '一文字', mode: 'shot', color: '#d4a72c', ssr: true, desc: 'この1打は回らずにまっすぐすべり、最初に当てた相手には必ずクリティカル' },
   gomu: { name: 'ゴム跳び', mode: 'shot', color: '#e0567a', ssr: true, desc: 'この1打のあいだ、机の端で1回だけ跳ね返る（速さ{gomuSpeed}%で戻る）' },
   niji: { name: '虹の道', mode: 'shot', color: '#7b6cff', ssr: true, desc: '照準線に1回目の跳ね返りの先まで見え、はじく力{nijiPower}%。通った跡に虹の道が残り、次の相手の番に虹の道に乗った定規は、道に沿って強制的に進む' },
   ikkaku: { name: '一角', mode: 'shot', color: '#e2402b', ssr: true, desc: 'いちばん鋭い角の先で当てたときだけ、弾く力{ikkakuPush}%・ダメージ{ikkakuDmg}%' },
+  // 担任の先生だけの技（バトル道場）
+  shizuka: { name: '静かに！', mode: 'now', color: '#3b6e58', teacher: true, desc: 'その場で、相手の必殺技のゲージを0にする（そのあとふつうにはじける）' },
   hyaku: { name: '百八十度', mode: 'shot', color: '#f0b429', ssr: true, desc: '曲がる角度（±{hyakuMax}°）も決めてはじくと、{hyakuDelay}ミリ秒後に1回だけ曲がる。構えると、定規の通り道が正確に見える' },
 };
 // 技の説明（数値の入った技は、設定画面の値で書きかえる）
@@ -139,6 +143,7 @@ export const RULER_SKILL = {
   'tri60-acrylic': 'wind', 'tri60-metal': 'chair', 'tri60-rubber': 'blizzard',
   'protractor-acrylic': 'bomb', 'protractor-metal': 'sub', 'protractor-rubber': 'magnet',
   'folding-acrylic': 'fullopen', // ステージ「可変定規編」の報酬
+  'cloud-acrylic': 'raiun',      // ステージ「破天荒編」の報酬
 };
 // 定規（specKey）の必殺技。cfgSkills は設定画面での割り当て { specKey: skillKey }
 export function skillFor(specKey, cfgSkills) {
@@ -169,9 +174,18 @@ export const SKILL_TUNE = {
   ikkakuTip: 10,            // 一角：角の先とみなす範囲（定規のいちばん長い所に対する％）
   hyakuDelay: 150,          // 百八十度：はじいてから曲がるまで（ミリ秒）。定規がすべるのは0.2〜0.4秒ほどなので短め
   hyakuMax: 90,             // 百八十度：曲がる角度の最大（度）
+  // 落雷（雷雲の雲形定規・破天荒編）
+  boltR: 16,                // 落雷の半径（cm）。15cm定規の長さくらい
+  boltDmg: 30,              // 落雷のダメージ（円の中ならどこでも同じ）
+  boltSpeed: 150,           // 落雷の吹き飛ばし（いちばん近くでの速さ。cm/秒、26gの定規）
+  boltCount: 3,             // プレイヤーが使う落雷の数
 };
 // 設定画面で変えられる技の数値
 export const SKILL_TUNE_KEYS = {
+  boltCount: { skill: 'raiun', name: '落雷の数（プレイヤーが使うとき）', unit: 'か所', min: 1, max: 5 },
+  boltR: { skill: 'raiun', name: '落雷の半径', unit: 'cm', min: 6, max: 30 },
+  boltDmg: { skill: 'raiun', name: '落雷のダメージ', unit: '', min: 0, max: 60 },
+  boltSpeed: { skill: 'raiun', name: '落雷の吹き飛ばし', unit: 'cm/秒', min: 0, max: 300 },
   gomuSpeed: { skill: 'gomu', name: '跳ね返ったあとの速さ', unit: '%', min: 20, max: 100 },
   nijiPower: { skill: 'niji', name: 'はじく力', unit: '%', min: 100, max: 160 },
   ikkakuPush: { skill: 'ikkaku', name: '角の先で当てたときの弾く力', unit: '%', min: 100, max: 300 },
@@ -187,12 +201,15 @@ export const TRAITS = {
   aim: { name: '目盛り読み', pct: 20, desc: '狙うときの矢印が{pct}%長く見える（表示だけ）' },
   edge: { name: '鋭い縁', pct: 5, desc: '当てたときのダメージ+{pct}%' },
   grip: { name: 'ふんばり', pct: 8, desc: '机とのすべりにくさ+{pct}%' },
-  grid: { name: '方眼', pct: 5, desc: 'はじいたときの必殺ゲージのたまり+{pct}%' },
+  grid: { name: '方眼', pct: 5, desc: '1周ごとの必殺ゲージのたまり+{pct}%' },
   center: { name: '重心', pct: 3, desc: '当てられたときの飛び方−{pct}%' },
 };
 export const traitDesc = (key, pct) => (TRAITS[key] ? TRAITS[key].desc.replace('{pct}', String(pct ?? TRAITS[key].pct)) : '');
-// ゲージのたまり方
-export const GAUGE = { max: 100, shot: 20, hit: 10, beHit: 30 };
+// ゲージのたまり方：全員が1回ずつ番を終える（1周する）たびに、定規ごとの「たまりやすさ」（charge）ぶんたまる。
+// charge は銘柄ごとに設定画面で変えられる（初期値25＝4周で満タン）。毎番・当てた・当てられたでは、たまらない
+export const GAUGE = { max: 100, charge: 25, chargeMin: 5, chargeMax: 100 };
+// 満タンまでの周数
+export const lapsToFull = (charge) => Math.ceil(GAUGE.max / Math.max(1, charge || GAUGE.charge));
 
 // ---- 回復アイテム（ばんそうこう・救急箱） ----
 // 2周目から、番が変わるたびに rate の確率で、机の上の空いている所に出る（同時に max 個まで）。

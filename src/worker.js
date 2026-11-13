@@ -71,6 +71,19 @@ export default {
       return stub.fetch(`https://stage/stage/${sm[1]}`, { method: request.method, headers, body: request.method === 'POST' ? await request.text() : undefined });
     }
 
+    // バトル道場：1人に1つの Durable Object（部屋と同じクラス。名前は dojo:<アカウントID>）
+    const dm = url.pathname.match(/^\/api\/dojo\/(state|start|act|quit)$/);
+    if (dm) {
+      if (request.method === 'POST' && !sameOrigin(request, url)) return new Response('forbidden', { status: 403 });
+      if (!loginEnabled(env)) return Response.json({ error: 'ログイン機能はまだ使えません' }, { status: 503 });
+      const user = await sessionUser(request, env).catch(() => null);
+      if (!user) return Response.json({ error: 'ログインしてください' }, { status: 401 });
+      const headers = new Headers({ 'content-type': 'application/json' });
+      headers.set(USER_HEADER, encodeURIComponent(JSON.stringify({ id: user.id, name: user.name })));
+      const stub = env.ROOMS.get(env.ROOMS.idFromName('dojo:' + user.id));
+      return stub.fetch(`https://dojo/dojo/${dm[1]}`, { method: request.method, headers, body: request.method === 'POST' ? await request.text() : undefined });
+    }
+
     if (url.pathname.startsWith('/api/')) return handleApi(request, env, url);
     return env.ASSETS.fetch(request);
   },

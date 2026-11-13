@@ -142,12 +142,12 @@ export class RoomCore {
       minPlayers: m.min,
       fair: !!s.fair,
       startIn: s.phase === 'lobby' && s.startAt !== null ? Math.max(0, s.startAt - now) : null,
-      members: s.members.map((x) => ({ id: x.id, name: x.name, account: !!x.userId, loadout: x.loadout, ready: !!x.ready, connected: x.connected })),
+      members: s.members.map((x) => ({ id: x.id, name: x.name, account: !!x.userId, loadout: x.loadout, ready: !!x.ready, connected: x.connected, avatar: x.avatar || null, title: x.title || null, cpu: !!x.cpu })),
       wins: s.wins,
       game: s.game && {
         n: s.game.n, order: s.game.order, turn: s.game.turn, shots: s.game.shots, id: s.game.id,
         desks: s.game.desks || null, vanish: s.game.vanish ?? null, vanishIn: s.game.vanishIn ?? null, vanishWait: s.game.vanishWait ?? null,
-        gauge: s.game.gauge || null, extra: !!s.game.extra, event: s.game.event || null, eventId: s.game.eventId || 0,
+        gauge: s.game.gauge || null, lap: s.game.lap || 0, lapDone: s.game.lapDone || [], bolts: s.game.bolts || [], puddles: s.game.puddles || [], extra: !!s.game.extra, event: s.game.event || null, eventId: s.game.eventId || 0,
         walls: s.game.walls || [], icy: s.game.icy || 0, icyNext: !!s.game.icyNext, fx: s.game.fx || [], items: s.game.items || [],
         crystals: s.game.crystals || [], rainbow: s.game.rainbow || null,
         bodies: s.game.bodies, players: s.game.players, result: s.game.result, mode: s.game.mode,
@@ -204,6 +204,9 @@ export class RoomCore {
         s.game.extra = false; // 連打の2打目も飛ばす
         // 飛ばした番も1回と数える（机が消える予告・場のイベントが進む）
         const vanished = this.finishTurn(s.game.turn, now, { skipped: true }).vanished;
+        // 番が移った先で落雷が落ちたら、その動きを送る
+        const strikes = this.strikeMessages(now);
+        if (strikes.length) return strikes.map((msg) => ({ to: 'all', msg: { ...msg, vanished } }));
         return [{ to: 'all', msg: { t: 'state', state: this.snapshot(now), vanished } }];
       }
       case 'skill': {
@@ -215,6 +218,7 @@ export class RoomCore {
         if ((g.gauge?.[g.turn] ?? 0) < GAUGE.max) return err('必殺技のゲージがまだたまっていません');
         const k = this.skillOf(g.turn);
         if (SKILLS[k].mode !== 'now') return err(`「${SKILLS[k].name}」は、構えてからはじくと使える必殺技です`);
+        if (k === 'raiun' && (g.bolts || []).some((b) => b.owner === g.turn)) return err('予告した落雷が落ちるまで、次の落雷は使えません');
         let at = null;
         if (SKILLS[k].place) {
           at = { x: Number(msg.x), y: Number(msg.y) };
@@ -231,7 +235,7 @@ export class RoomCore {
         if (g.order[g.turn] !== id) return err('あなたの番ではありません');
         const shot = this.shoot(msg, now);
         if (shot.error) return err(shot.error);
-        return [{ to: 'all', msg: { t: 'shot', by: shot.by, frames: shot.frames, falls: shot.falls, saved: shot.saved, crit: shot.crit, vanished: shot.vanished, skill: shot.skill, blast: shot.blast, hits: shot.hits, marks: shot.marks, pickups: shot.pickups, state: this.snapshot(now) } }];
+        return [{ to: 'all', msg: { t: 'shot', by: shot.by, frames: shot.frames, falls: shot.falls, saved: shot.saved, crit: shot.crit, vanished: shot.vanished, skill: shot.skill, blast: shot.blast, hits: shot.hits, marks: shot.marks, pickups: shot.pickups, bolts: shot.bolts, state: this.snapshot(now) } }];
       }
       default:
         return [];
@@ -257,6 +261,7 @@ export class RoomCore {
           owner: i, hp: Physics.HP.max, tune: lo.tune || null, skill: SKILLS[lo.skill] ? lo.skill : skillFor(lo.specKey), ruler: lo.ruler, specKey: lo.specKey,
           level: lo.level || 1, mods: s.fair ? { mass: 1, mu: 1, power: 1 } : lo.mods, pattern: lo.pattern, sticker: lo.sticker,
           rarity: lo.rarity || 'N', art: lo.art || 'plain', trait: lo.trait || null, traitPct: lo.traitPct || 0, st: lo.skillTune || null,
+          charge: Number.isFinite(lo.charge) ? lo.charge : GAUGE.charge, // 必殺ゲージのたまりやすさ（1周でたまる量）
           x: st[i].x, y: st[i].y, a: st[i].a, state: 'desk',
         };
       }),
@@ -489,23 +494,11 @@ export class RoomCore {
     // 虹の道：はじいた定規が通った跡を残す（次の相手の番だけ効く）
     if (skill === 'niji') this.makeRainbow(by, frames);
 
-    // ゲージ：はじいた人、当てた相手の数、動かされた人にたまる（必殺技を使った1打では、使った人にはたまらない）
-    const before = g.bodies.map((b) => ({ x: b.x, y: b.y, state: b.state }));
+    // （必殺ゲージは、はじくたびではなく、1周ごとにたまる → advanceTurn）
     g.bodies = g.bodies.map((prev, i) => {
       const b = world.bodies[i];
       return { ...prev, x: round2(b.x), y: round2(b.y), a: round4(b.a), hp: Math.round(b.hp * 10) / 10, state: b.state === 'desk' ? 'desk' : 'gone' };
     });
-    if (g.gauge) {
-      const add = (i, v) => { g.gauge[i] = Math.min(GAUGE.max, g.gauge[i] + v); };
-      let moved = 0;
-      g.bodies.forEach((b, i) => {
-        if (i === by || before[i].state !== 'desk') return;
-        if (b.state !== 'desk' || Math.hypot(b.x - before[i].x, b.y - before[i].y) > 1) { moved++; add(i, GAUGE.beHit); }
-      });
-      // 特性「方眼」：はじいたときのたまりが増える
-      const grid = g.bodies[by].trait === 'grid' ? 1 + (g.bodies[by].traitPct || 0) / 100 : 1;
-      if (!skill) add(by, Math.round((GAUGE.shot + moved * GAUGE.hit) * grid * 10) / 10);
-    }
     if (skill === 'anchor') g.bodies[by].anchor = true;
     // インク漏れ：この1打で当てた相手に、毎番のダメージ
     if (skill === 'ink') {
@@ -524,7 +517,17 @@ export class RoomCore {
     const keepTurn = skill === 'double' && world.bodies[by].state === 'desk';
     if (!keepTurn) { g.shots++; g.extra = false; }
     const { saved, vanished } = this.finishTurn(by, now, { keepTurn });
-    return { by, frames, falls, saved, crit, vanished, skill, blast, wind: blast?.kind === 'wind' ? blast : null, hits, marks, pickups };
+    const res = { by, frames, falls, saved, crit, vanished, skill, blast, wind: blast?.kind === 'wind' ? blast : null, hits, marks, pickups, bolts: [] };
+    // 番が移った先で予告の落雷が落ちたら、その動きを同じ1打の続きとしてつなげる
+    for (const st of this.takeStrikes()) {
+      const off = res.frames.length;
+      res.frames.push(...st.frames);
+      res.falls.push(...st.falls.map((f) => ({ ...f, f: f.f + off })));
+      res.hits.push(...st.hits.map((h) => ({ ...h, f: h.f + off })));
+      res.pickups.push(...st.pickups.map((h) => ({ ...h, f: h.f + off })));
+      res.bolts.push(...st.bolts.map((b) => ({ ...b, f: b.f + off })));
+    }
+    return res;
   }
 
   // 物理の世界で拾われた回復アイテム・割れたクリスタルを、盤面から消す
@@ -622,13 +625,14 @@ export class RoomCore {
       if (p.alive && g.bodies[i].state !== 'desk') {
         const byDesk = !!vanished?.drops.includes(i);
         const ko = !!g.bodies[i].ko && !byDesk;
-        p.alive = false; p.selfOut = !byDesk && !ko && !opt.skipped && i === shooter; p.byDesk = byDesk; p.ko = ko; newly.push(i);
+        p.alive = false; p.selfOut = !byDesk && !ko && !opt.skipped && !opt.strike && i === shooter; p.byDesk = byDesk; p.ko = ko; newly.push(i);
         if (ko) this.pushFx({ kind: 'down', owner: i, how: 'ko', x: g.bodies[i].x, y: g.bodies[i].y });
       }
     });
     if (newly.length) g.outOrder.push(newly);
     this.markWeak();
-    for (const i of newly) if (i !== shooter && !g.players[i].byDesk && !opt.skipped) g.kos[shooter]++;
+    const credit = opt.creditTo ?? shooter; // 落雷で倒したときは、落雷を使った人の手柄
+    for (const i of newly) if (i !== credit && credit >= 0 && !g.players[i].byDesk && !opt.skipped) g.kos[credit]++;
     const alive = g.players.map((p, i) => (p.alive ? i : -1)).filter((i) => i >= 0);
     const label = (i) => `${this.member(g.order[i])?.name ?? '?'}（${PLAYERS[i].name}）`;
 
@@ -743,6 +747,15 @@ export class RoomCore {
       const max = b.maxHp || Physics.HP.max;
       b.hp = Math.min(max, Math.round((before + healAmount(max, SKILL_TUNE.heal)) * 10) / 10);
       this.pushFx({ kind: 'heal', owner: i, x: b.x, y: b.y, amount: Math.round(b.hp - before) });
+    } else if (k === 'raiun') {
+      // 落雷：相手のまわりに予告（自分の次の番の直前に落ちる）
+      const tune = { ...SKILL_TUNE, ...(b.st || {}) };
+      this.placeBolts(i, Math.max(1, Math.round(tune.boltCount)), this.boltTargets(i), { due: i });
+    } else if (k === 'shizuka') {
+      // 静かに！：相手（自分以外）のゲージを0にする
+      const was = (g.gauge || []).map((v, j) => (j === i ? 0 : v));
+      g.gauge = (g.gauge || []).map((v, j) => (j === i ? v : 0));
+      this.pushFx({ kind: 'shizuka', owner: i, x: b.x, y: b.y, cleared: Math.round(Math.max(0, ...was)) });
     } else if (k === 'sub') {
       b.subWait = true; // 次の相手の番だけ効く（この番の残りでは効かない）
       this.pushFx({ kind: 'sub', owner: i, x: b.x, y: b.y });
@@ -807,12 +820,130 @@ export class RoomCore {
     }
   }
 
+  // 必殺ゲージ：残っている全員が1回ずつ番を終えたら1周。1周ごとに、定規の「たまりやすさ」ぶんたまる
+  // （連打の2打目は同じ番のうち。倒れた人は数えない）
+  lapTick(done) {
+    const g = this.s.game;
+    if (!g?.gauge || g.result) return;
+    g.lapDone = [...new Set([...(g.lapDone || []), done])];
+    const alive = g.players.map((p, i) => (p.alive ? i : -1)).filter((i) => i >= 0);
+    if (!alive.length || !alive.every((i) => g.lapDone.includes(i))) return;
+    g.lapDone = [];
+    g.lap = (g.lap || 0) + 1;
+    const gains = [];
+    for (const i of alive) {
+      const v = this.lapCharge(i);
+      const was = g.gauge[i] ?? 0;
+      g.gauge[i] = Math.min(GAUGE.max, Math.round((was + v) * 10) / 10);
+      if (g.gauge[i] > was) gains.push({ owner: i, amount: Math.round((g.gauge[i] - was) * 10) / 10, full: g.gauge[i] >= GAUGE.max });
+    }
+    this.pushFx({ kind: 'lap', lap: g.lap, gains });
+    this.onLap(g.lap);
+  }
+  // 1周したとき（ステージで、筆の跡が乾く・場のイベントの落雷を予告する）
+  onLap() {}
+  // 1周でたまる量（特性「方眼」で増える）
+  lapCharge(i) {
+    const b = this.s.game.bodies[i];
+    const base = Number.isFinite(b?.charge) ? b.charge : GAUGE.charge;
+    const grid = b?.trait === 'grid' ? 1 + (b.traitPct || 0) / 100 : 1;
+    return Math.round(base * grid * 10) / 10;
+  }
+
+  // ---- 落雷（雷雲の雲形定規の必殺技・ステージの場のイベント） ----
+  // 予告 g.bolts：{ id, owner（使った人。場のイベントは -1）, x, y, r, dmg, speed, due（この人の番の直前に落ちる）, skip（due の番を何回見送るか） }
+  // n か所を、targets（狙う定規の番号）のまわりに置く。1か所目は狙う定規のすぐそば、ほかは少し散らす
+  placeBolts(owner, n, targets, opt = {}) {
+    const g = this.s.game;
+    const tune = { ...SKILL_TUNE, ...(owner >= 0 ? g.bodies[owner]?.st || {} : {}) };
+    const r = opt.r ?? tune.boltR;
+    const tiles = deskTiles(this.deskDef()).filter((t) => !g.desks || g.desks.includes(t.i));
+    const live = targets.filter((i) => g.bodies[i]?.state === 'desk' && g.players[i]?.alive);
+    if (!live.length) return [];
+    const spots = [];
+    for (let k = 0; k < n; k++) {
+      const tgt = g.bodies[live[k % live.length]];
+      const spread = k < live.length ? (opt.near ?? 4) : r * 1.4; // near：1か所目を狙う定規からどれだけ散らすか
+      let pick = null;
+      for (let tries = 0; tries < 40 && !pick; tries++) {
+        const a = this.rand() * Math.PI * 2, d = (k < live.length ? this.rand() : 0.5 + 0.5 * this.rand()) * spread * (1 + tries / 20);
+        const x = tgt.x + Math.cos(a) * d, y = tgt.y + Math.sin(a) * d;
+        if (!tiles.some((t) => onTile(t, x, y))) continue;
+        if (tries < 30 && spots.some((p) => Math.hypot(p.x - x, p.y - y) < r * 0.9)) continue;
+        pick = { x: round2(x), y: round2(y) };
+      }
+      spots.push(pick || { x: round2(tgt.x), y: round2(tgt.y) });
+    }
+    const made = spots.map((p) => {
+      g.boltId = (g.boltId || 0) + 1;
+      return { id: g.boltId, owner, x: p.x, y: p.y, r, dmg: opt.dmg ?? tune.boltDmg, speed: opt.speed ?? tune.boltSpeed, due: opt.due ?? owner, skip: opt.skip ?? 0, kind: opt.kind || 'skill' };
+    });
+    g.bolts = [...(g.bolts || []), ...made];
+    this.pushFx({ kind: 'boltWarn', owner, bolts: made.map((b) => b.id), x: made[0].x, y: made[0].y });
+    return made;
+  }
+  // 落雷を使う相手（自分以外。チーム戦は相手チーム）
+  boltTargets(i) {
+    const g = this.s.game;
+    const teams = MODES[g.mode]?.teams;
+    return g.players.map((_, j) => j).filter((j) => j !== i && g.players[j].alive && (!teams || teamOf(j) !== teamOf(i)));
+  }
+  // 番が t に移るときに、落ちる予告があれば落とす。番が移った（または決着した）ら true
+  strikeDue(t, now = Date.now()) {
+    const g = this.s.game;
+    if (!g?.bolts?.length || this.s.phase !== 'aim') return false;
+    const fire = [];
+    for (const b of g.bolts) {
+      if (b.due !== t) continue;
+      if (b.skip > 0) b.skip--;
+      else fire.push(b);
+    }
+    if (!fire.length) return false;
+    g.bolts = g.bolts.filter((b) => !fire.includes(b));
+    const world = this.buildWorld();
+    const frames = [];
+    for (let k = 0; k < 10; k++) frames.push(encodeFrame(world)); // 予告の円が光ってから落ちる
+    // 1つの定規に当たるのは、いちばん近い落雷1つだけ（重なっても2回は当たらない）
+    const hit = [];
+    const order = [...fire].map((b) => ({ b, d: Math.min(...world.bodies.filter((o) => o.state === 'desk').map((o) => Math.hypot(o.x - b.x, o.y - b.y)), 999) })).sort((p, q) => p.d - q.d);
+    for (const { b } of order) hit.push(...Physics.blastAt(world, b.x, b.y, b.r, b.speed, b.dmg, 'bolt', [...(b.owner >= 0 ? [b.owner] : []), ...hit]));
+    const boltsOut = fire.map((b) => ({ f: frames.length - 1, id: b.id, x: b.x, y: b.y, r: b.r, owner: b.owner }));
+    const sim = simulate(world, frames);
+    this.applyWorld(world);
+    const owner = fire[0].owner;
+    this.strikes.push({ by: owner >= 0 ? owner : t, frames, falls: sim.falls, hits: sim.hits, pickups: sim.pickups, bolts: boltsOut, hit });
+    this.markWeak();
+    // 倒れた・落ちた定規を決める（番は t のまま）
+    const before = g.turn;
+    this.finishTurn(t, now, { keepTurn: true, strike: true, creditTo: owner });
+    if (this.s.phase === 'aim' && g.turn === before && g.players[t]?.alive) { g.extra = false; return false; }
+    return true;
+  }
+  get strikes() { return (this._strikes ||= []); }
+  takeStrikes() { const out = this._strikes || []; this._strikes = []; return out; }
+  // 落雷の動きだけを送るとき（番を飛ばした・置物の番のあと）
+  strikeMessages(now = Date.now()) {
+    return this.takeStrikes().map((st) => ({ t: 'shot', by: st.by, frames: st.frames, falls: st.falls, saved: false, crit: null, vanished: null, skill: null, blast: null, hits: st.hits, marks: [], pickups: st.pickups, bolts: st.bolts, state: this.snapshot(now) }));
+  }
+  // 物理の結果を盤面に書き戻す
+  applyWorld(world) {
+    const g = this.s.game;
+    this.takeFieldThings(world);
+    g.bodies = g.bodies.map((prev, i) => {
+      const b = world.bodies[i];
+      return { ...prev, x: round2(b.x), y: round2(b.y), a: round4(b.a), hp: Math.round(b.hp * 10) / 10, state: b.state === 'desk' ? 'desk' : 'gone' };
+    });
+  }
+
   // 時計回りで、まだ残っている次の人へ
   advanceTurn() {
     const g = this.s.game;
+    this.lapTick(g.turn);
     let t = g.turn;
     do { t = (t + 1) % g.n; } while (!g.players[t].alive);
     g.turn = t;
+    // 予告していた落雷：この人の番の直前に落ちる（落ちたあと、番が移ったら終わり）
+    if (this.strikeDue(t)) return;
     const b = g.bodies[t];
     if (!b) return;
     // 不動・反撃は、使った人の次の番が来たら終わる
@@ -854,6 +985,33 @@ export class RoomCore {
       return;
     }
   }
+}
+
+// 止まるまで動かす（落雷など、はじく以外の動き）。frames に1/30秒ごとの位置を足す
+export function simulate(world, frames) {
+  const dt = STEP, perFrame = Math.round(1 / FPS / dt);
+  const falls = [], hits = [], pickups = [], marks = [];
+  let steps = 0, seen = 0;
+  const drain = () => {
+    while (world.events && seen < world.events.length) {
+      const e = world.events[seen++];
+      if (e.type === 'hit') hits.push({ f: frames.length - 1, target: e.target, from: e.from, dmg: e.dmg, x: round2(e.x), y: round2(e.y), kind: e.kind });
+      if (e.type === 'pickup') pickups.push({ f: frames.length - 1, item: e.item, owner: e.owner, amount: e.amount, x: round2(e.x), y: round2(e.y), ...(e.big ? { big: true } : {}) });
+      if (MARK_TYPES.includes(e.type)) marks.push({ kind: e.type, f: frames.length - 1, x: round2(e.x), y: round2(e.y), owner: e.owner });
+    }
+  };
+  drain();
+  while (!Physics.atRest(world) && steps < MAX_SIM_SECONDS / dt) {
+    for (let k = 0; k < perFrame; k++) {
+      for (const b of Physics.step(world, dt)) falls.push({ owner: b.owner, f: frames.length, x: round2(b.x), y: round2(b.y) });
+      steps++;
+    }
+    frames.push(encodeFrame(world));
+    drain();
+  }
+  drain();
+  for (const b of world.bodies) if (b.state === 'falling') b.state = 'gone';
+  return { falls, hits, pickups, marks };
 }
 
 export function round2(v) { return Math.round(v * 100) / 100; }

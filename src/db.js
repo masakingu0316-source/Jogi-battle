@@ -2,6 +2,8 @@
 import { ITEMS, BASIC_RULERS, DEFAULT_RULER, ECONOMY, rollOnce, resolveLoadout, sanitizeConfig, levelInfo, LEVEL_MAX, STAGE_LEVEL_MAX, applyConfig, rollRuler, rulerPool, DEFAULT_BRAND_IDS, RULER_RARITY } from '../public/shared/catalog.js';
 import { STAGES, REWARD } from '../public/shared/stage.js';
 import { cleanName } from '../public/shared/core.js';
+import { basicPartIds, sanitizeAvatar, avatarProblem, defaultAvatar } from '../public/shared/avatar.js';
+import { DOJO_SIZE, TEACHER_NO, CLEAR_REWARD, classmateByNo } from '../public/shared/dojo.js';
 
 const SCHEMA = [
   `CREATE TABLE IF NOT EXISTS users (
@@ -39,6 +41,13 @@ const SCHEMA = [
   `CREATE INDEX IF NOT EXISTS inbox_user ON inbox(user_id, claimed_at)`,
   // 定規ガチャの天井までの回数
   `CREATE TABLE IF NOT EXISTS ruler_pity (user_id TEXT PRIMARY KEY, count INTEGER NOT NULL DEFAULT 0)`,
+  // アバター（部位ごとのパーツを JSON で）。まだ作っていない人は行がない（おまかせのアバターで表示する）
+  `CREATE TABLE IF NOT EXISTS avatars (user_id TEXT PRIMARY KEY, data TEXT NOT NULL, updated_at INTEGER NOT NULL)`,
+  // バトル道場：次に挑む番号・最高記録（何番まで勝ったか）・30人破りの回数・先生に勝った回数・
+  // 試合中の番号（途中で閉じたら負けにするため）・初めて勝った相手（もらったパーツ）
+  `CREATE TABLE IF NOT EXISTS dojo (
+    user_id TEXT PRIMARY KEY, next INTEGER NOT NULL DEFAULT 1, best INTEGER NOT NULL DEFAULT 0, clears INTEGER NOT NULL DEFAULT 0,
+    teacher_wins INTEGER NOT NULL DEFAULT 0, playing INTEGER, beaten TEXT NOT NULL DEFAULT '[]', updated_at INTEGER NOT NULL)`,
 ];
 
 // 定規を「形×素材」に作り直したので、前の定規（今の一覧にないもの）は片付ける。柄・シール・アクセサリはそのまま
@@ -231,7 +240,37 @@ export async function rename(db, userId, name) {
 
 export async function ownedSet(db, userId) {
   const rows = (await db.prepare('SELECT item_id FROM items WHERE user_id = ?').bind(userId).all()).results;
-  return new Set([...BASIC_RULERS, ...rows.map((r) => r.item_id)]);
+  // 最初からある定規と、だれでも選べるアバターの基本パーツも「持っている」
+  return new Set([...BASIC_RULERS, ...basicPartIds(), ...rows.map((r) => r.item_id)]);
+}
+
+// ---- アバター ----
+// { avatar, set（自分で作って保存したか） }。保存していない人・消えたパーツは、おまかせ（アカウントIDから決まる）で埋める
+export async function avatarOf(db, userId) {
+  await getConfig(db);
+  const row = await db.prepare('SELECT data FROM avatars WHERE user_id = ?').bind(userId).first();
+  let raw = null;
+  try { raw = row ? JSON.parse(row.data) : null; } catch { raw = null; }
+  const title = typeof raw?.title === 'string' && ITEMS[raw.title]?.kind === 'title' ? raw.title : null;
+  return { avatar: raw ? sanitizeAvatar(raw, userId) : defaultAvatar(userId), set: !!row, title };
+}
+// 着せ替えを保存する（持っていないパーツは使えない）
+// title：名札に出す称号（持っている称号の ID か null）。undefined なら今のまま
+export async function saveAvatar(db, userId, input, now = Date.now(), title = undefined) {
+  await getConfig(db, now);
+  if (!input || typeof input !== 'object') return { error: 'アバターの形が正しくありません' };
+  const av = sanitizeAvatar(input, userId);
+  // 送られてきたものと整えたものが違えば、ないパーツが入っていた
+  for (const [k, v] of Object.entries(av)) if ((input[k] ?? null) !== v) return { error: 'ないパーツが入っています' };
+  const owned = await ownedSet(db, userId);
+  const problem = avatarProblem(av, owned);
+  if (problem) return { error: problem };
+  let t = title;
+  if (t === undefined) t = (await avatarOf(db, userId)).title;
+  else if (t !== null && (ITEMS[t]?.kind !== 'title' || !owned.has(t))) return { error: 'その称号はまだ持っていません' };
+  await db.prepare(`INSERT INTO avatars (user_id, data, updated_at) VALUES (?, ?, ?)
+    ON CONFLICT (user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`).bind(userId, JSON.stringify({ ...av, title: t || null }), now).run();
+  return { avatar: av, title: t || null };
 }
 
 export async function setupsOf(db, userId) {
@@ -265,9 +304,9 @@ export async function recentMatches(db, userId, limit = 20) {
 
 export async function profile(db, user, now = Date.now()) {
   await getConfig(db, now); // 設定で追加した銘柄を一覧に入れてから読む
-  const [owned, setups, stats, exp, stage, inbox, pity] = await Promise.all([ownedSet(db, user.id), setupsOf(db, user.id), statsOf(db, user.id), expOf(db, user.id), stageProgress(db, user.id),
+  const [owned, setups, stats, exp, stage, inbox, pity, av, dojo] = await Promise.all([ownedSet(db, user.id), setupsOf(db, user.id), statsOf(db, user.id), expOf(db, user.id), stageProgress(db, user.id),
     db.prepare('SELECT COUNT(*) AS n FROM inbox WHERE user_id = ? AND claimed_at IS NULL').bind(user.id).first(),
-    db.prepare('SELECT count FROM ruler_pity WHERE user_id = ?').bind(user.id).first()]);
+    db.prepare('SELECT count FROM ruler_pity WHERE user_id = ?').bind(user.id).first(), avatarOf(db, user.id), dojoProgress(db, user.id)]);
   // 定規を手に入れた時刻（定規ケースの「取得順」と NEW の印に使う。はじめからある定規は0）
   const got = (await db.prepare(`SELECT item_id, acquired_at FROM items WHERE user_id = ? AND item_id LIKE 'ruler:%'`).bind(user.id).all()).results;
   const acquired = Object.fromEntries(got.map((r) => [r.item_id, r.acquired_at]));
@@ -276,6 +315,7 @@ export async function profile(db, user, now = Date.now()) {
     id: user.id, name: user.name, coins: user.coins, selectedRuler: selected,
     owned: [...owned].filter((id) => ITEMS[id]), setups, stats, exp, stage, acquired,
     inbox: inbox?.n ?? 0, pity: pity?.count ?? 0, nextDaily: msToNextDay(now), dailyDone: user.last_daily === jstDay(now),
+    avatar: av.avatar, avatarSet: av.set, title: av.title, dojo,
   };
 }
 
@@ -557,4 +597,98 @@ export async function recordStageClear(db, rec, now = Date.now()) {
   await db.batch(stmts);
   const total = (await db.prepare('SELECT coins FROM users WHERE id = ?').bind(rec.userId).first())?.coins ?? 0;
   return { first, coins, total, exp, item, map: rec.map, stage: rec.stage, inbox: !!(coins || item) };
+}
+
+// ---- バトル道場 ----
+// { next（次に挑む番号）, best（最高記録）, clears（30人破りの回数）, teacherWins, teacherOpen, playing（試合中の番号）, beaten（初めて勝った相手のID） }
+export async function dojoProgress(db, userId) {
+  const r = await db.prepare('SELECT next, best, clears, teacher_wins, playing, beaten FROM dojo WHERE user_id = ?').bind(userId).first();
+  let beaten = [];
+  try { beaten = r ? JSON.parse(r.beaten) : []; } catch { beaten = []; }
+  return {
+    next: Math.min(DOJO_SIZE, Math.max(1, r?.next ?? 1)), best: r?.best ?? 0, clears: r?.clears ?? 0, teacherWins: r?.teacher_wins ?? 0,
+    teacherOpen: (r?.clears ?? 0) > 0, playing: r?.playing ?? null, beaten: Array.isArray(beaten) ? beaten : [],
+  };
+}
+const dojoSave = (db, userId, p, now) => db.prepare(`INSERT INTO dojo (user_id, next, best, clears, teacher_wins, playing, beaten, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT (user_id) DO UPDATE SET next = excluded.next, best = excluded.best, clears = excluded.clears, teacher_wins = excluded.teacher_wins,
+  playing = excluded.playing, beaten = excluded.beaten, updated_at = excluded.updated_at`)
+  .bind(userId, p.next, p.best, p.clears, p.teacherWins, p.playing ?? null, JSON.stringify(p.beaten), now);
+
+// 試合を始めた（途中で閉じたら、次に開いたとき負けにする）
+export async function dojoBegin(db, userId, no, now = Date.now()) {
+  const p = await dojoProgress(db, userId);
+  await dojoSave(db, userId, { ...p, playing: no }, now).run();
+}
+
+// 試合の結果を記録して、報酬を配る。rec: { userId, no, won, ruler, kos, abandoned（途中で閉じた・降参） }
+// 勝ち：次の番号へ（30番に勝つと30人破り。次は1番から）。負け：1番からやり直し（先生戦の負けは何も変わらない）
+// 初めて勝った相手からは、その子の持ち物（パーツ・班長の柄・先生の称号）が受け取り箱に届く。30人破りの初回は称号と限定の着せ替え
+// えんぴつと経験値は、決着した試合だけ（えんぴつは対戦と同じ1日の上限に数える）
+export async function recordDojo(db, rec, now = Date.now()) {
+  const cfg = await getConfig(db, now);
+  const { economy } = cfg;
+  const p = await dojoProgress(db, rec.userId);
+  const mate = classmateByNo(cfg.classmates, rec.no);
+  const teacher = rec.no === TEACHER_NO;
+  const stmts = [];
+  const out = { won: !!rec.won, no: rec.no, name: mate?.name || '', first: false, items: [], cleared: false, firstClear: false, coins: 0, exp: null, abandoned: !!rec.abandoned };
+  p.playing = null;
+  if (rec.won) {
+    if (!teacher) p.best = Math.max(p.best, rec.no);
+    if (mate && !p.beaten.includes(mate.id)) {
+      out.first = true;
+      p.beaten.push(mate.id);
+      for (const id of mate.reward) {
+        if (!ITEMS[id]) continue;
+        out.items.push(id);
+        stmts.push(inboxStmt(db, rec.userId, { kind: 'dojo', title: `バトル道場 ${teacher ? '担任' : rec.no + '番'} ${mate.name}に初勝利`, item: id }, now));
+      }
+    }
+    if (teacher) p.teacherWins++;
+    else if (rec.no >= DOJO_SIZE) {
+      // 30人破り
+      out.cleared = true;
+      out.firstClear = p.clears === 0;
+      p.clears++;
+      p.next = 1;
+      if (out.firstClear) {
+        for (const id of CLEAR_REWARD) {
+          if (!ITEMS[id]) continue;
+          out.items.push(id);
+          stmts.push(inboxStmt(db, rec.userId, { kind: 'dojo', title: 'バトル道場 30人破り 初達成', item: id }, now));
+        }
+      }
+    } else p.next = rec.no + 1;
+  } else if (!teacher) {
+    p.next = 1;
+  }
+  // えんぴつ・経験値（途中で閉じた試合は、なし）
+  if (!rec.abandoned) {
+    const day = jstDay(now);
+    const u = await db.prepare('SELECT battle_day, battle_earned FROM users WHERE id = ?').bind(rec.userId).first();
+    if (u) {
+      const earned = u.battle_day === day ? u.battle_earned : 0;
+      const want = economy.dojoPlay + (rec.won ? economy.dojoWin : 0);
+      const give = Math.max(0, Math.min(want, economy.dailyBattleCap - earned));
+      out.coins = give; out.capped = give < want;
+      stmts.push(db.prepare('UPDATE users SET coins = coins + ?, battle_day = ?, battle_earned = ? WHERE id = ?').bind(give, day, earned + give, rec.userId));
+    }
+    if (ITEMS[rec.ruler]?.kind === 'ruler') {
+      const gain = economy.dojoExpPlay + (rec.won ? economy.dojoExpWin : 0) + (rec.kos || 0) * economy.expKo;
+      const before = (await db.prepare('SELECT exp FROM ruler_exp WHERE user_id = ? AND ruler_id = ?').bind(rec.userId, rec.ruler).first())?.exp ?? 0;
+      const a = levelInfo(before), b = levelInfo(before + gain);
+      out.exp = { ruler: rec.ruler, gain, ...b, levelUp: b.level > a.level };
+      if (gain > 0) {
+        stmts.push(db.prepare(`INSERT INTO ruler_exp (user_id, ruler_id, exp) VALUES (?, ?, ?)
+          ON CONFLICT (user_id, ruler_id) DO UPDATE SET exp = exp + excluded.exp`).bind(rec.userId, rec.ruler, gain));
+      }
+    }
+  }
+  stmts.push(dojoSave(db, rec.userId, p, now));
+  await db.batch(stmts);
+  out.total = (await db.prepare('SELECT coins FROM users WHERE id = ?').bind(rec.userId).first())?.coins ?? 0;
+  p.teacherOpen = p.clears > 0;
+  out.progress = p;
+  return out;
 }

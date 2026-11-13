@@ -4,6 +4,18 @@
 import { RoomCore } from './shared/core.js';
 import { planShot, decideNow, CPU_LEVELS } from './shared/cpu.js';
 import { ITEMS, resolveLoadout } from './shared/catalog.js';
+import { defaultClassmates } from './shared/dojo.js';
+
+// コンピュータは、クラスメイト（30人）から選ぶ。「つよい」で1人だけのときは担任の先生
+function pickClassmates(n, level, cfg) {
+  const all = Array.isArray(cfg?.classmates) && cfg.classmates.length ? cfg.classmates : defaultClassmates();
+  const students = all.filter((c) => !c.teacher), teacher = all.find((c) => c.teacher);
+  if (level === 'hard' && n === 1 && teacher) return [teacher];
+  const pool = [...students];
+  const out = [];
+  while (out.length < n && pool.length) out.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  return out;
+}
 
 // コンピュータの定規：N と R から（SR以上の特性・SSRの技は、練習の相手には使わせない）
 const rulerIds = () => Object.values(ITEMS).filter((it) => it.kind === 'ruler' && (it.rarity === 'N' || it.rarity === 'R')).map((it) => it.id);
@@ -16,9 +28,12 @@ export function createPractice({ mode, cpus, level, name, loadout, loadoutFor, o
   const me = core.join(name, null, null).member;
   core.setLoadout(me.id, loadout);
   const cpuIds = [];
+  const mates = pickClassmates(cpus, lv, cfg);
   for (let i = 0; i < cpus; i++) {
-    const m = core.join(`CPU${i + 1}`, null, null).member;
+    const mate = mates[i];
+    const m = core.join(mate?.name || `CPU${i + 1}`, null, null).member;
     m.cpu = true; // コンピュータは瀕死にならず、体力0で倒れる
+    if (mate) m.avatar = mate.avatar;
     const ids = rulerIds();
     const ruler = ids[Math.floor(Math.random() * ids.length)];
     core.setLoadout(m.id, resolveLoadout({ ruler }, cfg, CPU_LEVELS[lv].level));

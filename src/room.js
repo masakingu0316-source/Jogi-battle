@@ -2,10 +2,11 @@
 // 休止（ハイバネーション）から復帰しても続きができるよう、変更のたびに保存する。
 import { DurableObject } from 'cloudflare:workers';
 import { RoomCore } from '../public/shared/core.js';
-import { ensureSchema, loadoutFor, recordMatch } from './db.js';
+import { ensureSchema, loadoutFor, recordMatch, avatarOf } from './db.js';
 import { ITEMS, resolveLoadout } from '../public/shared/catalog.js';
 import { VERSION } from '../public/shared/version.js';
 import { handleStage, stageAlarm } from './stage-host.js';
+import { handleDojo } from './dojo-host.js';
 
 const IDLE_LIMIT_MS = 6 * 60 * 60 * 1000; // 6時間だれも使わなかった部屋は片付ける
 const MAX_MESSAGE_BYTES = 4096;
@@ -35,6 +36,15 @@ export class Room extends DurableObject {
         if (raw) user = JSON.parse(decodeURIComponent(raw));
       } catch { user = null; }
       return handleStage(this, request, user);
+    }
+    // バトル道場（この Durable Object は「dojo:<アカウントID>」の名前で、1人の試合だけを持つ）
+    if (url.pathname.startsWith('/dojo/')) {
+      let user = null;
+      try {
+        const raw = request.headers.get(USER_HEADER);
+        if (raw) user = JSON.parse(decodeURIComponent(raw));
+      } catch { user = null; }
+      return handleDojo(this, request, user);
     }
 
     if (url.pathname === '/create') {
@@ -101,6 +111,9 @@ export class Room extends DurableObject {
           await ensureSchema(this.env.DB);
           const r = await loadoutFor(this.env.DB, res.member.userId);
           if (r.loadout) res.member.loadout = r.loadout;
+          const av = await avatarOf(this.env.DB, res.member.userId);
+          res.member.avatar = av.avatar; // 名札・対戦中の顔に出すアバター
+          res.member.title = av.title;   // 名札に出す称号
         } catch { /* 読めなければ標準の定規のまま */ }
       }
       ws.send(JSON.stringify({ t: 'welcome', you: { id: res.member.id, token: res.member.token, account: !!res.member.userId }, state: this.core.snapshot() }));

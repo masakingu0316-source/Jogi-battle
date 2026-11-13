@@ -13,12 +13,18 @@ import { createAccount } from './account.js';
 import { createStageRun } from './stage-client.js';
 import { createStageUI } from './stage-ui.js';
 import { createHome } from './home.js';
-import { ENEMIES, deskText } from './shared/stage.js';
+import { ENEMIES, deskText, PAINT } from './shared/stage.js';
 import { RoomCore } from './shared/core.js';
 import { StageCore } from './shared/stage-core.js';
 import { qrSvg } from './qr.js';
 import { createScanner, roomFromScan } from './scan.js';
 import { setupScreen, isStandalone } from './screen.js';
+import { createAvatarEditor } from './avatar-ui.js';
+import { avatarImage } from './avatar-paint.js';
+import { defaultAvatar } from './shared/avatar.js';
+import { createDojoRun } from './dojo-client.js';
+import { createDojoUI, rewardName, classmatesOf, noLabel } from './dojo-ui.js';
+import { titleOf, DOJO_SIZE, TEACHER_NO } from './shared/dojo.js';
 
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -134,7 +140,7 @@ function setConn(text) {
   $('conn').hidden = !text;
 }
 function show(screen) {
-  for (const id of ['login', 'home', 'lobby', 'game', 'mypage', 'stagePick']) $(id).hidden = id !== screen;
+  for (const id of ['login', 'home', 'lobby', 'game', 'mypage', 'stagePick', 'avatarScreen', 'dojoScreen']) $(id).hidden = id !== screen;
   // 対戦中は見出しや足もとを畳んで、盤面とゲージを1画面に収める
   document.body.classList.toggle('in-game', screen === 'game');
   // ホームとマイページ（部屋の外）では、下にタブを出す。ホームは見出しも畳んで1画面に収める
@@ -142,6 +148,8 @@ function show(screen) {
   $('tabbar').hidden = !tabs;
   document.body.classList.toggle('with-tabs', tabs);
   document.body.classList.toggle('on-home', screen === 'home');
+  // 道場・着せ替えでは見出しを畳んで、座席表やパーツの一覧を広く見せる
+  document.body.classList.toggle('no-head', screen === 'dojoScreen' || screen === 'avatarScreen');
   document.body.classList.toggle('on-login', screen === 'login');
   // 画面を切り替えたら、中の一覧は先頭から見せる
   const el = $(screen);
@@ -151,6 +159,8 @@ function show(screen) {
 const memberById = (id) => app.state?.members.find((m) => m.id === id) || null;
 // ---- ステージ（1人で攻略）でも同じ画面を使うための小道具 ----
 const isStage = (st = app.state) => st?.mode === 'stage';
+// バトル道場（1対1の部屋と同じ形。st.dojo に相手の情報）
+const isDojo = (st = app.state) => !!st?.dojo;
 const modeOf = (st) => MODES[st?.mode] || { name: 'ステージ', teams: false, desk: st?.game?.desk || 'single', min: 1, max: 1 };
 const deskKeyOf = (st) => st?.game?.desk || modeOf(st).desk;
 // 席の名前・色。ステージの敵は種類ごとの名前と色
@@ -174,6 +184,7 @@ const isHost = () => app.state && app.you && app.state.hostId === app.you.id;
 const mmss = (ms) => { const s = Math.max(0, Math.ceil(ms / 1000)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`; };
 function send(msg) {
   if (app.stage) return app.stage.send(msg);
+  if (app.dojo) return app.dojo.send(msg);
   if (app.practice) return app.practice.send(msg);
   if (app.ws && app.ws.readyState === WebSocket.OPEN) { app.ws.send(JSON.stringify(msg)); return true; }
   toast('接続が切れています。つながり直すまでお待ちください');
@@ -244,6 +255,7 @@ function renderHome() {
   home.render();
   home.setTab('home');
   stageUI?.homeNote();
+  dojoUI?.homeNote();
 }
 // 対戦：モードを選ぶシート
 function renderBattle() {
@@ -406,7 +418,8 @@ function stopRoom() {
   if (app.ws) { try { app.ws.close(1000); } catch { } }
   if (app.practice) app.practice.close();
   if (app.stage) app.stage.close();
-  app.practice = null; app.stage = null;
+  if (app.dojo) app.dojo.close();
+  app.practice = null; app.stage = null; app.dojo = null;
   app.ws = null; app.state = null; app.playing = null; app.aim = null; app.waitingShot = false;
 }
 // 部屋から出てホームへ
@@ -475,6 +488,8 @@ function onMessage(m) {
       setConn(null);
       app.waitingShot = false;
       applyState(m.state);
+      if (m.state?.dojo) dojoIntro(m.state.dojo);
+      if (m.lost) toast(`前の試合（${m.lost.teacher ? '担任の先生' : `${m.lost.no}番 ${m.lost.name}`}）は途中で終わったので、負けになりました`);
       break;
     case 'state':
       if (app.playing) app.pendingState = m.state;
@@ -499,8 +514,21 @@ function onMessage(m) {
       }
       if (showingResult()) renderGame();
       break;
+    case 'dojo':
+      // 道場の試合の結果（記録と報酬）
+      app.dojoResult = m;
+      if (app.me) {
+        app.me.dojo = m.progress;
+        if (m.exp) app.me.exp = { ...(app.me.exp || {}), [m.exp.ruler]: m.exp.exp };
+        if (m.items?.length) app.me.inbox = (app.me.inbox || 0) + m.items.length;
+      }
+      if (typeof m.total === 'number') account.setCoins(m.total);
+      dojoUI.progress = m.progress;
+      if (showingResult()) renderGame();
+      break;
     case 'left':
       if (app.stageMode) { leaveStage(''); break; }
+      if (app.dojoMode) { leaveDojo(''); break; }
       if (app.code) store.del(tokenKey(app.code));
       leaveRoom('');
       break;
@@ -508,6 +536,7 @@ function onMessage(m) {
       if (m.update) showUpdate();
       if (m.login) { app.me = null; leaveRoom(m.text); return; }
       if (m.stageGone) { leaveStage(m.text); return; }
+      if (m.dojoGone) { leaveDojo(m.text); return; }
       if (m.fatal) {
         app.fatal = true;
         if (app.code) store.del(tokenKey(app.code));
@@ -543,7 +572,7 @@ function applyState(st) {
     for (const f of st.game.fx) {
       if (f.id <= (app.seenFx || 0)) continue;
       // その場で使う必殺技は、カットインを出してから効果の文字
-      const instant = ['heal', 'sub', 'counter', 'warp', 'chair', 'blizzard'].includes(f.kind);
+      const instant = ['heal', 'sub', 'counter', 'warp', 'chair', 'blizzard', 'shizuka'].includes(f.kind);
       if (instant) showCutin(f.owner, f.kind);
       const t0 = performance.now() + (instant ? CUTIN_MS - 200 : 0);
       // ステージの敵の出来事（倒れた・消しゴムに削られた・修正テープで直った）
@@ -594,8 +623,47 @@ function applyState(st) {
         if (!reducedMotion()) app.shakeUntil = performance.now() + 160;
         continue;
       }
+      if (f.kind === 'lap') {
+        // 1周：全員の必殺ゲージがたまる
+        (f.gains || []).forEach((h, n) => {
+          const b = st.game.bodies?.[h.owner];
+          if (!b || b.state !== 'desk') return;
+          app.fx.push({ x: b.x, y: b.y - 4, t0: t0 + n * 90, text: h.full ? 'ゲージ満タン！' : `ゲージ +${h.amount}`, color: h.full ? '#ffd56b' : '#ffe9a8', small: !h.full, big: h.full });
+        });
+        continue;
+      }
+      // ---- 破天荒編：水たまり・はさみ・落雷の予告 ----
+      if (f.kind === 'boltWarn') {
+        const who = f.owner < 0 || isStage(st) ? '' : `${seatLook(f.owner).name} `;
+        app.fx.push({ x: f.x, y: f.y - 4, t0, text: `${who}落雷の予告！`, color: '#c8b8ff', big: true });
+        for (const id of f.bolts || []) app.boltBorn = { ...(app.boltBorn || {}), [id]: t0 };
+        continue;
+      }
+      if (f.kind === 'paintHeal') {
+        app.fx.push({ x: f.x, y: f.y - 4, t0, text: `緑の絵の具 +${f.amount}`, color: '#7fe3a0', small: true });
+        app.fx.push({ x: f.x, y: f.y, t0, ring: 6, color: '#3fae5a', inward: true });
+        continue;
+      }
+      if (f.kind === 'paintHurt') {
+        app.fx.push({ x: f.x, y: f.y - 4, t0, text: `黄の絵の具 -${f.amount}`, color: '#ffd84a', small: true });
+        continue;
+      }
+      if (f.kind === 'cut') {
+        app.fx.push({ x: f.x, y: f.y - 4, t0, text: 'はさみ！ 次は力が半分', color: '#ffb36b', small: true });
+        continue;
+      }
+      if (f.kind === 'splash') {
+        app.fx.push({ x: f.x, y: f.y - 4, t0, text: '絵の具がはねた！', color: '#ffe9a8', small: true });
+        for (const id of f.puddles || []) app.puddleBorn = { ...(app.puddleBorn || {}), [id]: t0 };
+        continue;
+      }
+      if (f.kind === 'dry' || f.kind === 'pull') continue;
       if (f.kind === 'blizzard') app.crystalBorn = { ...(app.crystalBorn || {}), [f.crystal]: t0 };
-      const text = { heal: `保健室！ +${f.amount}`, sub: '身代わり！', subUsed: '身代わり発動！', counter: '反撃の構え！', warp: 'ワープ！', chair: 'いす召喚！', blizzard: 'クリスタル！', ink: `インク -${f.amount}` }[f.kind];
+      if (f.kind === 'shizuka') {
+        // 静かに！：相手のゲージが0に
+        for (const [j, b] of (st.game.bodies || []).entries()) if (j !== f.owner && b.state === 'desk') app.fx.push({ x: b.x, y: b.y - 4, t0: t0 + 250, text: 'ゲージ 0', color: '#9fd8bf', small: true });
+      }
+      const text = { shizuka: '静かに！', heal: `保健室！ +${f.amount}`, sub: '身代わり！', subUsed: '身代わり発動！', counter: '反撃の構え！', warp: 'ワープ！', chair: 'いす召喚！', blizzard: 'クリスタル！', ink: `インク -${f.amount}` }[f.kind];
       const col = f.kind === 'subUsed' ? SKILLS.sub.color : f.kind === 'ink' ? SKILLS.ink.color : SKILLS[f.kind]?.color || '#fff';
       if (f.kind === 'warp' && f.from) app.fx.push({ x: f.from.x, y: f.from.y, t0, ring: 8, color: col, inward: true });
       if (text) app.fx.push({ x: f.x, y: f.y - 4, t0, text, color: col, big: f.kind !== 'ink', small: f.kind === 'ink' });
@@ -622,7 +690,7 @@ function windWord(ang) {
 // 自分が参加した対戦の結果を、まだ閉じていなければ見せる
 function showingResult() {
   const st = app.state;
-  if (isStage(st)) return st.phase === 'over' && !!st.game?.result && !app.playing && !app.pendingState;
+  if (isStage(st) || isDojo(st)) return st.phase === 'over' && !!st.game?.result && !app.playing && !app.pendingState;
   return !!st && st.phase === 'lobby' && !!st.game?.result && !app.playing
     && st.game.id === app.playedGame && app.dismissedGame !== st.game.id;
 }
@@ -639,7 +707,7 @@ function render() {
     if (app.view === 'mypage') { app.view = 'room'; toast('対戦が始まりました'); }
   }
   if (app.view !== 'room') return;
-  if (st.phase === 'aim' || showingResult() || isStage(st)) {
+  if (st.phase === 'aim' || showingResult() || isStage(st) || isDojo(st)) {
     const wasHidden = $('game').hidden;
     show('game');
     if (wasHidden) window.scrollTo(0, 0);
@@ -679,14 +747,16 @@ function renderLobby() {
   for (let i = 0; i < mode.max; i++) {
     const m = st.members[i];
     const pl = PLAYERS[i];
-    if (!m) { rows.push(`<li class="empty"><span class="seat" style="color:var(--seat-${i})">${pl.name}</span><span class="who">空き席</span><span></span></li>`); continue; }
+    if (!m) { rows.push(`<li class="empty"><span class="seat" style="color:var(--seat-${i})">${pl.name}</span><span class="mem-av empty" aria-hidden="true"></span><span class="who">空き席</span><span></span></li>`); continue; }
     const badges = [
       app.you && m.id === app.you.id ? '<span class="badge you">あなた</span>' : '',
       m.connected ? '' : '<span class="badge off">接続待ち</span>',
     ].join('');
     const team = mode.teams ? `${TEAMS[teamOf(i)].name}・` : '';
+    const av = memberAvatar(m);
     rows.push(`<li><span class="seat" style="color:var(--seat-${i})">${pl.name}</span>
-      <span class="who">${esc(m.name)}${badges}<span class="sub">${team}${esc(ITEMS[m.loadout?.ruler]?.name || '')} Lv.${m.loadout?.level || 1}${m.loadout?.acc ? '・' + esc(accText(m.loadout.acc)) : ''}・${st.wins[m.id] || 0}勝</span></span>
+      <span class="mem-av" style="--seat:var(--seat-${i})"><img src="${avatarImage(av, { view: 'bust', size: 48 })}" alt="" draggable="false"></span>
+      <span class="who">${esc(m.name)}${titleChip(m)}${m.cpu ? '<span class="badge cpu">コンピュータ</span>' : ''}${badges}<span class="sub">${team}${esc(ITEMS[m.loadout?.ruler]?.name || '')} Lv.${m.loadout?.level || 1}${m.loadout?.acc ? '・' + esc(accText(m.loadout.acc)) : ''}・${st.wins[m.id] || 0}勝</span></span>
       <span class="state${m.ready ? ' ok' : ''}">${m.ready ? '準備OK' : '準備中'}</span></li>`);
   }
   $('members').innerHTML = rows.join('');
@@ -749,7 +819,7 @@ function renderMyRuler(me) {
   if (acct && ITEMS[lo.ruler]) $('myRulerName').innerHTML = `<span class="rar-mini">${esc(ITEMS[lo.ruler].rarity)}</span>${esc(ITEMS[lo.ruler].name)} <small>Lv.${levelOfRuler(app.me, lo.ruler).level}</small>`;
   previewRuler($('lobbyPreview'), lo, Math.max(0, app.state.members.findIndex((m) => m.id === me.id)));
   const r = ITEMS[lo.ruler];
-  $('rulerNote').innerHTML = `${matChip(r?.mat)} ${esc(r ? affinityText(r.mat) : '')}<br>${esc(skillText(lo.ruler, app.game))}${lo.acc ? `<br>アクセサリ：${esc(ITEMS[lo.acc].name)}（${esc(accText(lo.acc))}）` : ''}`;
+  $('rulerNote').innerHTML = `${matChip(r?.mat)} ${esc(r ? affinityText(r.mat) : '')}<br>${esc(skillText(lo.ruler, app.game)).replace(/\n/g, '<br>')}${lo.acc ? `<br>アクセサリ：${esc(ITEMS[lo.acc].name)}（${esc(accText(lo.acc))}）` : ''}`;
   $('openCase').hidden = !acct;
 }
 
@@ -777,6 +847,7 @@ function renderGame() {
       turn: st.phase === 'aim' && g.turn === i, // 再生中も、はじいた人を大きいままにする（行の高さを変えない）
       sub: foe ? (foe.move ? (foe.boss ? 'ラスボス' : '動く') : '置物') + (body.enemy === 'ruler' && mat ? `・${MATERIAL_INFO[mat].name}` : '')
         : stage ? [mat ? `${MATERIAL_INFO[mat].name} Lv.${body.level || 1}` : ''].filter(Boolean).join('・')
+        : isDojo(st) ? [mat ? `${MATERIAL_INFO[mat].name} Lv.${body.level || 1}` : '', i === 1 ? `${noLabel(st.dojo)}・${st.dojo.role}` : ''].filter(Boolean).join('・')
         : [mat ? `${MATERIAL_INFO[mat].name} Lv.${body.level || 1}` : '', teams ? TEAMS[teamOf(i)].name : '', `${st.wins[mid] || 0}勝`].filter(Boolean).join('・'),
       // 続いている必殺技の効果
       fxs: [p.alive && !body?.enemy && body?.state === 'desk' && (body?.hp ?? 1) <= 0 && '瀕死', body?.anchor && '不動', body?.counter && '反撃の構え', body?.sub && '身代わり', body?.subWait && '身代わり（次の相手の番）', body?.ink > 0 && `インク あと${body.ink}`].filter(Boolean),
@@ -793,7 +864,7 @@ function renderGame() {
     const lk = seatLook(i);
     return `<div class="orow${x.turn ? ' is-turn' : ''}${x.p.alive || x.won ? '' : ' is-out'}" style="--seat:${lk.css}">
       <span class="seat">${esc(lk.short)}</span>
-      <span class="who">${esc(x.m?.name || '（退出）')}${x.fxs.map((t) => `<em class="fx-chip">${esc(t)}</em>`).join('')}<small>${esc(x.sub)}${x.status ? '・' + x.status : ''}</small></span>
+      <span class="who">${faceImg(seatAvatar(i), x.turn ? 26 : 20)}${esc(x.m?.name || '（退出）')}${titleChip(x.m)}${x.fxs.map((t) => `<em class="fx-chip">${esc(t)}</em>`).join('')}<small>${esc(x.sub)}${x.status ? '・' + x.status : ''}</small></span>
       ${hpBar(x)}
       ${sk ? ring(x.gv, sk, { size: x.turn ? 34 : 20, label: x.turn ? sk.name : '', full: x.full, anchor: x.body?.anchor }) : ''}
     </div>`;
@@ -806,7 +877,7 @@ function renderGame() {
     mePanel.hidden = false;
     mePanel.className = `me-panel${x.turn ? ' is-turn' : ''}${x.p.alive || x.won ? '' : ' is-out'}`;
     mePanel.style.setProperty('--seat', seatLook(meIdx).css);
-    mePanel.innerHTML = `<div class="me-line"><span class="seat">${esc(seatLook(meIdx).short)}</span><span class="who">${esc(x.m?.name || 'あなた')}</span>
+    mePanel.innerHTML = `<div class="me-line"><span class="seat">${esc(seatLook(meIdx).short)}</span><span class="who">${faceImg(seatAvatar(meIdx), 26)}${esc(x.m?.name || 'あなた')}${titleChip(x.m)}</span>
         ${x.fxs.map((t) => `<em class="fx-chip">${esc(t)}</em>`).join('')}<small>${esc(x.sub)}${x.status ? '・' + x.status : ''}</small></div>
       <div class="me-hp">${hpBar(x)}</div>`;
     $('skillBtn').hidden = !sk;
@@ -843,12 +914,16 @@ function renderGame() {
     const skTags = (g.icy > 0 ? `<span class="ev ice">吹雪：この番は机がよくすべる</span>` : '')
       + (g.crystals?.length ? `<span class="ev ice">吹雪のクリスタル：触れると机が凍る</span>` : '')
       + (g.rainbow && !g.rainbow.wait ? `<span class="ev niji">虹の道：この番だけ、乗った定規は道に沿って進む</span>` : '')
-      + (g.walls?.length ? `<span class="ev chair">いす召喚：${g.walls[0].left <= 1 ? 'この番まで' : `あと${g.walls[0].left}回`}、椅子の辺から落ちない</span>` : '');
+      + (g.walls?.length ? `<span class="ev chair">いす召喚：${g.walls[0].left <= 1 ? 'この番まで' : `あと${g.walls[0].left}回`}、椅子の辺から落ちない</span>` : '')
+      // 破天荒編：はさみ（この番は力が半分）・落雷の予告
+      + (g.bodies[cur]?.cut ? `<span class="ev cut">はさみ：この番は、はじく力が半分</span>` : '')
+      + (g.bolts?.length ? `<span class="ev bolt">${g.bolts.some((b) => b.skip === 0 && b.due === nextAlive(g)) ? 'この番のあと落雷' : '落雷の予告'}×${g.bolts.length}</span>` : '');
     const lives = st.stage?.lives ?? 3, livesMax = st.stage?.livesMax ?? 3;
     const hearts = stage ? `<span class="lives" role="img" aria-label="ライフ ${lives}／${livesMax}">${Array.from({ length: livesMax }, (_, k) => `<i class="${k < lives ? 'on' : ''}"></i>`).join('')}</span>` : '';
     const stTag = stage ? `<span class="first stage-tag">マップ${st.stage.map}・盤面 ${st.stage.board + 1}／${st.stage.boards}</span><span class="first stage-tag life-tag">ライフ${hearts}</span>` : '';
-    tags = stTag + evTag + skTags + extra + first;
-  } else msg.textContent = stage ? (st.stage?.result?.cleared ? 'マップクリア' : 'マップ失敗') : '対戦終了';
+    const dTag = isDojo(st) ? `<span class="first dojo-tag">バトル道場・${esc(noLabel(st.dojo))}${st.dojo.rankName && !st.dojo.teacher ? `（${esc(st.dojo.rankName)}）` : ''}</span>` : '';
+    tags = dTag + stTag + evTag + skTags + extra + first;
+  } else msg.textContent = stage ? (st.stage?.result?.cleared ? 'マップクリア' : 'マップ失敗') : isDojo(st) ? (st.dojo.result?.won ? '勝ち' : '負け') : '対戦終了';
   $('tags').innerHTML = tags;
   // 左下の円ゲージ：満タンで自分の番なら押せる（押すと必殺技を構える）
   const sb = $('skillBtn');
@@ -869,13 +944,17 @@ function renderGame() {
   sb.setAttribute('aria-label', canSkill ? `必殺技「${skName}」${app.skillArmed ? 'を構えています。もう一度押すとやめる' : 'を使う'}` : `必殺技「${skName}」のゲージ`);
   $('board').classList.toggle('can-aim', canAim());
   $('skip').hidden = !(isHost() && st.phase === 'aim' && !app.playing && curMember && !curMember.connected);
-  $('quitPractice').hidden = !app.practice && !app.stage;
-  $('quitPractice').textContent = app.stage ? '攻略をやめる' : '練習をやめる';
+  $('quitPractice').hidden = (!app.practice && !app.stage && !app.dojo) || (app.dojo && st.phase !== 'aim');
+  $('quitPractice').textContent = app.stage ? '攻略をやめる' : app.dojo ? (app.quitArmed ? '本当に降参する？（負け）' : '降参する') : '練習をやめる';
+  $('quitPractice').classList.toggle('armed', !!(app.dojo && app.quitArmed));
 
+  const dojo = isDojo(st);
   $('result').hidden = !over;
   for (const id of ['stageNext', 'stageRetry', 'stageExit']) $(id).hidden = !(over && stage);
-  $('backToRoom').hidden = over && stage;
+  for (const id of ['dojoNextBtn', 'dojoRetry', 'dojoExit']) $(id).hidden = !(over && dojo);
+  $('backToRoom').hidden = over && (stage || dojo);
   if (over && stage) { renderStageResult(); return; }
+  if (over && dojo) { renderDojoResult(); return; }
   if (over) {
     const r = g.result;
     $('resultTitle').textContent = r.title;
@@ -937,6 +1016,7 @@ function resumeStage(run) {
 function leaveStage(errorText) {
   stopRoom();
   app.stageMode = false; app.lastReward = null;
+  if (app.stageSel) stageUI.stage = app.stageSel.stage; // 遊んでいた編を開く
   stageUI.open(errorText);
   account.refresh().then(() => { if (app.view === 'stage') stageUI.render(); });
 }
@@ -945,7 +1025,7 @@ function boardBanner(st) {
   const s = st.stage, d = DESKS[deskKeyOf(st)];
   const now = performance.now();
   app.fx.push({ x: 0, y: -d.h / 6, t0: now + 100, text: `盤面 ${s.board + 1}／${s.boards}`, color: '#ffffff', big: true });
-  if (st.game?.boss) app.fx.push({ x: 0, y: d.h / 8, t0: now + 600, text: 'ラスボス登場！', color: '#5ff0dc', big: true });
+  if (st.game?.boss) app.fx.push({ x: 0, y: d.h / 8, t0: now + 600, text: 'ラスボス登場！', color: s.id === 'hatenko' ? '#c8b8ff' : '#5ff0dc', big: true });
 }
 function renderStageResult() {
   const st = app.state, s = st.stage, r = s.result || {};
@@ -984,6 +1064,104 @@ $('stageRetry').addEventListener('click', () => {
 });
 $('stageExit').addEventListener('click', () => send({ t: 'leave' }));
 
+// ---------------- バトル道場（クラス30人に1人ずつ） ----------------
+const dojoUI = createDojoUI({
+  app, $, esc, show, toast,
+  onStart: (opt) => startDojo(opt),
+  onPickRuler: () => account.open('case', { pick: true, back: 'dojo' }),
+});
+$('openDojo').addEventListener('click', () => { setError('homeError', ''); dojoUI.open(); });
+$('dojoBack').addEventListener('click', () => showHome());
+
+async function startDojo(opt) {
+  stopRoom();
+  app.closedByUs = false;
+  app.view = 'room'; app.dojoMode = true; app.dojoResult = null; app.lastReward = null; app.code = null; app.quitArmed = false;
+  app.dojoSel = opt;
+  const run = app.dojo = createDojoRun({ onMessage: (m) => { if (app.dojo === run) onMessage(m); }, busy: () => !!app.playing });
+  try {
+    await run.start(opt);
+  } catch (e) {
+    if (app.dojo === run) { stopRoom(); app.dojoMode = false; }
+    if (e.data?.update) showUpdate();
+    if (e.status === 401) { app.me = null; showLogin('ログインの有効期限が切れました。もう一度ログインしてください。'); return; }
+    dojoUI.open(e.message);
+  }
+}
+// 道場の試合を抜けて、道場の画面へ
+function leaveDojo(errorText) {
+  stopRoom();
+  app.dojoMode = false; app.dojoResult = null; app.quitArmed = false;
+  $('dojoIntro').hidden = true;
+  dojoUI.selectNext();
+  dojoUI.open(errorText);
+  account.refresh().then(() => { if (app.view === 'dojo') dojoUI.render(); });
+}
+// 試合の始めに、相手の登場（顔・名前・係・せりふ）
+function dojoIntro(d) {
+  const c = classmatesOf(app).find((x) => x.no === d.no);
+  const av = memberById('C')?.avatar || c?.avatar;
+  $('diAv').src = av ? avatarImage(av, { view: 'bust', size: 150 }) : '';
+  $('diNo').textContent = d.teacher ? '担任の先生' : `${d.no}番${d.rankName ? `・${d.rankName}` : ''}`;
+  $('diName').textContent = d.name;
+  $('diRole').textContent = d.role;
+  $('diLine').textContent = d.lines?.enter ? `「${d.lines.enter}」` : '';
+  $('diLine').hidden = !d.lines?.enter;
+  const box = $('dojoIntro');
+  box.classList.toggle('teacher', !!d.teacher);
+  box.hidden = false;
+  box.classList.remove('go'); void box.offsetWidth; box.classList.add('go');
+  clearTimeout(app.introTimer);
+  app.introTimer = setTimeout(() => { box.hidden = true; }, reducedMotion() ? 2600 : 2900);
+}
+$('dojoIntro').addEventListener('click', () => { $('dojoIntro').hidden = true; });
+
+function renderDojoResult() {
+  const st = app.state, d = st.dojo, won = !!d.result?.won;
+  const r = app.dojoResult;
+  const teacher = !!d.teacher;
+  const cleared = !!r?.cleared;
+  $('resultTitle').textContent = cleared ? '30人破り達成！' : teacher ? (won ? '先生に勝った！' : '先生の勝ち') : won ? `${d.no}人抜き！` : '負け…';
+  $('resultTitle').style.color = won ? 'var(--gold)' : 'var(--warn)';
+  const line = won ? d.lines?.lose : d.lines?.win; // 相手のひとこと
+  const reason = st.game.result?.reason || '';
+  $('resultReason').textContent = (teacher
+    ? (won ? `担任の${d.name}に勝ちました` : `${reason}。先生には何度でも挑めます`)
+    : won ? (cleared ? `学級委員長の${d.name}に勝って、クラス全員に勝ちました` : `${d.no}番 ${d.name}に勝ちました`)
+      : `${reason}。1番からやり直しです`) + (line ? `\n${d.name}「${line}」` : '');
+  $('resultOrder').textContent = '';
+  const parts = [];
+  if (r) {
+    if (r.items?.length) parts.push(`<span class="lvup">${r.firstClear ? '30人破りの初達成！' : '初めて勝った！'}</span><br><small class="dojo-got">受け取り箱に届きました：${r.items.map((id) => esc(rewardName(id))).join('、')}</small>`);
+    if (r.coins || r.capped !== undefined) parts.push(r.coins ? `${esc(ECONOMY.currency)} +${r.coins}${ECONOMY.unit}（合計 ${r.total}${ECONOMY.unit}）${r.capped ? '　今日の対戦ぶんは上限に達しました' : ''}` : '今日の対戦でもらえるえんぴつは上限に達しました');
+    const x = r.exp;
+    if (x) parts.push(`<small>${esc(ITEMS[x.ruler]?.name || '')}に経験値 +${x.gain}　${x.levelUp ? `<span class="lvup">レベルアップ！ Lv.${x.level}</span>` : `Lv.${x.level}${x.max ? '（最大）' : `・次のレベルまで あと${x.need - x.into}点`}`}</small>`);
+  }
+  $('resultReward').hidden = !parts.length;
+  $('resultReward').innerHTML = parts.join('<br>');
+  const p = r?.progress || app.me?.dojo;
+  const nextMate = p && classmatesOf(app).find((c) => c.no === p.next);
+  // 勝ったら次の相手へ。30人破り・先生戦のあとは、1番から（30人破りのあとは先生にも挑める）
+  const goNext = won && !teacher && !cleared && nextMate;
+  $('dojoNextBtn').hidden = !goNext && !(cleared && p?.teacherOpen);
+  $('dojoNextBtn').textContent = goNext ? `次の相手へ：${nextMate.no}番 ${nextMate.name}` : '担任の先生に挑む';
+  $('dojoNextBtn').dataset.teacher = goNext ? '' : '1';
+  $('dojoRetry').hidden = goNext || (teacher && !won && false);
+  $('dojoRetry').textContent = teacher ? (won ? '1番から挑む' : 'もう一度先生に挑む') : '1番から挑む';
+  $('dojoRetry').dataset.teacher = teacher && !won ? '1' : '';
+  $('dojoRetry').className = !won ? 'btn-main' : '';
+  $('dojoExit').textContent = won && !cleared && !teacher ? 'ここで中断（道場へ）' : '道場へ戻る';
+  $('resultNext').textContent = !won && !teacher && r?.progress ? `最高記録：${r.progress.best}番` : '';
+}
+$('dojoNextBtn').addEventListener('click', () => {
+  const teacher = $('dojoNextBtn').dataset.teacher === '1';
+  startDojo({ teacher, ruler: app.me?.selectedRuler });
+});
+$('dojoRetry').addEventListener('click', () => {
+  startDojo({ teacher: $('dojoRetry').dataset.teacher === '1', ruler: app.me?.selectedRuler });
+});
+$('dojoExit').addEventListener('click', () => send({ t: 'leave' }));
+
 // ---------------- 部屋の操作 ----------------
 $('myRuler').addEventListener('change', () => send({ t: 'ruler', ruler: $('myRuler').value }));
 $('readyBtn').addEventListener('click', () => {
@@ -1018,7 +1196,18 @@ $('backToRoom').addEventListener('click', () => {
   render();
 });
 $('skip').addEventListener('click', () => send({ t: 'skip' }));
-$('quitPractice').addEventListener('click', () => send({ t: 'leave' }));
+$('quitPractice').addEventListener('click', () => {
+  // 道場の降参は負けになるので、もう一度押して確かめる
+  if (app.dojo && !app.quitArmed) {
+    app.quitArmed = true;
+    renderGame();
+    clearTimeout(app.quitTimer);
+    app.quitTimer = setTimeout(() => { app.quitArmed = false; if (app.state && !$('game').hidden) renderGame(); }, 3000);
+    return;
+  }
+  app.quitArmed = false;
+  send({ t: 'leave' });
+});
 
 // ---------------- はじく操作 ----------------
 function myIndex() {
@@ -1150,6 +1339,28 @@ canvas.addEventListener('pointerup', (e) => {
 canvas.addEventListener('pointercancel', (e) => { camUp(e); app.aim = null; });
 
 // ---------------- 動きの再生 ----------------
+// ---------------- アバター（名札・対戦中の顔・カットイン） ----------------
+// その人のアバター。自分はいま着ているもの、ゲスト（ログインしていない人）は名前から決まるおまかせ
+function memberAvatar(m) {
+  if (!m) return null;
+  if (app.you && m.id === app.you.id && app.me?.avatar) return app.me.avatar;
+  return m.avatar || defaultAvatar(`guest-${m.name}`);
+}
+// ステージでは、敵にはアバターがない
+function seatAvatar(i) {
+  const g = app.state?.game;
+  if (!g) return null;
+  if (isStage()) return i === 0 ? (app.me?.avatar || memberAvatar(memberById(g.order[0]))) : null;
+  return memberAvatar(memberById(g.order[i]));
+}
+// 称号（名札の名前のあと）
+function titleChip(m) {
+  const id = app.me && m && app.you && m.id === app.you.id ? app.me.title : m?.title;
+  const t = titleOf(id);
+  return t ? `<em class="title-chip" style="--tc:${t.color}">${esc(t.name)}</em>` : '';
+}
+const faceImg = (av, size, cls = 'av-face') => (av ? `<img class="${cls}" src="${avatarImage(av, { view: 'face', size })}" alt="" width="${size}" height="${size}" draggable="false">` : '');
+
 // ---------------- 必殺技のカットイン（全員の画面に出す） ----------------
 const CUTIN_MS = 1150;
 function showCutin(owner, skill) {
@@ -1170,6 +1381,10 @@ function showCutin(owner, skill) {
   void el.offsetWidth; // アニメーションを最初から
   el.classList.add('play');
   if (body) previewRuler($('cutinRuler'), { specKey: body.specKey, shapeKey: skill === 'fullopen' ? 'folding3' : undefined, hp: body.hp, maxHp: body.maxHp, level: body.level, pattern: body.pattern, sticker: body.sticker, ...bodyLook(body) }, owner);
+  // 墨の帯に、その人のアバター（胸から上）を重ねる
+  const av = seatAvatar(owner);
+  $('cutinAv').hidden = !av;
+  if (av) $('cutinAv').src = avatarImage(av, { view: 'bust', size: 150 });
   clearTimeout(app.cutinTimer);
   app.cutinTimer = setTimeout(() => { el.hidden = true; el.classList.remove('play'); }, CUTIN_MS);
 }
@@ -1197,8 +1412,10 @@ function startPlayback(m) {
       const prev = app.state?.game?.bodies[k] || b;
       // 形の変わる定規は、はじく前の体力の形のまま動く（全開は、その1打だけいちばん長い形）
       const shapeKey = k === m.by && m.skill === 'fullopen' && Physics.RULERS[b.specKey]?.forms ? 'folding3' : Physics.shapeOf(b.specKey, prev.hp, b.maxHp);
-      return { specKey: b.specKey, shapeKey, enemy: b.enemy, level: b.level, art: b.art, pattern: b.pattern, sticker: b.sticker, anchor: b.anchor, counter: b.counter, sub: b.sub, ink: b.ink, hp: prev.hp ?? b.hp, ...bodyLook(b) };
+      return { specKey: b.specKey, shapeKey, enemy: b.enemy, level: b.level, art: b.art, pattern: b.pattern, sticker: b.sticker, anchor: b.anchor, counter: b.counter, sub: b.sub, ink: b.ink, paint: b.paint, cut: prev.cut, hp: prev.hp ?? b.hp, ...bodyLook(b) };
     }),
+    // 水たまりと落雷の予告は、はじく前のものを見せる（落雷は落ちた瞬間に消す）
+    puddles: app.state?.game?.puddles || [], boltsBefore: app.state?.game?.bolts || [], strikes: m.bolts || [], strikeDone: 0, struck: new Set(),
     start: performance.now() + delay, fallStart: {}, fxDone: 0,
   };
   if (app.state) renderGame();
@@ -1251,12 +1468,25 @@ function playbackBodies(now) {
   if (p.blast && !p.blastDone && t >= p.blast.f) {
     p.blastDone = true;
     const k = p.blast.kind;
-    const look = SKILLS[k] || { compass: { name: 'ぐるり', color: '#ff7a5c' } }[k] || { name: '', color: '#fff' };
+    const look = SKILLS[k] || { compass: { name: 'ぐるり', color: '#ff7a5c' }, pull: { name: 'U字磁石', color: '#e0574a' } }[k] || { name: '', color: '#fff' };
     const col = look.color;
-    app.fx.push({ x: p.blast.x, y: p.blast.y, t0: now, ring: p.blast.r, color: col, inward: k === 'magnet' });
+    const inward = k === 'magnet' || k === 'pull';
+    app.fx.push({ x: p.blast.x, y: p.blast.y, t0: now, ring: p.blast.r, color: col, inward });
     if (k === 'bomb') app.fx.push({ x: p.blast.x, y: p.blast.y, t0: now, burst: true });
-    app.fx.push({ x: p.blast.x, y: p.blast.y - 4, t0: now, text: `${look.name}！`, color: col, big: true });
-    if (!reducedMotion() && k !== 'magnet') app.shakeUntil = now + 300;
+    app.fx.push({ x: p.blast.x, y: p.blast.y - 4, t0: now, text: k === 'pull' ? '引き寄せ！' : `${look.name}！`, color: col, big: true });
+    if (!reducedMotion() && !inward) app.shakeUntil = now + 300;
+  }
+  // 落雷：予告の円が光って、稲妻が落ちる（同じ瞬間の落雷は、まとめて「落雷！」）
+  if (p.strikeDone < p.strikes.length && t >= p.strikes[p.strikeDone].f) {
+    let first = true;
+    while (p.strikeDone < p.strikes.length && t >= p.strikes[p.strikeDone].f) {
+      const b = p.strikes[p.strikeDone++];
+      p.struck.add(b.id);
+      app.fx.push({ x: b.x, y: b.y, t0: now, bolt: true, r: b.r, seed: b.id });
+      if (first) app.fx.push({ x: b.x, y: b.y - 5, t0: now + 60, text: '落雷！', color: '#c8b8ff', big: true });
+      first = false;
+    }
+    if (!reducedMotion()) app.shakeUntil = now + 380;
   }
   // ダメージの数字
   if (p.hits) {
@@ -1384,6 +1614,14 @@ function predictPath(g, i, ux, uy) {
   return pts;
 }
 
+// いまの番の次に番が来る人（落雷の予告が「次で落ちる」かを見せる）
+function nextAlive(g) {
+  if (!g?.players) return -1;
+  let t = g.turn;
+  for (let k = 0; k < g.n; k++) { t = (t + 1) % g.n; if (g.players[t]?.alive) return t; }
+  return -1;
+}
+
 function finishPlayback() {
   const p = app.playing;
   app.playing = null;
@@ -1434,6 +1672,12 @@ function frame(now) {
     const crystals = app.state.phase === 'aim' ? g.crystals || [] : [];
     desks.crystals = app.playing?.frozeAt ? [] : crystals.map((c) => ({ ...c, born: app.crystalBorn?.[c.id] }));
     desks.rainbow = app.state.phase === 'aim' ? g.rainbow : null;
+    // 絵の具の水たまり（破天荒編）と、落雷の予告
+    const lap = g.lap || 0;
+    desks.puddles = (app.playing ? app.playing.puddles : g.puddles || []).map((pd) => ({ ...pd, born: app.puddleBorn?.[pd.id], fading: !!pd.pts && lap - pd.lap >= PAINT.trailDry - 1 }));
+    const nextSeat = nextAlive(g);
+    const warn = app.playing ? app.playing.boltsBefore.filter((b) => !app.playing.struck.has(b.id)) : app.state.phase === 'aim' ? g.bolts || [] : [];
+    desks.bolts = warn.map((b) => ({ ...b, soon: !app.playing && b.skip === 0 && b.due === nextSeat, color: b.owner >= 0 ? seatLook(b.owner).color : null }));
     board.draw({ bodies, active, aim, fx: app.fx, now, desks });
     // 手元カメラで拡大しているときだけ「全体を見る」
     const zoomed = board.zoomed;
@@ -1455,10 +1699,13 @@ account = createAccount({
   onLogout: () => { if (app.state) { send({ t: 'leave' }); } app.me = null; leaveRoom(''); },
   onProfile: () => { if (!$('home').hidden) renderHome(); else home.renderNew(); },
   onTab: (name) => home.setTab(name),
+  onBack: (where) => { if (where === 'dojo') dojoUI.open(); },
 });
+const avatarEditor = createAvatarEditor({ app, $, esc, toast, show, onClose: () => showHome() });
 const home = createHome({
   app, $, esc, toast, account,
   onNav: (name, opt) => { if (name === 'home') showHome(); else account.open(name, opt); },
+  onAvatar: () => avatarEditor.open(),
 });
 // 確認用：?debug を付けて開いたときだけ、今の状態を読めるようにする
 if (new URLSearchParams(location.search).has('debug')) { window.__jogiApp = app; window.__toWorld = (x, y) => board.toWorld(x, y); window.__jogiState = () => structuredClone(app.state); window.__jogiSend = (m) => { const ok = send(m); if (ok && m.t === 'flick') { app.waitingShot = true; renderGame(); } return ok; }; }

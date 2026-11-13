@@ -3,7 +3,7 @@ import { loginEnabled, sessionUser, sameOrigin } from './auth.js';
 import {
   ensureSchema, profile, claimDaily, rename, saveSetup, pullGacha, recentMatches,
   getConfig, saveConfig, resetConfig, clearConfigCache, findUsers, giftCoins, giftItems, userItemsForAdmin, cancelGift,
-  inboxWithNotes, claimInbox, pullRulerGacha, setPartner,
+  inboxWithNotes, claimInbox, pullRulerGacha, setPartner, saveAvatar,
 } from './db.js';
 import { defaultConfig, sanitizeConfig, configProblem } from '../public/shared/catalog.js';
 import { VERSION } from '../public/shared/version.js';
@@ -52,6 +52,11 @@ export async function handleApi(request, env, url) {
   }
   if (path === '/api/me/matches' && request.method === 'GET') {
     return json({ matches: await recentMatches(env.DB, user.id) });
+  }
+  // 着せ替え（アバター）を保存する
+  if (path === '/api/me/avatar' && request.method === 'POST') {
+    const r = await saveAvatar(env.DB, user.id, body.avatar, Date.now(), body.title === undefined ? undefined : body.title || null);
+    return r.error ? json(r, 400) : json(r);
   }
   if (path === '/api/me/partner' && request.method === 'POST') {
     const r = await setPartner(env.DB, user.id, String(body.ruler || ''));

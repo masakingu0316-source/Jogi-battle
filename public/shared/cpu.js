@@ -129,6 +129,8 @@ export function decideNow(core, levelKey = 'normal', rand = Math.random) {
     }
     return false;
   }
+  // 落雷：自分の予告が出ている間は使えない
+  if (k === 'raiun') return !(g.bolts || []).some((x) => x.owner === me) && rand() < lv.skillRate;
   if (k === 'warp') return m < 14;
   if (k === 'chair') return m < 12;
   return rand() < lv.skillRate;

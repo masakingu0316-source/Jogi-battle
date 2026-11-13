@@ -93,6 +93,9 @@
         <button type="button" class="p-arrow left" id="partnerPrev" aria-label="前の定規に持ち替える">‹</button>
         <button type="button" class="p-arrow right" id="partnerNext" aria-label="次の定規に持ち替える">›</button>
         <span class="p-count" id="partnerCount"></span>
+        <button type="button" class="av-btn" id="avatarBtn" aria-label="アバターを着せ替える">着せ替え</button>
+        <button type="button" class="av-cue" id="avatarCue" hidden>アバターを作ろう</button>
+        <span class="home-title title-chip" id="homeTitle" hidden></span>
       </div>
       <div class="partner-info" id="partnerInfo" aria-live="polite">
         <div class="pi-line"><span class="rar-tag" id="piRar">N</span><b class="pi-name" id="piName"></b><span class="pi-lv" id="piLv"></span></div>
@@ -105,10 +108,16 @@
     </section>
 
     <div class="big-btns">
-      <button type="button" class="bb side" id="openStage">
-        <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 26V6h3v20zM9 7h15l-3 5 3 5H9z" fill="currentColor"/></svg>
-        <span>ステージ</span><small id="stageHomeNote"></small>
-      </button>
+      <div class="bb-col">
+        <button type="button" class="bb side" id="openStage">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M6 26V6h3v20zM9 7h15l-3 5 3 5H9z" fill="currentColor"/></svg>
+          <span>ステージ</span><small id="stageHomeNote"></small>
+        </button>
+        <button type="button" class="bb side" id="openDojo">
+          <svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 12 16 5l12 7v2H4zM7 15h3v10H7zm7.5 0h3v10h-3zM22 15h3v10h-3zM4 26h24v2H4z" fill="currentColor"/></svg>
+          <span>道場</span><small id="dojoHomeNote"></small>
+        </button>
+      </div>
       <button type="button" class="bb main" id="openBattle" aria-label="対戦">
         <span class="bb-halo" aria-hidden="true"></span>
         <span class="bb-ticks" aria-hidden="true"></span>
@@ -244,7 +253,7 @@
       <h3 class="mt">遊び方</h3>
       <ul class="howto">
         <li>自分の番に、自分の定規を押さえて引っぱり、離すとはじけます。相手を机から落とすと勝ち</li>
-        <li>必殺技は、左下の円いゲージが満タンのときに押して使います</li>
+        <li>必殺技は、左下の円いゲージが満タンのときに押して使います。ゲージは、全員が1回ずつはじく（1周する）たびに、定規ごとの量だけたまります（定規ケースで確かめられます）</li>
         <li>定規はレア度が高いほど少し重く、強くはじけます。SR以上は特性、SSRは専用の必殺技を持っています</li>
         <li>部屋を作るときに「公平」を選ぶと、レア度・レベル・アクセサリの上乗せがなくなります</li>
       </ul>
@@ -254,10 +263,52 @@
   </main>
 
   <!-- ステージ選択 -->
+  <!-- 着せ替え（ホームのアバターを押して開く） -->
+  <main id="avatarScreen" class="screen avatar-screen" hidden aria-labelledby="avTitle">
+    <div class="av-head">
+      <button type="button" class="link" id="avBack">← ホーム</button>
+      <h2 id="avTitle">着せ替え</h2>
+      <button type="button" class="av-random" id="avRandom">おまかせ</button>
+    </div>
+    <div class="av-preview">
+      <canvas id="avCanvas" aria-label="いまのアバター"></canvas>
+      <p class="av-new" id="avNew" hidden>はじめてのアバターです。好きなパーツを選んで「保存する」を押してください</p>
+    </div>
+    <div class="av-slots" id="avSlots" role="tablist" aria-label="部位"></div>
+    <div class="av-parts" id="avParts" role="tabpanel"></div>
+    <div class="av-actions">
+      <button type="button" class="btn-sub" id="avUndo">元に戻す</button>
+      <button type="button" class="btn-main" id="avSave">保存する</button>
+    </div>
+  </main>
+
+  <!-- バトル道場：クラス30人に1人ずつ挑む（30人破りのあとは担任の先生） -->
+  <main id="dojoScreen" class="screen dojo-screen" hidden aria-labelledby="dojoTitle">
+    <div class="dojo-top">
+      <button class="link" id="dojoBack" type="button">← ホーム</button>
+      <h2 class="dojo-title" id="dojoTitle">バトル道場</h2>
+      <span class="dojo-stats" id="dojoStats"></span>
+    </div>
+    <section class="dojo-card" id="dojoCard" aria-live="polite"></section>
+    <div class="dojo-class-wrap">
+      <div class="dojo-class" id="dojoClass" role="list" aria-label="クラスの座席表"></div>
+      <p class="dojo-rule">1番から順に挑み、全員に勝つと<b>30人破り</b>。負けたら1番からやり直しです。試合と試合の間ならホームに戻ってよく、次は続きの番号から。試合の途中で閉じると負けになります。</p>
+    </div>
+    <div class="dojo-foot">
+      <button type="button" class="dojo-ruler" id="dojoRuler" aria-label="使う定規を持ち替える">
+        <canvas id="dojoRulerPreview" aria-hidden="true"></canvas>
+        <span class="dr-text"><small>使う定規・持ち替え</small><b id="dojoRulerName"></b></span>
+      </button>
+      <button type="button" class="btn-main dojo-go" id="dojoStart"><b>挑む</b></button>
+    </div>
+    <p class="error" id="dojoError" hidden></p>
+  </main>
+
   <main id="stagePick" class="screen" hidden>
     <div class="my-head">
       <button class="link" id="stageBack" type="button">← ホームへ</button>
     </div>
+    <div class="stage-tabs" id="stageTabs" role="tablist" aria-label="編を選ぶ"></div>
     <div class="stage-head">
       <p class="stage-kicker" id="stageKicker"></p>
       <h2 class="stage-title" id="stageTitle"></h2>
@@ -286,7 +337,7 @@
       </section>
     </div>
     <details class="foe-book">
-      <summary>敵の図鑑</summary>
+      <summary id="foeBookTitle">敵の図鑑</summary>
       <ul class="foe-list" id="foeList"></ul>
     </details>
   </main>
@@ -355,11 +406,22 @@
       <div class="cutin" id="cutin" hidden role="status">
         <div class="cutin-band" id="cutinBand">
           <canvas class="cutin-ruler" id="cutinRuler" aria-hidden="true"></canvas>
+          <img class="cutin-av" id="cutinAv" alt="" hidden>
           <div class="cutin-text">
             <span class="cutin-who" id="cutinWho"></span>
             <span class="cutin-title"><span class="cutin-name" id="cutinName"></span><span class="cutin-seal" aria-hidden="true">必殺</span></span>
             <span class="cutin-desc" id="cutinDesc"></span>
           </div>
+        </div>
+      </div>
+      <div class="dojo-intro" id="dojoIntro" hidden role="status">
+        <img class="di-av" id="diAv" alt="">
+        <div class="di-text">
+          <span class="di-no" id="diNo"></span>
+          <span class="di-name" id="diName"></span>
+          <span class="di-role" id="diRole"></span>
+          <p class="di-line" id="diLine"></p>
+          <span class="di-go">勝負！</span>
         </div>
       </div>
       <div class="result" id="result" hidden>
@@ -372,6 +434,9 @@
           <button class="btn-main" id="stageNext" type="button" hidden>次のマップへ</button>
           <button id="stageRetry" type="button" hidden>もう一度</button>
           <button class="link" id="stageExit" type="button" hidden>ステージ選択へ</button>
+          <button class="btn-main" id="dojoNextBtn" type="button" hidden>次の相手へ</button>
+          <button id="dojoRetry" type="button" hidden>1番から挑む</button>
+          <button class="link" id="dojoExit" type="button" hidden>道場へ戻る</button>
         </div>
         <p class="wait" id="resultNext"></p>
       </div>
